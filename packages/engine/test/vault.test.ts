@@ -45,6 +45,7 @@ describe("swarmvault workflow", () => {
     await initVault(rootDir);
 
     await expect(fs.access(path.join(rootDir, "swarmvault.config.json"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "swarmvault.schema.md"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, "inbox"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, "AGENTS.md"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, "CLAUDE.md"))).resolves.toBeUndefined();
@@ -113,6 +114,133 @@ describe("swarmvault workflow", () => {
     expect(storedMarkdown).toContain(`../assets/${manifest.sourceId}/assets/diagram.png`);
   });
 
+  it("threads the schema through compile and query and marks pages stale when the schema changes", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const schemaMarker = "SCHEMA_SENTINEL_RULE";
+    await fs.writeFile(
+      path.join(rootDir, "swarmvault.schema.md"),
+      [
+        "# SwarmVault Schema",
+        "",
+        "## Vault Purpose",
+        "",
+        "- Track AI governance research.",
+        "",
+        "## Grounding Rules",
+        "",
+        `- Always honor ${schemaMarker} during compile and query work.`,
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    await fs.writeFile(
+      path.join(rootDir, "schema-test-provider.mjs"),
+      [
+        "import fs from 'node:fs/promises';",
+        "import path from 'node:path';",
+        "",
+        "export async function createAdapter(id, config, rootDir) {",
+        "  const logDir = path.join(rootDir, 'state');",
+        "  async function append(name, payload) {",
+        "    await fs.mkdir(logDir, { recursive: true });",
+        "    await fs.appendFile(path.join(logDir, name), `${JSON.stringify(payload)}\\n`, 'utf8');",
+        "  }",
+        "",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText(request) {",
+        "      await append('provider-text.ndjson', request);",
+        "      return { text: 'Schema-aware response.' };",
+        "    },",
+        "    async generateStructured(request) {",
+        "      await append('provider-structured.ndjson', request);",
+        "      return {",
+        "        title: 'Schema Source',",
+        "        summary: 'Schema-driven summary.',",
+        "        concepts: [{ name: 'Governance', description: 'Governance concept from schema-aware provider.' }],",
+        "        entities: [],",
+        "        claims: [{ text: 'Schema-aware claim.', confidence: 0.9, status: 'extracted', polarity: 'positive', citation: 'schema-source' }],",
+        "        questions: ['What policy applies?']",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.schemaTest = {
+      type: "custom",
+      model: "schema-test",
+      module: "./schema-test-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "schemaTest";
+    config.tasks.queryProvider = "schemaTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    const notePath = path.join(rootDir, "notes.md");
+    await fs.writeFile(
+      notePath,
+      [
+        "# Schema Test",
+        "",
+        "This source exists to verify schema-guided compile and query behavior."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manifest = await ingestInput(rootDir, "notes.md");
+    const compile = await compileVault(rootDir);
+    expect(compile.pageCount).toBeGreaterThan(0);
+
+    const structuredLog = await fs.readFile(path.join(rootDir, "state", "provider-structured.ndjson"), "utf8");
+    expect(structuredLog).toContain(schemaMarker);
+
+    const sourcePage = await fs.readFile(path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`), "utf8");
+    expect(sourcePage).toContain("schema_hash:");
+
+    const query = await queryVault(rootDir, "How should this vault behave?", true);
+    expect(query.savedTo).toBeTruthy();
+
+    const textLog = await fs.readFile(path.join(rootDir, "state", "provider-text.ndjson"), "utf8");
+    expect(textLog).toContain(schemaMarker);
+
+    const savedOutput = await fs.readFile(query.savedTo as string, "utf8");
+    expect(savedOutput).toContain("schema_hash:");
+
+    await fs.writeFile(
+      path.join(rootDir, "swarmvault.schema.md"),
+      [
+        "# SwarmVault Schema",
+        "",
+        "## Vault Purpose",
+        "",
+        "- Track AI governance research.",
+        "",
+        "## Grounding Rules",
+        "",
+        "- Use a different schema revision now.",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const findings = await lintVault(rootDir);
+    expect(findings.some((finding) => finding.code === "stale_page" && finding.message.includes("vault schema changed"))).toBe(true);
+  });
+
   it("exposes vault operations through the MCP server", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -144,6 +272,7 @@ describe("swarmvault workflow", () => {
     const workspaceContent = workspaceInfo.content as ToolContent;
     expect(workspaceContent[0]?.type).toBe("text");
     expect(JSON.parse(workspaceContent[0]?.text ?? "{}").rootDir).toBe(rootDir);
+    expect(JSON.parse(workspaceContent[0]?.text ?? "{}").schemaPath).toBe(path.join(rootDir, "swarmvault.schema.md"));
 
     const searchResults = await client.callTool({ name: "search_pages", arguments: { query: "wiki search", limit: 5 } });
     const searchContent = searchResults.content as ToolContent;
@@ -155,6 +284,10 @@ describe("swarmvault workflow", () => {
     const configResource = await client.readResource({ uri: "swarmvault://config" });
     expect(configResource.contents[0]?.uri).toBe("swarmvault://config");
     expect((configResource.contents[0] as { text: string }).text).toContain("\"inboxDir\"");
+
+    const schemaResource = await client.readResource({ uri: "swarmvault://schema" });
+    expect(schemaResource.contents[0]?.uri).toBe("swarmvault://schema");
+    expect((schemaResource.contents[0] as { text: string }).text).toContain("# SwarmVault Schema");
 
     await client.close();
     await server.close();

@@ -6,11 +6,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
 import { ingestInput, listManifests } from "./ingest.js";
+import { loadVaultSchema } from "./schema.js";
 import { compileVault, getWorkspaceInfo, lintVault, listPages, queryVault, readPage, searchVault } from "./vault.js";
 import { readJsonFile } from "./utils.js";
 import type { GraphArtifact } from "./types.js";
 
-const SERVER_VERSION = "0.1.3";
+const SERVER_VERSION = "0.1.4";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -125,6 +126,15 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
   }, async () => {
     const manifests = await listManifests(rootDir);
     return asTextResource("swarmvault://manifests", JSON.stringify(manifests, null, 2));
+  });
+
+  server.registerResource("swarmvault-schema", "swarmvault://schema", {
+    title: "SwarmVault Schema",
+    description: "The vault schema file that guides compile and query behavior.",
+    mimeType: "text/markdown"
+  }, async () => {
+    const schema = await loadVaultSchema(rootDir);
+    return asTextResource("swarmvault://schema", schema.content);
   });
 
   server.registerResource(

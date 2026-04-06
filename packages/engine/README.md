@@ -22,12 +22,14 @@ import {
   compileVault,
   createMcpServer,
   defaultVaultConfig,
+  defaultVaultSchema,
   importInbox,
   ingestInput,
   initVault,
   installAgent,
   lintVault,
   loadVaultConfig,
+  loadVaultSchema,
   queryVault,
   searchVault,
   startGraphServer,
@@ -41,11 +43,13 @@ The engine also exports the main runtime types for providers, graph artifacts, p
 ## Example
 
 ```ts
-import { compileVault, importInbox, initVault, queryVault, watchVault } from "@swarmvaultai/engine";
+import { compileVault, importInbox, initVault, loadVaultSchema, queryVault, watchVault } from "@swarmvaultai/engine";
 
 const rootDir = process.cwd();
 
 await initVault(rootDir);
+const schema = await loadVaultSchema(rootDir);
+console.log(schema.path);
 await importInbox(rootDir);
 await compileVault(rootDir);
 
@@ -54,6 +58,18 @@ console.log(result.answer);
 
 const watcher = await watchVault(rootDir, { lint: true });
 ```
+
+## Schema Layer
+
+Each workspace carries a root markdown file named `swarmvault.schema.md`.
+
+The engine treats that file as vault-specific operating guidance for compile and query work. In `v0.1.4`:
+
+- `initVault()` creates the default schema file
+- `loadVaultSchema()` resolves the canonical file and legacy `schema.md` fallback
+- compile and query prompts include the schema content
+- generated pages store `schema_hash`
+- `lintVault()` marks generated pages stale when the schema changes
 
 ## Provider Model
 
@@ -88,8 +104,8 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 ### Compile + Query
 
-- `compileVault(rootDir)` writes wiki pages, graph data, and search state
-- `queryVault(rootDir, question, save)` answers against the compiled vault
+- `compileVault(rootDir)` writes wiki pages, graph data, and search state using the vault schema as guidance
+- `queryVault(rootDir, question, save)` answers against the compiled vault using the same schema layer
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
 
 ### Automation
@@ -102,12 +118,13 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `createMcpServer(rootDir)` creates an MCP server instance
 - `startMcpServer(rootDir)` runs the MCP server over stdio
 
-The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, ingestion, compile, and lint, along with resources for config, graph, manifests, and page content.
+The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, ingestion, compile, and lint, along with resources for config, graph, manifests, schema, and page content.
 
 ## Artifacts
 
 Running the engine produces a local workspace with these main areas:
 
+- `swarmvault.schema.md`: vault-specific compile and query instructions
 - `inbox/`: capture staging area for markdown bundles and imported files
 - `raw/sources/`: immutable source copies
 - `raw/assets/`: copied attachments referenced by ingested markdown bundles

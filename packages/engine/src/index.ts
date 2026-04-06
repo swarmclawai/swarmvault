@@ -1,4 +1,4 @@
-export { defaultVaultConfig, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
+export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
 export { ingestInput, importInbox, listManifests, readExtractedText } from "./ingest.js";
 export {
   compileVault,
@@ -12,6 +12,7 @@ export {
   searchVault
 } from "./vault.js";
 export { installAgent, installConfiguredAgents } from "./agents.js";
+export { loadVaultSchema } from "./schema.js";
 export { startGraphServer } from "./viewer.js";
 export { createMcpServer, startMcpServer } from "./mcp.js";
 export { watchVault } from "./watch.js";

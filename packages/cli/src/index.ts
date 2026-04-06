@@ -19,7 +19,7 @@ const program = new Command();
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.3");
+  .version("0.1.4");
 
 program
   .command("init")

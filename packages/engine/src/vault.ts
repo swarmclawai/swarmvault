@@ -9,6 +9,7 @@ import { appendLogEntry } from "./logs.js";
 import { buildAggregatePage, buildIndexPage, buildOutputPage, buildSectionIndex, buildSourcePage } from "./markdown.js";
 import { getProviderForTask } from "./providers/registry.js";
 import { rebuildSearchIndex, searchPages } from "./search.js";
+import { buildSchemaPrompt, loadVaultSchema } from "./schema.js";
 import type {
   CompileResult,
   GraphArtifact,
@@ -111,8 +112,8 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
   };
 }
 
-async function writePage(rootDir: string, relativePath: string, content: string, changedPages: string[]): Promise<void> {
-  const absolutePath = path.resolve(rootDir, "wiki", relativePath);
+async function writePage(wikiDir: string, relativePath: string, content: string, changedPages: string[]): Promise<void> {
+  const absolutePath = path.resolve(wikiDir, relativePath);
   const changed = await writeFileIfChanged(absolutePath, content);
   if (changed) {
     changedPages.push(relativePath);
@@ -146,10 +147,11 @@ export async function initVault(rootDir: string): Promise<void> {
 
 export async function compileVault(rootDir: string): Promise<CompileResult> {
   const { paths } = await initWorkspace(rootDir);
+  const schema = await loadVaultSchema(rootDir);
   const provider = await getProviderForTask(rootDir, "compileProvider");
   const manifests = await listManifests(rootDir);
   const analyses = await Promise.all(
-    manifests.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths))
+    manifests.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema))
   );
 
   const changedPages: string[] = [];
@@ -167,37 +169,38 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
     if (!analysis) {
       continue;
     }
-    const sourcePage = buildSourcePage(manifest, analysis);
+    const sourcePage = buildSourcePage(manifest, analysis, schema.hash);
     pages.push(sourcePage.page);
-    await writePage(rootDir, sourcePage.page.path, sourcePage.content, changedPages);
+    await writePage(paths.wikiDir, sourcePage.page.path, sourcePage.content, changedPages);
   }
 
   for (const aggregate of aggregateItems(analyses, "concepts")) {
-    const page = buildAggregatePage("concept", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes);
+    const page = buildAggregatePage("concept", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes, schema.hash);
     pages.push(page.page);
-    await writePage(rootDir, page.page.path, page.content, changedPages);
+    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
   }
 
   for (const aggregate of aggregateItems(analyses, "entities")) {
-    const page = buildAggregatePage("entity", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes);
+    const page = buildAggregatePage("entity", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes, schema.hash);
     pages.push(page.page);
-    await writePage(rootDir, page.page.path, page.content, changedPages);
+    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
   }
 
   const graph = buildGraph(manifests, analyses, pages);
   await writeJsonFile(paths.graphPath, graph);
   await writeJsonFile(paths.compileStatePath, {
     generatedAt: graph.generatedAt,
+    schemaHash: schema.hash,
     analyses: Object.fromEntries(analyses.map((analysis) => [analysis.sourceId, analysisSignature(analysis)]))
   });
 
-  await writePage(rootDir, "index.md", buildIndexPage(pages), changedPages);
-  await writePage(rootDir, "sources/index.md", buildSectionIndex("sources", pages.filter((page) => page.kind === "source")), changedPages);
-  await writePage(rootDir, "concepts/index.md", buildSectionIndex("concepts", pages.filter((page) => page.kind === "concept")), changedPages);
-  await writePage(rootDir, "entities/index.md", buildSectionIndex("entities", pages.filter((page) => page.kind === "entity")), changedPages);
+  await writePage(paths.wikiDir, "index.md", buildIndexPage(pages, schema.hash), changedPages);
+  await writePage(paths.wikiDir, "sources/index.md", buildSectionIndex("sources", pages.filter((page) => page.kind === "source"), schema.hash), changedPages);
+  await writePage(paths.wikiDir, "concepts/index.md", buildSectionIndex("concepts", pages.filter((page) => page.kind === "concept"), schema.hash), changedPages);
+  await writePage(paths.wikiDir, "entities/index.md", buildSectionIndex("entities", pages.filter((page) => page.kind === "entity"), schema.hash), changedPages);
 
   await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
-  await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [`provider=${provider.id}`, `pages=${pages.length}`]);
+  await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [`provider=${provider.id}`, `pages=${pages.length}`, `schema=${schema.hash.slice(0, 12)}`]);
 
   return {
     graphPath: paths.graphPath,
@@ -209,6 +212,7 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
 
 export async function queryVault(rootDir: string, question: string, save = false): Promise<QueryResult> {
   const { paths } = await loadVaultConfig(rootDir);
+  const schema = await loadVaultSchema(rootDir);
   const provider = await getProviderForTask(rootDir, "queryProvider");
   if (!(await fileExists(paths.searchDbPath))) {
     await compileVault(rootDir);
@@ -236,7 +240,7 @@ export async function queryVault(rootDir: string, question: string, save = false
     ].join("\n");
   } else {
     const response = await provider.generateText({
-      system: "Answer using the provided SwarmVault excerpts. Cite source ids or page titles when possible.",
+      system: buildSchemaPrompt(schema, "Answer using the provided SwarmVault excerpts. Cite source ids or page titles when possible."),
       prompt: `Question: ${question}\n\nContext:\n${excerpts.join("\n\n---\n\n")}`
     });
     answer = response.text;
@@ -250,7 +254,7 @@ export async function queryVault(rootDir: string, question: string, save = false
   );
   let savedTo: string | undefined;
   if (save) {
-    const output = buildOutputPage(question, answer, citations);
+    const output = buildOutputPage(question, answer, citations, schema.hash);
     const absolutePath = path.join(paths.wikiDir, output.page.path);
     await ensureDir(path.dirname(absolutePath));
     await fs.writeFile(absolutePath, output.content, "utf8");
@@ -301,6 +305,7 @@ export async function readPage(rootDir: string, relativePath: string): Promise<{
 export async function getWorkspaceInfo(rootDir: string): Promise<{
   rootDir: string;
   configPath: string;
+  schemaPath: string;
   rawDir: string;
   wikiDir: string;
   stateDir: string;
@@ -316,6 +321,7 @@ export async function getWorkspaceInfo(rootDir: string): Promise<{
   return {
     rootDir,
     configPath: paths.configPath,
+    schemaPath: paths.schemaPath,
     rawDir: paths.rawDir,
     wikiDir: paths.wikiDir,
     stateDir: paths.stateDir,
@@ -328,6 +334,7 @@ export async function getWorkspaceInfo(rootDir: string): Promise<{
 
 export async function lintVault(rootDir: string): Promise<LintFinding[]> {
   const { paths } = await loadVaultConfig(rootDir);
+  const schema = await loadVaultSchema(rootDir);
   const manifests = await listManifests(rootDir);
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   const findings: LintFinding[] = [];
@@ -345,6 +352,15 @@ export async function lintVault(rootDir: string): Promise<LintFinding[]> {
   const manifestMap = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
 
   for (const page of graph.pages) {
+    if (page.schemaHash !== schema.hash) {
+      findings.push({
+        severity: "warning",
+        code: "stale_page",
+        message: `Page ${page.title} is stale because the vault schema changed.`,
+        pagePath: path.join(paths.wikiDir, page.path)
+      });
+    }
+
     for (const [sourceId, knownHash] of Object.entries(page.sourceHashes)) {
       const manifest = manifestMap.get(sourceId);
       if (manifest && manifest.contentHash !== knownHash) {

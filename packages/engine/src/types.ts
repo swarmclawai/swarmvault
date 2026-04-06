@@ -93,6 +93,7 @@ export interface VaultConfig {
 
 export interface ResolvedPaths {
   rootDir: string;
+  schemaPath: string;
   rawDir: string;
   rawSourcesDir: string;
   rawAssetsDir: string;
@@ -151,6 +152,7 @@ export interface SourceClaim {
 export interface SourceAnalysis {
   sourceId: string;
   sourceHash: string;
+  schemaHash: string;
   title: string;
   summary: string;
   concepts: AnalyzedTerm[];
@@ -190,6 +192,7 @@ export interface GraphPage {
   freshness: Freshness;
   confidence: number;
   backlinks: string[];
+  schemaHash: string;
   sourceHashes: Record<string, string>;
 }
 

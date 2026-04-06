@@ -17,7 +17,7 @@ function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
   }
 }
 
-export function buildSourcePage(manifest: SourceManifest, analysis: SourceAnalysis): { page: GraphPage; content: string } {
+export function buildSourcePage(manifest: SourceManifest, analysis: SourceAnalysis, schemaHash: string): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
   const nodeIds = [
@@ -41,6 +41,7 @@ export function buildSourcePage(manifest: SourceManifest, analysis: SourceAnalys
     confidence: 0.8,
     updated_at: analysis.producedAt,
     backlinks,
+    schema_hash: schemaHash,
     source_hashes: {
       [manifest.sourceId]: manifest.contentHash
     }
@@ -85,13 +86,21 @@ export function buildSourcePage(manifest: SourceManifest, analysis: SourceAnalys
       freshness: "fresh",
       confidence: 0.8,
       backlinks,
+      schemaHash,
       sourceHashes: { [manifest.sourceId]: manifest.contentHash }
     },
     content: matter.stringify(body, frontmatter)
   };
 }
 
-export function buildAggregatePage(kind: "concept" | "entity", name: string, descriptions: string[], sourceAnalyses: SourceAnalysis[], sourceHashes: Record<string, string>): { page: GraphPage; content: string } {
+export function buildAggregatePage(
+  kind: "concept" | "entity",
+  name: string,
+  descriptions: string[],
+  sourceAnalyses: SourceAnalysis[],
+  sourceHashes: Record<string, string>,
+  schemaHash: string
+): { page: GraphPage; content: string } {
   const slug = slugify(name);
   const relativePath = pagePathFor(kind, slug);
   const pageId = `${kind}:${slug}`;
@@ -109,6 +118,7 @@ export function buildAggregatePage(kind: "concept" | "entity", name: string, des
     confidence: 0.72,
     updated_at: new Date().toISOString(),
     backlinks: otherPages,
+    schema_hash: schemaHash,
     source_hashes: sourceHashes
   };
 
@@ -144,13 +154,14 @@ export function buildAggregatePage(kind: "concept" | "entity", name: string, des
       freshness: "fresh",
       confidence: 0.72,
       backlinks: otherPages,
+      schemaHash,
       sourceHashes
     },
     content: matter.stringify(body, frontmatter)
   };
 }
 
-export function buildIndexPage(pages: GraphPage[]): string {
+export function buildIndexPage(pages: GraphPage[], schemaHash: string): string {
   const sources = pages.filter((page) => page.kind === "source");
   const concepts = pages.filter((page) => page.kind === "concept");
   const entities = pages.filter((page) => page.kind === "entity");
@@ -168,6 +179,7 @@ export function buildIndexPage(pages: GraphPage[]): string {
     "confidence: 1",
     `updated_at: ${new Date().toISOString()}`,
     "backlinks: []",
+    `schema_hash: ${schemaHash}`,
     "source_hashes: {}",
     "---",
     "",
@@ -188,17 +200,33 @@ export function buildIndexPage(pages: GraphPage[]): string {
   ].join("\n");
 }
 
-export function buildSectionIndex(kind: "sources" | "concepts" | "entities", pages: GraphPage[]): string {
+export function buildSectionIndex(kind: "sources" | "concepts" | "entities", pages: GraphPage[], schemaHash: string): string {
   const title = kind.charAt(0).toUpperCase() + kind.slice(1);
-  return [
-    `# ${title}`,
-    "",
-    ...pages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`),
-    ""
-  ].join("\n");
+  return matter.stringify(
+    [
+      `# ${title}`,
+      "",
+      ...pages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`),
+      ""
+    ].join("\n"),
+    {
+      page_id: `${kind}:index`,
+      kind: "index",
+      title,
+      tags: ["index", kind],
+      source_ids: [],
+      node_ids: [],
+      freshness: "fresh" satisfies Freshness,
+      confidence: 1,
+      updated_at: new Date().toISOString(),
+      backlinks: [],
+      schema_hash: schemaHash,
+      source_hashes: {}
+    }
+  );
 }
 
-export function buildOutputPage(question: string, answer: string, citations: string[]): { page: GraphPage; content: string } {
+export function buildOutputPage(question: string, answer: string, citations: string[], schemaHash: string): { page: GraphPage; content: string } {
   const slug = slugify(question);
   const pageId = `output:${slug}`;
   const pathValue = pagePathFor("output", slug);
@@ -213,6 +241,7 @@ export function buildOutputPage(question: string, answer: string, citations: str
     confidence: 0.74,
     updated_at: new Date().toISOString(),
     backlinks: citations.map((sourceId) => `source:${sourceId}`),
+    schema_hash: schemaHash,
     source_hashes: {}
   };
 
@@ -227,6 +256,7 @@ export function buildOutputPage(question: string, answer: string, citations: str
       freshness: "fresh",
       confidence: 0.74,
       backlinks: citations.map((sourceId) => `source:${sourceId}`),
+      schemaHash,
       sourceHashes: {}
     },
     content: matter.stringify(

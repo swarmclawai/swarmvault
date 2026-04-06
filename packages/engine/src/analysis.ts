@@ -1,6 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 import { type SourceAnalysis, type SourceManifest, type Polarity } from "./types.js";
+import type { VaultSchema } from "./schema.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 import type { ProviderAdapter, ResolvedPaths } from "./types.js";
 
@@ -60,7 +61,7 @@ function deriveTitle(manifest: SourceManifest, text: string): string {
   return heading || manifest.title;
 }
 
-function heuristicAnalysis(manifest: SourceManifest, text: string): SourceAnalysis {
+function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: string): SourceAnalysis {
   const normalized = normalizeWhitespace(text);
   const concepts = extractTopTerms(normalized, 6).map((term) => ({
     id: `concept:${slugify(term)}`,
@@ -77,6 +78,7 @@ function heuristicAnalysis(manifest: SourceManifest, text: string): SourceAnalys
   return {
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    schemaHash,
     title: deriveTitle(manifest, text),
     summary: firstSentences(normalized, 3) || truncate(normalized, 280) || `Imported ${manifest.sourceKind} source.`,
     concepts,
@@ -94,10 +96,24 @@ function heuristicAnalysis(manifest: SourceManifest, text: string): SourceAnalys
   };
 }
 
-async function providerAnalysis(manifest: SourceManifest, text: string, provider: ProviderAdapter): Promise<SourceAnalysis> {
+async function providerAnalysis(
+  manifest: SourceManifest,
+  text: string,
+  provider: ProviderAdapter,
+  schema: VaultSchema
+): Promise<SourceAnalysis> {
   const parsed = await provider.generateStructured(
     {
-      system: "You are compiling a durable markdown wiki and graph. Prefer grounded synthesis over creativity.",
+      system: [
+        "You are compiling a durable markdown wiki and graph. Prefer grounded synthesis over creativity.",
+        "",
+        "Follow the vault schema when choosing titles, categories, relationships, and summaries.",
+        "",
+        `Vault schema path: ${schema.path}`,
+        "",
+        "Vault schema instructions:",
+        truncate(schema.content, 6000)
+      ].join("\n"),
       prompt: `Analyze the following source and return structured JSON.\n\nSource title: ${manifest.title}\nSource kind: ${manifest.sourceKind}\nSource id: ${manifest.sourceId}\n\nText:\n${truncate(text, 18000)}`
     },
     sourceAnalysisSchema
@@ -106,6 +122,7 @@ async function providerAnalysis(manifest: SourceManifest, text: string, provider
   return {
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    schemaHash: schema.hash,
     title: parsed.title,
     summary: parsed.summary,
     concepts: parsed.concepts.map((term) => ({
@@ -135,11 +152,12 @@ export async function analyzeSource(
   manifest: SourceManifest,
   extractedText: string | undefined,
   provider: ProviderAdapter,
-  paths: ResolvedPaths
+  paths: ResolvedPaths,
+  schema: VaultSchema
 ): Promise<SourceAnalysis> {
   const cachePath = path.join(paths.analysesDir, `${manifest.sourceId}.json`);
   const cached = await readJsonFile<SourceAnalysis>(cachePath);
-  if (cached && cached.sourceHash === manifest.contentHash) {
+  if (cached && cached.sourceHash === manifest.contentHash && cached.schemaHash === schema.hash) {
     return cached;
   }
 
@@ -150,6 +168,7 @@ export async function analyzeSource(
     analysis = {
       sourceId: manifest.sourceId,
       sourceHash: manifest.contentHash,
+      schemaHash: schema.hash,
       title: manifest.title,
       summary: `Imported ${manifest.sourceKind} source. Text extraction is not yet available for this source.`,
       concepts: [],
@@ -159,12 +178,12 @@ export async function analyzeSource(
       producedAt: new Date().toISOString()
     };
   } else if (provider.type === "heuristic") {
-    analysis = heuristicAnalysis(manifest, content);
+    analysis = heuristicAnalysis(manifest, content, schema.hash);
   } else {
     try {
-      analysis = await providerAnalysis(manifest, content, provider);
+      analysis = await providerAnalysis(manifest, content, provider, schema);
     } catch {
-      analysis = heuristicAnalysis(manifest, content);
+      analysis = heuristicAnalysis(manifest, content, schema.hash);
     }
   }
 

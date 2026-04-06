@@ -23,6 +23,7 @@ Installed commands:
 mkdir my-vault
 cd my-vault
 swarmvault init
+sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault compile
 swarmvault query "What keeps recurring?" --save
@@ -41,6 +42,9 @@ Create a workspace with:
 - `state/`
 - `agent/`
 - `swarmvault.config.json`
+- `swarmvault.schema.md`
+
+The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
 ### `swarmvault ingest <path-or-url>`
 
@@ -58,9 +62,11 @@ Compile the current manifests into:
 - structured graph data in `state/graph.json`
 - local search data in `state/search.sqlite`
 
+The compiler also reads `swarmvault.schema.md` and records a `schema_hash` in generated pages so schema edits can mark pages stale.
+
 ### `swarmvault query "<question>" [--save]`
 
-Query the compiled vault. With `--save`, the answer is written into `wiki/outputs/` so the result becomes part of the vault.
+Query the compiled vault. The query layer also reads `swarmvault.schema.md`, so answers follow the vault’s own structure and grounding rules. With `--save`, the answer is written into `wiki/outputs/` so the result becomes part of the vault.
 
 ### `swarmvault lint`
 
@@ -82,6 +88,8 @@ Run SwarmVault as a local MCP server over stdio. This exposes the vault to compa
 - `ingest_input`
 - `compile_vault`
 - `lint_vault`
+
+The MCP surface also exposes `swarmvault://schema` and includes `schemaPath` in `workspace_info`.
 
 ### `swarmvault graph serve`
 

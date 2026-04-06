@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { ensureDir, fileExists, readJsonFile, writeJsonFile } from "./utils.js";
@@ -6,6 +7,8 @@ import { providerCapabilitySchema, providerTypeSchema, type ResolvedPaths, type 
 
 const PRIMARY_CONFIG_FILENAME = "swarmvault.config.json";
 const LEGACY_CONFIG_FILENAME = "vault.config.json";
+export const PRIMARY_SCHEMA_FILENAME = "swarmvault.schema.md";
+export const LEGACY_SCHEMA_FILENAME = "schema.md";
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 const providerConfigSchema = z.object({
@@ -69,6 +72,53 @@ export function defaultVaultConfig(): VaultConfig {
   };
 }
 
+export function defaultVaultSchema(): string {
+  return [
+    "# SwarmVault Schema",
+    "",
+    "Edit this file to teach SwarmVault how this vault should be organized and maintained.",
+    "",
+    "## Vault Purpose",
+    "",
+    "- Describe the domain this vault covers.",
+    "- Note the intended audience and the kinds of questions the vault should answer well.",
+    "",
+    "## Naming Conventions",
+    "",
+    "- Prefer stable, descriptive page titles.",
+    "- Keep concept and entity names specific to the domain.",
+    "",
+    "## Page Structure Rules",
+    "",
+    "- Source pages should stay grounded in the original material.",
+    "- Concept and entity pages should aggregate source-backed claims instead of inventing new ones.",
+    "- Preserve contradictions instead of smoothing them away.",
+    "",
+    "## Categories",
+    "",
+    "- List domain-specific concept categories here.",
+    "- List important entity types here.",
+    "",
+    "## Relationship Types",
+    "",
+    "- Mentions",
+    "- Supports",
+    "- Contradicts",
+    "- Depends on",
+    "",
+    "## Grounding Rules",
+    "",
+    "- Prefer raw sources over summaries.",
+    "- Cite source ids whenever claims are stated.",
+    "- Do not treat the wiki as a source of truth when the raw material disagrees.",
+    "",
+    "## Exclusions",
+    "",
+    "- List topics, claims, or page types the compiler should avoid generating.",
+    ""
+  ].join("\n");
+}
+
 async function findConfigPath(rootDir: string): Promise<string> {
   const primaryPath = path.join(rootDir, PRIMARY_CONFIG_FILENAME);
   if (await fileExists(primaryPath)) {
@@ -83,7 +133,26 @@ async function findConfigPath(rootDir: string): Promise<string> {
   return primaryPath;
 }
 
-export function resolvePaths(rootDir: string, config?: VaultConfig, configPath = path.join(rootDir, PRIMARY_CONFIG_FILENAME)): ResolvedPaths {
+async function findSchemaPath(rootDir: string): Promise<string> {
+  const primaryPath = path.join(rootDir, PRIMARY_SCHEMA_FILENAME);
+  if (await fileExists(primaryPath)) {
+    return primaryPath;
+  }
+
+  const legacyPath = path.join(rootDir, LEGACY_SCHEMA_FILENAME);
+  if (await fileExists(legacyPath)) {
+    return legacyPath;
+  }
+
+  return primaryPath;
+}
+
+export function resolvePaths(
+  rootDir: string,
+  config?: VaultConfig,
+  configPath = path.join(rootDir, PRIMARY_CONFIG_FILENAME),
+  schemaPath = path.join(rootDir, PRIMARY_SCHEMA_FILENAME)
+): ResolvedPaths {
   const effective = config ?? defaultVaultConfig();
   const rawDir = path.resolve(rootDir, effective.workspace.rawDir);
   const rawSourcesDir = path.join(rawDir, "sources");
@@ -95,6 +164,7 @@ export function resolvePaths(rootDir: string, config?: VaultConfig, configPath =
 
   return {
     rootDir,
+    schemaPath,
     rawDir,
     rawSourcesDir,
     rawAssetsDir,
@@ -116,18 +186,22 @@ export function resolvePaths(rootDir: string, config?: VaultConfig, configPath =
 
 export async function loadVaultConfig(rootDir: string): Promise<{ config: VaultConfig; paths: ResolvedPaths }> {
   const configPath = await findConfigPath(rootDir);
+  const schemaPath = await findSchemaPath(rootDir);
   const raw = await readJsonFile<unknown>(configPath);
   const parsed = vaultConfigSchema.parse(raw ?? defaultVaultConfig());
   return {
     config: parsed,
-    paths: resolvePaths(rootDir, parsed, configPath)
+    paths: resolvePaths(rootDir, parsed, configPath, schemaPath)
   };
 }
 
 export async function initWorkspace(rootDir: string): Promise<{ config: VaultConfig; paths: ResolvedPaths }> {
   const configPath = await findConfigPath(rootDir);
+  const schemaPath = await findSchemaPath(rootDir);
   const config = (await fileExists(configPath)) ? (await loadVaultConfig(rootDir)).config : defaultVaultConfig();
-  const paths = resolvePaths(rootDir, config, configPath);
+  const paths = resolvePaths(rootDir, config, configPath, schemaPath);
+  const primarySchemaPath = path.join(rootDir, PRIMARY_SCHEMA_FILENAME);
+  const legacySchemaPath = path.join(rootDir, LEGACY_SCHEMA_FILENAME);
 
   await Promise.all([
     ensureDir(paths.rawDir),
@@ -144,6 +218,11 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
 
   if (!(await fileExists(configPath))) {
     await writeJsonFile(configPath, config);
+  }
+
+  if (!(await fileExists(primarySchemaPath)) && !(await fileExists(legacySchemaPath))) {
+    await ensureDir(path.dirname(primarySchemaPath));
+    await fs.writeFile(primarySchemaPath, defaultVaultSchema(), "utf8");
   }
 
   return { config, paths };

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- Added the schema layer with canonical `swarmvault.schema.md` creation during `swarmvault init`
+- Threaded schema guidance through compile and query so each vault can define its own naming rules, categories, grounding expectations, and exclusions
+- Added `schema_hash` tracking to generated pages and stale-page linting when the schema changes
+- Exposed schema metadata through MCP with `swarmvault://schema` and `schemaPath` in `workspace_info`
+- Updated OSS docs and site docs to explain the schema-guided workflow
+
 ## 0.1.3
 
 - Added local MCP support with `swarmvault mcp`, tool registration, and read-oriented MCP resources
