@@ -1,26 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import cytoscape, { type Core } from "cytoscape";
-
-type GraphNode = {
-  id: string;
-  type: string;
-  label: string;
-  sourceIds: string[];
-};
-
-type GraphEdge = {
-  id: string;
-  source: string;
-  target: string;
-  relation: string;
-  status: string;
-};
-
-type GraphArtifact = {
-  generatedAt: string;
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-};
+import { fetchGraphArtifact, type ViewerGraphArtifact, type ViewerGraphNode } from "./lib";
 
 const COLORS: Record<string, string> = {
   source: "#f59e0b",
@@ -31,18 +11,12 @@ const COLORS: Record<string, string> = {
 export function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
-  const [graph, setGraph] = useState<GraphArtifact | null>(null);
-  const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [graph, setGraph] = useState<ViewerGraphArtifact | null>(null);
+  const [selected, setSelected] = useState<ViewerGraphNode | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
   useEffect(() => {
-    void fetch("/api/graph")
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-        return response.json() as Promise<GraphArtifact>;
-      })
+    void fetchGraphArtifact()
       .then(setGraph)
       .catch(() => setGraph({ generatedAt: "", nodes: [], edges: [] }));
   }, []);
@@ -108,7 +82,7 @@ export function App() {
     });
 
     cy.on("select", "node", (event) => {
-      setSelected(event.target.data() as GraphNode);
+      setSelected(event.target.data() as ViewerGraphNode);
     });
     cy.on("unselect", "node", () => {
       setSelected(null);

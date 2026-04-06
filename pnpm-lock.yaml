@@ -33,6 +33,9 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
+      '@swarmvaultai/viewer':
+        specifier: workspace:*
+        version: link:../viewer
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -92,6 +95,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.0.4
         version: 5.2.0(vite@7.3.2(@types/node@24.12.2))
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

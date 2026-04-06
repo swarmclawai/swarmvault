@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Global CLI for SwarmVault.",
   "type": "module",
   "main": "dist/index.js",
@@ -8,6 +8,25 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarmclawai/swarmvault.git"
+  },
+  "homepage": "https://swarmvault.ai",
+  "bugs": {
+    "url": "https://github.com/swarmclawai/swarmvault/issues"
+  },
+  "keywords": [
+    "swarmvault",
+    "llm",
+    "knowledge-base",
+    "markdown",
+    "obsidian",
+    "graph",
+    "cli",
+    "local-first"
+  ],
+  "license": "MIT",
   "bin": {
     "swarmvault": "dist/index.js",
     "vault": "dist/index.js"
