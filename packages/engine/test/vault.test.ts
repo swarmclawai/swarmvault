@@ -679,7 +679,11 @@ describe("swarmvault workflow", () => {
 
       await waitFor(async () => {
         const modulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${utilManifest?.sourceId}.md`), "utf8");
-        return modulePage.includes("watched");
+        const jobsLog = await fs
+          .readFile(path.join(rootDir, "state", "jobs.ndjson"), "utf8")
+          .then((value) => value.trim())
+          .catch(() => "");
+        return modulePage.includes("watched") && jobsLog.length > 0;
       }, 19_000);
 
       const jobsLog = await fs.readFile(path.join(rootDir, "state", "jobs.ndjson"), "utf8");
