@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -23,11 +24,49 @@ import {
 } from "../src/index.js";
 
 const tempDirs: string[] = [];
+const fixtureDirs: string[] = [];
 
 async function createTempWorkspace(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-compound-"));
   tempDirs.push(dir);
   return dir;
+}
+
+async function ensureViewerDistFixture(): Promise<void> {
+  const viewerDistDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../viewer/dist");
+  const indexPath = path.join(viewerDistDir, "index.html");
+  try {
+    await fs.access(indexPath);
+    return;
+  } catch {
+    fixtureDirs.push(viewerDistDir);
+  }
+
+  const assetsDir = path.join(viewerDistDir, "assets");
+  await fs.mkdir(assetsDir, { recursive: true });
+  await Promise.all([
+    fs.writeFile(
+      indexPath,
+      [
+        "<!doctype html>",
+        '<html lang="en">',
+        "  <head>",
+        '    <meta charset="UTF-8" />',
+        '    <meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+        '    <link rel="stylesheet" crossorigin href="/assets/index.css">',
+        "  </head>",
+        "  <body>",
+        '    <div id="root"></div>',
+        '    <script type="module" crossorigin src="/assets/index.js"></script>',
+        "  </body>",
+        "</html>",
+        ""
+      ].join("\n"),
+      "utf8"
+    ),
+    fs.writeFile(path.join(assetsDir, "index.js"), 'document.getElementById("root")?.replaceChildren("SwarmVault Viewer");\n', "utf8"),
+    fs.writeFile(path.join(assetsDir, "index.css"), "body{margin:0;font-family:sans-serif;}\n", "utf8")
+  ]);
 }
 
 async function waitFor(condition: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
@@ -42,7 +81,10 @@ async function waitFor(condition: () => Promise<boolean>, timeoutMs = 10_000): P
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all([
+    ...tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    ...fixtureDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true }))
+  ]);
 });
 
 describe("compounding loop", () => {
@@ -645,6 +687,7 @@ describe("compounding loop", () => {
   it("writes slide-format outputs with marp metadata and exports the graph as standalone HTML", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
+    await ensureViewerDistFixture();
     await fs.writeFile(path.join(rootDir, "slides.md"), "# Slides\n\nGraphs and exports should be easy to share.", "utf8");
     await ingestInput(rootDir, "slides.md");
     await compileVault(rootDir);
