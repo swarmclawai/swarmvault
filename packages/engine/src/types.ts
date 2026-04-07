@@ -14,9 +14,24 @@ export const providerCapabilitySchema = z.enum([
 
 export type ProviderCapability = z.infer<typeof providerCapabilitySchema>;
 
-export const providerTypeSchema = z.enum(["heuristic", "openai", "ollama", "anthropic", "gemini", "openai-compatible", "custom"]);
+export const providerTypeSchema = z.enum([
+  "heuristic",
+  "openai",
+  "ollama",
+  "anthropic",
+  "gemini",
+  "openai-compatible",
+  "openrouter",
+  "groq",
+  "together",
+  "xai",
+  "cerebras",
+  "custom"
+]);
 
 export type ProviderType = z.infer<typeof providerTypeSchema>;
+export const agentTypeSchema = z.enum(["codex", "claude", "cursor", "goose", "pi", "gemini"]);
+export type AgentType = z.infer<typeof agentTypeSchema>;
 
 export type PageKind = "index" | "source" | "module" | "concept" | "entity" | "output" | "insight";
 export type Freshness = "fresh" | "stale";
@@ -30,7 +45,7 @@ export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "binary" | "code";
-export type CodeLanguage = "javascript" | "jsx" | "typescript" | "tsx";
+export type CodeLanguage = "javascript" | "jsx" | "typescript" | "tsx" | "python" | "go" | "rust" | "java";
 export type CodeSymbolKind = "function" | "class" | "interface" | "type_alias" | "enum" | "variable";
 export type OrchestrationRole = "research" | "audit" | "context" | "safety";
 
@@ -150,7 +165,7 @@ export interface VaultConfig {
       schemaPath?: string;
     }
   >;
-  agents: Array<"codex" | "claude" | "cursor">;
+  agents: AgentType[];
   schedules?: Record<string, ScheduleJobConfig>;
   orchestration?: OrchestrationConfig;
   webSearch?: {

@@ -11,7 +11,7 @@ import type { GraphArtifact } from "./types.js";
 import { fileExists, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
 import { compileVault, getWorkspaceInfo, lintVault, listPages, queryVault, readPage, searchVault } from "./vault.js";
 
-const SERVER_VERSION = "0.1.14";
+const SERVER_VERSION = "0.1.15";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({

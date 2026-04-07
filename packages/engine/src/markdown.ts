@@ -279,7 +279,8 @@ export function buildModulePage(input: {
   const callsSection = code.symbols.flatMap((symbol) => symbol.calls.map((target) => `- \`${symbol.name}\` calls \`${target}\``));
   const diagnosticsSection = code.diagnostics.length
     ? code.diagnostics.map(
-        (diagnostic) => `- ${diagnostic.category} TS${diagnostic.code} at ${diagnostic.line}:${diagnostic.column}: ${diagnostic.message}`
+        (diagnostic) =>
+          `- ${diagnostic.category} diagnostic ${diagnostic.code} at ${diagnostic.line}:${diagnostic.column}: ${diagnostic.message}`
       )
     : ["- No parser diagnostics."];
 

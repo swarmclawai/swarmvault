@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { initWorkspace } from "./config.js";
+import type { AgentType } from "./types.js";
 import { ensureDir, fileExists } from "./utils.js";
 
 const managedStart = "<!-- swarmvault:managed:start -->";
@@ -8,10 +9,10 @@ const managedEnd = "<!-- swarmvault:managed:end -->";
 const legacyManagedStart = "<!-- vault:managed:start -->";
 const legacyManagedEnd = "<!-- vault:managed:end -->";
 
-function buildManagedBlock(agent: "codex" | "claude" | "cursor"): string {
+function buildManagedBlock(target: "agents" | "claude" | "gemini" | "cursor"): string {
   const body = [
     managedStart,
-    `# SwarmVault Rules (${agent})`,
+    "# SwarmVault Rules",
     "",
     "- Read `swarmvault.schema.md` before compile or query style work. It is the canonical schema path.",
     "- Treat `raw/` as immutable source input.",
@@ -24,11 +25,28 @@ function buildManagedBlock(agent: "codex" | "claude" | "cursor"): string {
     ""
   ].join("\n");
 
-  if (agent === "cursor") {
+  if (target === "cursor") {
     return body;
   }
 
   return body;
+}
+
+function targetPathForAgent(rootDir: string, agent: AgentType): string {
+  switch (agent) {
+    case "codex":
+    case "goose":
+    case "pi":
+      return path.join(rootDir, "AGENTS.md");
+    case "claude":
+      return path.join(rootDir, "CLAUDE.md");
+    case "gemini":
+      return path.join(rootDir, "GEMINI.md");
+    case "cursor":
+      return path.join(rootDir, ".cursor", "rules", "swarmvault.mdc");
+    default:
+      throw new Error(`Unsupported agent ${String(agent)}`);
+  }
 }
 
 async function upsertManagedBlock(filePath: string, block: string): Promise<void> {
@@ -50,26 +68,28 @@ async function upsertManagedBlock(filePath: string, block: string): Promise<void
   await fs.writeFile(filePath, `${existing.trimEnd()}\n\n${block}\n`, "utf8");
 }
 
-export async function installAgent(rootDir: string, agent: "codex" | "claude" | "cursor"): Promise<string> {
+export async function installAgent(rootDir: string, agent: AgentType): Promise<string> {
   await initWorkspace(rootDir);
-  const block = buildManagedBlock(agent);
+  const target = targetPathForAgent(rootDir, agent);
 
   switch (agent) {
-    case "codex": {
-      const target = path.join(rootDir, "AGENTS.md");
-      await upsertManagedBlock(target, block);
+    case "codex":
+    case "goose":
+    case "pi":
+      await upsertManagedBlock(target, buildManagedBlock("agents"));
+      return target;
+    case "claude": {
+      await upsertManagedBlock(target, buildManagedBlock("claude"));
       return target;
     }
-    case "claude": {
-      const target = path.join(rootDir, "CLAUDE.md");
-      await upsertManagedBlock(target, block);
+    case "gemini": {
+      await upsertManagedBlock(target, buildManagedBlock("gemini"));
       return target;
     }
     case "cursor": {
-      const rulesDir = path.join(rootDir, ".cursor", "rules");
+      const rulesDir = path.dirname(target);
       await ensureDir(rulesDir);
-      const target = path.join(rulesDir, "swarmvault.mdc");
-      await fs.writeFile(target, `${block}\n`, "utf8");
+      await fs.writeFile(target, `${buildManagedBlock("cursor")}\n`, "utf8");
       return target;
     }
     default:
@@ -79,5 +99,12 @@ export async function installAgent(rootDir: string, agent: "codex" | "claude" | 
 
 export async function installConfiguredAgents(rootDir: string): Promise<string[]> {
   const { config } = await initWorkspace(rootDir);
-  return Promise.all(config.agents.map((agent) => installAgent(rootDir, agent)));
+  const dedupedTargets = new Map<string, AgentType>();
+  for (const agent of config.agents) {
+    const target = targetPathForAgent(rootDir, agent);
+    if (!dedupedTargets.has(target)) {
+      dedupedTargets.set(target, agent);
+    }
+  }
+  return Promise.all([...dedupedTargets.values()].map((agent) => installAgent(rootDir, agent)));
 }

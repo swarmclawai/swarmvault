@@ -4,7 +4,8 @@ import type {
   GenerationResponse,
   ImageGenerationRequest,
   ImageGenerationResponse,
-  ProviderCapability
+  ProviderCapability,
+  ProviderType
 } from "../types.js";
 import { extractJson } from "../utils.js";
 import { BaseProviderAdapter } from "./base.js";
@@ -143,7 +144,7 @@ export class OpenAiCompatibleProviderAdapter extends BaseProviderAdapter {
   private readonly headers?: Record<string, string>;
   private readonly apiStyle: "responses" | "chat";
 
-  public constructor(id: string, type: "openai" | "ollama" | "openai-compatible", model: string, options: OpenAiCompatibleOptions) {
+  public constructor(id: string, type: ProviderType, model: string, options: OpenAiCompatibleOptions) {
     super(id, type, model, options.capabilities);
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.apiKey = options.apiKey;

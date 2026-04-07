@@ -26,7 +26,7 @@ The open source runtime gives you:
 - Local full-text search over compiled pages
 - Canonical session artifacts in `state/sessions/` for compile, query, explore, lint, and watch runs
 - CLI workflows for ingest, inbox import, compile, query, explore, lint, scheduling, watch, MCP, and graph serving
-- Pluggable model providers, including OpenAI, Anthropic, Gemini, Ollama, generic OpenAI-compatible APIs, and custom adapters
+- Pluggable model providers, including OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible APIs, and custom adapters
 - Optional role orchestration for research, audit, context, and safety work
 - Optional web-search augmentation for deep lint findings
 
@@ -91,7 +91,9 @@ my-vault/
 |   |-- index.md
 |   |-- log.md
 |   |-- candidates/
+|   |-- code/
 |   |-- insights/
+|   |-- projects/
 |   |-- sources/
 |   |-- concepts/
 |   |-- entities/
@@ -148,7 +150,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault candidate list|promote|archive`: inspect and resolve staged concept and entity candidates
 - `swarmvault graph serve`: open the local graph workspace with graph, search, and page preview
 - `swarmvault graph export --html <output>`: export the graph workspace as a standalone HTML file
-- `swarmvault install --agent codex|claude|cursor`: install agent-specific rules
+- `swarmvault install --agent codex|claude|cursor|goose|pi|gemini`: install agent-specific rules
 
 Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
 
@@ -188,6 +190,11 @@ Built-in provider types:
 - `anthropic`
 - `gemini`
 - `ollama`
+- `openrouter`
+- `groq`
+- `together`
+- `xai`
+- `cerebras`
 - `openai-compatible`
 - `custom`
 

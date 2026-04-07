@@ -6,7 +6,17 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileVault, createMcpServer, importInbox, ingestInput, initVault, lintVault, queryVault, watchVault } from "../src/index.js";
+import {
+  compileVault,
+  createMcpServer,
+  importInbox,
+  ingestInput,
+  initVault,
+  installAgent,
+  lintVault,
+  queryVault,
+  watchVault
+} from "../src/index.js";
 
 const tempDirs: string[] = [];
 type ToolContent = Array<{ type?: string; text?: string }>;
@@ -106,6 +116,25 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, ".obsidian", "core-plugins.json"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, ".obsidian", "graph.json"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, ".obsidian", "workspace.json"))).resolves.toBeUndefined();
+  });
+
+  it("installs agent instructions for goose, pi, and gemini targets", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const gooseTarget = await installAgent(rootDir, "goose");
+    const piTarget = await installAgent(rootDir, "pi");
+    const geminiTarget = await installAgent(rootDir, "gemini");
+
+    expect(gooseTarget).toBe(path.join(rootDir, "AGENTS.md"));
+    expect(piTarget).toBe(path.join(rootDir, "AGENTS.md"));
+    expect(geminiTarget).toBe(path.join(rootDir, "GEMINI.md"));
+
+    const agentsContent = await fs.readFile(gooseTarget, "utf8");
+    const geminiContent = await fs.readFile(geminiTarget, "utf8");
+    expect(agentsContent).toContain("# SwarmVault Rules");
+    expect(agentsContent.match(/swarmvault:managed:start/g)?.length ?? 0).toBe(1);
+    expect(geminiContent).toContain("# SwarmVault Rules");
   });
 
   it("ingests, compiles, queries, and lints using the heuristic provider", async () => {

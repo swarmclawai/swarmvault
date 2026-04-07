@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
+  agentTypeSchema,
   providerCapabilitySchema,
   providerTypeSchema,
   type ResolvedPaths,
@@ -119,7 +120,7 @@ const vaultConfigSchema = z.object({
       })
     )
     .optional(),
-  agents: z.array(z.enum(["codex", "claude", "cursor"])).default(["codex", "claude", "cursor"]),
+  agents: z.array(agentTypeSchema).default(["codex", "claude", "cursor"]),
   schedules: z
     .record(z.string(), z.object({ enabled: z.boolean().optional(), when: scheduleTriggerSchema, task: scheduledTaskSchema }))
     .optional(),

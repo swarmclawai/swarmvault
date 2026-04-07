@@ -4,6 +4,14 @@
 
 Nothing yet.
 
+## 0.1.15
+
+- Added `swarmvault install --agent goose|pi|gemini`, with shared `AGENTS.md` handling for Codex, Goose, and Pi plus `GEMINI.md` support for Gemini CLI
+- Added named provider presets for `openrouter`, `groq`, `together`, `xai`, and `cerebras` as first-class config types over the OpenAI-compatible adapter
+- Expanded code-aware ingestion beyond JS/TS to include Python, Go, Rust, and Java module pages, graph nodes, and code relations
+- Added regression coverage for the new provider presets, multi-language code ingestion, and the new agent install targets
+- Updated OSS docs, package READMEs, the ClawHub skill, and the public site docs for the new agent, provider, and code-language surfaces
+
 ## 0.1.14
 
 - Fixed the published CLI manifest so real `npm install -g @swarmvaultai/cli` resolves `@swarmvaultai/engine` to the released semver instead of a `workspace:*` dependency

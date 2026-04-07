@@ -165,7 +165,7 @@ Start the local graph workspace backed by `state/graph.json`, `/api/search`, and
 
 Export the graph workspace as a standalone HTML file with embedded graph and page data for offline sharing.
 
-### `swarmvault install --agent <codex|claude|cursor>`
+### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini>`
 
 Install agent-specific rules into the current project so an agent understands the SwarmVault workspace contract and workflow.
 

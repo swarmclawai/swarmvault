@@ -23,6 +23,26 @@ function envOrUndefined(name?: string): string | undefined {
   return name ? process.env[name] : undefined;
 }
 
+function createOpenAiCompatiblePreset(
+  id: string,
+  type: ProviderConfig["type"],
+  config: ProviderConfig,
+  defaults: {
+    baseUrl: string;
+    apiKeyEnv?: string;
+    apiStyle?: "responses" | "chat";
+    capabilities: ProviderCapability[];
+  }
+): ProviderAdapter {
+  return new OpenAiCompatibleProviderAdapter(id, type, config.model, {
+    baseUrl: config.baseUrl ?? defaults.baseUrl,
+    apiKey: envOrUndefined(config.apiKeyEnv ?? defaults.apiKeyEnv),
+    headers: config.headers,
+    apiStyle: config.apiStyle ?? defaults.apiStyle ?? "chat",
+    capabilities: resolveCapabilities(config, defaults.capabilities)
+  });
+}
+
 export async function createProvider(id: string, config: ProviderConfig, rootDir: string): Promise<ProviderAdapter> {
   switch (config.type) {
     case "heuristic":
@@ -50,6 +70,41 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
         headers: config.headers,
         apiStyle: config.apiStyle ?? "responses",
         capabilities: resolveCapabilities(config, ["chat", "structured"])
+      });
+    case "openrouter":
+      return createOpenAiCompatiblePreset(id, "openrouter", config, {
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKeyEnv: "OPENROUTER_API_KEY",
+        apiStyle: "chat",
+        capabilities: ["chat", "structured"]
+      });
+    case "groq":
+      return createOpenAiCompatiblePreset(id, "groq", config, {
+        baseUrl: "https://api.groq.com/openai/v1",
+        apiKeyEnv: "GROQ_API_KEY",
+        apiStyle: "chat",
+        capabilities: ["chat", "structured"]
+      });
+    case "together":
+      return createOpenAiCompatiblePreset(id, "together", config, {
+        baseUrl: "https://api.together.xyz/v1",
+        apiKeyEnv: "TOGETHER_API_KEY",
+        apiStyle: "chat",
+        capabilities: ["chat", "structured"]
+      });
+    case "xai":
+      return createOpenAiCompatiblePreset(id, "xai", config, {
+        baseUrl: "https://api.x.ai/v1",
+        apiKeyEnv: "XAI_API_KEY",
+        apiStyle: "chat",
+        capabilities: ["chat", "structured"]
+      });
+    case "cerebras":
+      return createOpenAiCompatiblePreset(id, "cerebras", config, {
+        baseUrl: "https://api.cerebras.ai/v1",
+        apiKeyEnv: "CEREBRAS_API_KEY",
+        apiStyle: "chat",
+        capabilities: ["chat", "structured"]
       });
     case "anthropic":
       return new AnthropicProviderAdapter(id, config.model, {
