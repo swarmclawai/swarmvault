@@ -42,7 +42,7 @@
   "scripts": {
     "build": "test -f ../viewer/dist/index.html || pnpm --dir ../viewer build; tsup src/index.ts --format esm --dts && rm -rf dist/viewer && mkdir -p dist/viewer && cp -R ../viewer/dist/. dist/viewer/",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

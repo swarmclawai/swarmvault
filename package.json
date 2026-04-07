@@ -7,7 +7,12 @@
   "scripts": {
     "build": "pnpm --filter @swarmvaultai/viewer build && pnpm --filter @swarmvaultai/engine build && pnpm --filter @swarmvaultai/cli build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "pnpm -r typecheck",
+    "check": "biome check . && pnpm -r typecheck",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",

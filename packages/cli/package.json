@@ -40,7 +40,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
     "test": "node -e \"process.exit(0)\"",
-    "lint": "tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@swarmvaultai/engine": "workspace:*",

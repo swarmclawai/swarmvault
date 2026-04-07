@@ -42,7 +42,7 @@
     "build:lib": "tsup src/lib.ts --format esm --dts --out-dir dist --clean",
     "build:app": "vite build",
     "test": "node -e \"process.exit(0)\"",
-    "lint": "tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "cytoscape": "^3.33.1",
