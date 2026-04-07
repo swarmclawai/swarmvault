@@ -439,8 +439,8 @@ program
 program
   .command("install")
   .description("Install SwarmVault instructions for an agent in the current project.")
-  .requiredOption("--agent <agent>", "codex, claude, cursor, goose, pi, or gemini")
-  .action(async (options: { agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" }) => {
+  .requiredOption("--agent <agent>", "codex, claude, cursor, goose, pi, gemini, or opencode")
+  .action(async (options: { agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" | "opencode" }) => {
     const target = await installAgent(process.cwd(), options.agent);
     if (isJson()) {
       emitJson({ agent: options.agent, target });

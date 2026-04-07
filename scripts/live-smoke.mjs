@@ -73,7 +73,7 @@ try {
     await assertExists(path.join(workspaceDir, "state"));
   });
 
-  if (lane === "openai" || lane === "ollama") {
+  if (lane === "openai" || lane === "ollama" || lane === "anthropic") {
     await runStep(`configure-${lane}`, async () => {
       const configPath = path.join(workspaceDir, "swarmvault.config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8"));
@@ -84,7 +84,7 @@ try {
           model: process.env.SWARMVAULT_OPENAI_MODEL ?? "gpt-4.1-mini",
           apiKeyEnv: "OPENAI_API_KEY"
         };
-      } else {
+      } else if (lane === "ollama") {
         assert.ok(process.env.OLLAMA_API_KEY, "OLLAMA_API_KEY is required for the ollama live-smoke lane");
         config.providers.live = {
           type: "ollama",
@@ -92,6 +92,13 @@ try {
           apiKeyEnv: "OLLAMA_API_KEY",
           baseUrl: process.env.SWARMVAULT_OLLAMA_BASE_URL ?? "https://ollama.com/v1",
           apiStyle: process.env.SWARMVAULT_OLLAMA_API_STYLE ?? "chat"
+        };
+      } else {
+        assert.ok(process.env.ANTHROPIC_API_KEY, "ANTHROPIC_API_KEY is required for the anthropic live-smoke lane");
+        config.providers.live = {
+          type: "anthropic",
+          model: process.env.SWARMVAULT_ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514",
+          apiKeyEnv: "ANTHROPIC_API_KEY"
         };
       }
       config.tasks = {
@@ -568,11 +575,112 @@ try {
     });
 
     await runStep("install-agent", async () => {
-      const result = await runCliJson(["install", "--agent", "codex"]);
-      assert.equal(result.agent, "codex", "install command returned wrong agent");
+      const codex = await runCliJson(["install", "--agent", "codex"]);
+      const claude = await runCliJson(["install", "--agent", "claude"]);
+      const opencode = await runCliJson(["install", "--agent", "opencode"]);
+
+      assert.equal(codex.agent, "codex", "install command returned wrong codex agent");
+      assert.equal(claude.agent, "claude", "install command returned wrong claude agent");
+      assert.equal(opencode.agent, "opencode", "install command returned wrong opencode agent");
+
+      assert.equal(codex.target, path.join(workspaceDir, "AGENTS.md"), "codex target path mismatch");
+      assert.equal(claude.target, path.join(workspaceDir, "CLAUDE.md"), "claude target path mismatch");
+      assert.equal(opencode.target, path.join(workspaceDir, "AGENTS.md"), "opencode target path mismatch");
+
       await assertExists(path.join(workspaceDir, "AGENTS.md"));
-      const content = await fs.readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
-      assert.ok(content.includes("SwarmVault Rules (codex)"), "AGENTS.md missing managed rules");
+      await assertExists(path.join(workspaceDir, "CLAUDE.md"));
+      const agentsContent = await fs.readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
+      const claudeContent = await fs.readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+      assert.ok(agentsContent.includes("# SwarmVault Rules"), "AGENTS.md missing managed rules");
+      assert.ok(claudeContent.includes("# SwarmVault Rules"), "CLAUDE.md missing managed rules");
+    });
+
+    await runStep("agent-clis", async () => {
+      const prompt =
+        "Reply with exactly two lines. First line: file=<workspace instruction file you used>. Second line: command=<one SwarmVault command recommended by that file>.";
+
+      if (await commandOnPath("codex")) {
+        const codexOutputPath = path.join(artifactDir, "codex-smoke.txt");
+        await runCommand(
+          "codex-agent-smoke",
+          "codex",
+          ["exec", "-C", workspaceDir, "--skip-git-repo-check", "-s", "workspace-write", "-o", codexOutputPath, prompt],
+          {
+            cwd: workspaceDir,
+            env: inheritedEnv(),
+            timeoutMs: 120_000
+          }
+        );
+        const codexOutput = await fs.readFile(codexOutputPath, "utf8");
+        assert.ok(codexOutput.includes("AGENTS.md"), "codex smoke did not use AGENTS.md");
+        assert.ok(codexOutput.includes("swarmvault "), "codex smoke did not recommend a SwarmVault command");
+      }
+
+      if (await commandOnPath("claude") && process.env.ANTHROPIC_API_KEY) {
+        const claudeResult = await runCommand(
+          "claude-agent-smoke",
+          "claude",
+          [
+            "-p",
+            "--output-format",
+            "text",
+            "--permission-mode",
+            "bypassPermissions",
+            "--model",
+            process.env.SWARMVAULT_CLAUDE_CODE_MODEL ?? "claude-sonnet-4-6",
+            prompt
+          ],
+          {
+            cwd: workspaceDir,
+            env: inheritedEnv(),
+            timeoutMs: 120_000
+          }
+        );
+        assert.ok(claudeResult.stdout.includes("CLAUDE.md"), "claude smoke did not use CLAUDE.md");
+        assert.ok(claudeResult.stdout.includes("swarmvault "), "claude smoke did not recommend a SwarmVault command");
+      }
+
+      if (await commandOnPath("opencode") && process.env.OLLAMA_API_KEY) {
+        const opencodeModel = process.env.SWARMVAULT_OPENCODE_OLLAMA_MODEL ?? process.env.SWARMVAULT_OLLAMA_MODEL ?? "gpt-oss:20b-cloud";
+        await fs.writeFile(
+          path.join(workspaceDir, "opencode.json"),
+          `${JSON.stringify(
+            {
+              $schema: "https://opencode.ai/config.json",
+              provider: {
+                ollama: {
+                  npm: "@ai-sdk/openai-compatible",
+                  name: "Ollama Cloud",
+                  options: {
+                    baseURL: process.env.SWARMVAULT_OLLAMA_BASE_URL ?? "https://ollama.com/v1",
+                    apiKey: "{env:OLLAMA_API_KEY}"
+                  },
+                  models: {
+                    [opencodeModel]: {
+                      name: opencodeModel
+                    }
+                  }
+                }
+              }
+            },
+            null,
+            2
+          )}\n`,
+          "utf8"
+        );
+        const opencodeResult = await runCommand(
+          "opencode-agent-smoke",
+          "opencode",
+          ["run", "--dir", workspaceDir, "--model", `ollama/${opencodeModel}`, prompt],
+          {
+            cwd: workspaceDir,
+            env: inheritedEnv(),
+            timeoutMs: 120_000
+          }
+        );
+        assert.ok(opencodeResult.stdout.includes("AGENTS.md"), "opencode smoke did not use AGENTS.md");
+        assert.ok(opencodeResult.stdout.includes("swarmvault "), "opencode smoke did not recommend a SwarmVault command");
+      }
     });
   }
 
@@ -616,7 +724,7 @@ function parseArgs(argv) {
       parsed.keepArtifacts = true;
       continue;
     }
-    if (value === "--install-spec") {
+  if (value === "--install-spec") {
       parsed.installSpecs ??= [];
       parsed.installSpecs.push(argv[index + 1]);
       index += 1;
@@ -770,6 +878,18 @@ async function runCommand(label, command, args, options = {}) {
     env: options.env,
     stdio: ["ignore", "pipe", "pipe"]
   });
+  let timedOut = false;
+  let terminateTimer = null;
+  let killTimer = null;
+  if (typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+    terminateTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, 5_000);
+    }, options.timeoutMs);
+  }
 
   let stdout = "";
   let stderr = "";
@@ -784,6 +904,12 @@ async function runCommand(label, command, args, options = {}) {
     child.on("error", reject);
     child.on("close", (code, signal) => resolve({ code, signal }));
   });
+  if (terminateTimer) {
+    clearTimeout(terminateTimer);
+  }
+  if (killTimer) {
+    clearTimeout(killTimer);
+  }
 
   await Promise.all([
     fs.writeFile(stdoutPath, stdout, "utf8"),
@@ -792,7 +918,8 @@ async function runCommand(label, command, args, options = {}) {
   ]);
 
   if (exit.code !== 0) {
-    throw new Error(`Command failed (${command} ${args.join(" ")}): exit=${exit.code ?? "null"} signal=${exit.signal ?? "none"}`);
+    const timeoutSuffix = timedOut ? " timed_out=true" : "";
+    throw new Error(`Command failed (${command} ${args.join(" ")}): exit=${exit.code ?? "null"} signal=${exit.signal ?? "none"}${timeoutSuffix}`);
   }
 
   return { stdout, stderr };
@@ -924,6 +1051,22 @@ function inheritedEnv() {
   const env = { ...process.env };
   delete env.npm_config_prefix;
   return env;
+}
+
+async function commandOnPath(name) {
+  const pathValue = process.env.PATH ?? "";
+  const entries = pathValue.split(path.delimiter).filter(Boolean);
+  const suffixes = process.platform === "win32" ? ["", ".cmd", ".exe", ".bat"] : [""];
+  for (const entry of entries) {
+    for (const suffix of suffixes) {
+      const candidate = path.join(entry, `${name}${suffix}`);
+      try {
+        await fs.access(candidate);
+        return true;
+      } catch {}
+    }
+  }
+  return false;
 }
 
 async function loadMcpClient() {

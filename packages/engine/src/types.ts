@@ -30,7 +30,7 @@ export const providerTypeSchema = z.enum([
 ]);
 
 export type ProviderType = z.infer<typeof providerTypeSchema>;
-export const agentTypeSchema = z.enum(["codex", "claude", "cursor", "goose", "pi", "gemini"]);
+export const agentTypeSchema = z.enum(["codex", "claude", "cursor", "goose", "pi", "gemini", "opencode"]);
 export type AgentType = z.infer<typeof agentTypeSchema>;
 
 export type PageKind = "index" | "source" | "module" | "concept" | "entity" | "output" | "insight";

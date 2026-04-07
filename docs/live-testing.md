@@ -19,13 +19,23 @@ To test a real provider path with Ollama Cloud:
 pnpm live:smoke:ollama
 ```
 
+To test a real provider path with Anthropic:
+
+```bash
+export ANTHROPIC_API_KEY=...
+pnpm live:smoke:anthropic
+```
+
 The runner loads `.env.local` from either the umbrella workspace root or the OSS repo root. Supported overrides:
 
 ```bash
 OLLAMA_API_KEY=...
+ANTHROPIC_API_KEY=...
 SWARMVAULT_OLLAMA_MODEL=gpt-oss:20b-cloud
 SWARMVAULT_OLLAMA_BASE_URL=https://ollama.com/v1
 SWARMVAULT_OLLAMA_API_STYLE=chat
+SWARMVAULT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
+SWARMVAULT_OPENCODE_OLLAMA_MODEL=gpt-oss:20b-cloud
 ```
 
 To test a real provider path with OpenAI:
@@ -65,7 +75,8 @@ Use `pnpm pack` for local tarball preflight installs. Raw `npm pack` preserves w
 - promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
 - run `watch --lint` against the published install and verify `state/jobs.ndjson` plus watch sessions
 - start `mcp` and call tools over stdio, including `search_pages` and chart-format `query_vault`
-- run `install --agent codex`
+- run `install --agent codex|claude|opencode`
+- when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, and OpenCode against `AGENTS.md` using Ollama
 
 ### OpenAI lane
 
@@ -89,6 +100,17 @@ The OpenAI lane is intentionally narrower. It is there to validate one real exte
 - run `lint --deep`
 
 The default cloud model is `gpt-oss:20b-cloud`, and the runner defaults to `SWARMVAULT_OLLAMA_API_STYLE=chat`. You can override both values explicitly.
+
+### Anthropic lane
+
+- install the published CLI from npm
+- initialize a fresh workspace
+- write a temporary Anthropic-backed config override
+- ingest and compile a markdown fixture
+- run `query`
+- run `lint --deep`
+
+The default Anthropic model is `claude-sonnet-4-20250514`, and you can override it with `SWARMVAULT_ANTHROPIC_MODEL`.
 
 ## Failure Artifacts
 

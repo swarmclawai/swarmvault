@@ -118,16 +118,18 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, ".obsidian", "workspace.json"))).resolves.toBeUndefined();
   });
 
-  it("installs agent instructions for goose, pi, and gemini targets", async () => {
+  it("installs agent instructions for goose, pi, opencode, and gemini targets", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
 
     const gooseTarget = await installAgent(rootDir, "goose");
     const piTarget = await installAgent(rootDir, "pi");
+    const opencodeTarget = await installAgent(rootDir, "opencode");
     const geminiTarget = await installAgent(rootDir, "gemini");
 
     expect(gooseTarget).toBe(path.join(rootDir, "AGENTS.md"));
     expect(piTarget).toBe(path.join(rootDir, "AGENTS.md"));
+    expect(opencodeTarget).toBe(path.join(rootDir, "AGENTS.md"));
     expect(geminiTarget).toBe(path.join(rootDir, "GEMINI.md"));
 
     const agentsContent = await fs.readFile(gooseTarget, "utf8");

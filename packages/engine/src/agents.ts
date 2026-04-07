@@ -37,6 +37,7 @@ function targetPathForAgent(rootDir: string, agent: AgentType): string {
     case "codex":
     case "goose":
     case "pi":
+    case "opencode":
       return path.join(rootDir, "AGENTS.md");
     case "claude":
       return path.join(rootDir, "CLAUDE.md");
@@ -76,6 +77,7 @@ export async function installAgent(rootDir: string, agent: AgentType): Promise<s
     case "codex":
     case "goose":
     case "pi":
+    case "opencode":
       await upsertManagedBlock(target, buildManagedBlock("agents"));
       return target;
     case "claude": {

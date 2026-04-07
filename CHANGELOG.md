@@ -4,6 +4,12 @@
 
 Nothing yet.
 
+## 0.1.17
+
+- Added `opencode` as an `install --agent` target, sharing the managed `AGENTS.md` rules path with Codex, Goose, and Pi
+- Expanded the published-package smoke runner with an Anthropic lane plus optional Codex, Claude Code, and OpenCode agent-CLI checks when local binaries and credentials are available
+- Updated OSS docs, the ClawHub skill, and the public site docs to list `opencode` alongside the other supported agent-rule targets
+
 ## 0.1.16
 
 - Fixed the CLI `--version` output to read from the installed package metadata at runtime instead of a stale hardcoded string
