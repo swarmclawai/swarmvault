@@ -48,6 +48,7 @@ cd my-vault
 swarmvault init --obsidian
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
+swarmvault ingest https://example.com/article
 swarmvault compile
 swarmvault query "What are the main ideas?"
 swarmvault query "Turn this into slides" --format slides
@@ -88,6 +89,7 @@ my-vault/
 |   `-- assets/
 |-- wiki/
 |   |-- index.md
+|   |-- log.md
 |   |-- candidates/
 |   |-- insights/
 |   |-- sources/
@@ -133,7 +135,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 ## Core Commands
 
 - `swarmvault init [--obsidian]`: create a workspace, default config, default schema file, and optional `.obsidian/` config
-- `swarmvault ingest <input>`: ingest a local file path or URL
+- `swarmvault ingest <input> [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path or URL, and localize remote image references by default when the input is a URL
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
 - `swarmvault compile [--approve]`: build wiki pages, graph data, and the search index using the vault schema as guidance, or stage a review bundle before applying changes
 - `swarmvault query "<question>" [--no-save] [--format markdown|report|slides|chart|image]`: answer questions against the compiled vault and save the result by default
@@ -149,6 +151,8 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault install --agent codex|claude|cursor`: install agent-specific rules
 
 Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
+
+When `ingest` targets a remote HTML or markdown URL, SwarmVault downloads referenced remote images into `raw/assets/<sourceId>/`, rewrites the stored markdown to local relative links, and records those files as manifest attachments. Use `--no-include-assets` to keep remote image references untouched, or `--max-asset-size` to cap the bytes fetched for a single remote asset.
 
 ## Compounding Loop
 
@@ -167,6 +171,7 @@ SwarmVault is designed so useful work compounds:
 - `lint --deep` can suggest missing citations, coverage gaps, candidate pages, and follow-up questions without mutating the vault
 - orchestration roles can add audit, safety, context, and research feedback without bypassing the approval flow
 - compile, query, explore, lint, and watch each write a session artifact to `state/sessions/`
+- ingest and inbox import also append to the canonical `wiki/log.md` activity log
 
 ## Why This Exists
 

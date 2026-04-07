@@ -38,7 +38,8 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.11 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.12 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 ```
 
 ## What The Smoke Runner Covers
@@ -48,6 +49,7 @@ node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.11 --keep-artifacts
 - install the published CLI from npm into an isolated temporary prefix
 - initialize a fresh workspace
 - ingest and compile a markdown fixture
+- ingest remote HTML and markdown fixtures over HTTP and verify remote image localization into `raw/assets/`
 - import an inbox markdown bundle with a linked local asset
 - run `query`
 - run saved `query --format chart` and `query --format image`
@@ -105,7 +107,8 @@ These checks stay manual for now:
 1. Install the published package in a fresh directory on a real machine with Node 24.
 2. Run `swarmvault graph serve` and confirm the viewer loads in a real browser without console errors.
 3. Launch `swarmvault mcp` from a real MCP client configuration and confirm tool discovery works.
-4. Compare heuristic output quality versus the Ollama and OpenAI lanes on the same fixture vault.
+4. Verify `swarmvault ingest <url>` localizes remote images as expected, including `--no-include-assets` and `--max-asset-size` behavior.
+5. Compare heuristic output quality versus the Ollama and OpenAI lanes on the same fixture vault.
 
 ## CI Workflow
 

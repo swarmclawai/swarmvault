@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -29,6 +30,57 @@ async function waitFor(condition: () => Promise<boolean>, timeoutMs = 15_000): P
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Timed out waiting for condition.");
+}
+
+async function startFixtureServer(
+  routes: Record<string, { status?: number; contentType?: string; body: string | Buffer }>
+): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  const server = createServer((request, response) => {
+    const requestUrl = request.url ? new URL(request.url, "http://127.0.0.1") : null;
+    const route = requestUrl ? routes[requestUrl.pathname] : undefined;
+    if (!route) {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("not found");
+      return;
+    }
+
+    const body = typeof route.body === "string" ? Buffer.from(route.body, "utf8") : route.body;
+    response.writeHead(route.status ?? 200, {
+      "content-type": route.contentType ?? "text/plain; charset=utf-8",
+      "content-length": String(body.length)
+    });
+    response.end(body);
+  });
+
+  const address = await new Promise<{ port: number }>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const resolved = server.address();
+      if (!resolved || typeof resolved === "string") {
+        reject(new Error("Failed to bind fixture server."));
+        return;
+      }
+      resolve({ port: resolved.port });
+    });
+  });
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: async () =>
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      })
+  };
+}
+
+function attachmentRelativePath(sourceId: string, storedAttachmentPath: string): string {
+  return storedAttachmentPath.replace(new RegExp(`^raw/assets/${sourceId}/`), "");
 }
 
 describe("swarmvault workflow", () => {
@@ -129,6 +181,114 @@ describe("swarmvault workflow", () => {
 
     const storedMarkdown = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");
     expect(storedMarkdown).toContain(`../assets/${manifest.sourceId}/assets/diagram.png`);
+  });
+
+  it("ingests HTML URLs with localized remote image assets", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const routes = {
+      "/article": {
+        contentType: "text/html; charset=utf-8",
+        body: ""
+      },
+      "/images/relative.png": {
+        contentType: "image/png",
+        body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3])
+      },
+      "/images/absolute.png": {
+        contentType: "image/png",
+        body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 4, 5, 6, 7])
+      }
+    } satisfies Record<string, { status?: number; contentType?: string; body: string | Buffer }>;
+    const server = await startFixtureServer(routes);
+
+    try {
+      const articleUrl = `${server.baseUrl}/article`;
+      routes["/article"].body = [
+        "<html><head><title>Remote Article</title></head><body>",
+        "<article>",
+        "<h1>Remote Article</h1>",
+        "<p>SwarmVault localizes remote images during URL ingest.</p>",
+        '<img alt="Relative" src="/images/relative.png" />',
+        `<img alt="Absolute" src="${server.baseUrl}/images/absolute.png" />`,
+        "</article>",
+        "</body></html>"
+      ].join("");
+
+      const manifest = await ingestInput(rootDir, articleUrl);
+      expect(manifest.attachments).toHaveLength(2);
+
+      const storedMarkdown = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");
+      const attachmentUrls = new Set(manifest.attachments?.map((attachment) => attachment.originalPath));
+      expect(attachmentUrls).toEqual(new Set([`${server.baseUrl}/images/relative.png`, `${server.baseUrl}/images/absolute.png`]));
+      for (const attachment of manifest.attachments ?? []) {
+        expect(storedMarkdown).toContain(`../assets/${manifest.sourceId}/${attachmentRelativePath(manifest.sourceId, attachment.path)}`);
+        await expect(fs.access(path.join(rootDir, attachment.path))).resolves.toBeUndefined();
+      }
+      expect(storedMarkdown).not.toContain("/images/relative.png");
+      expect(storedMarkdown).not.toContain(`${server.baseUrl}/images/absolute.png`);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("ingests markdown URLs with localized remote image assets", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const server = await startFixtureServer({
+      "/notes.md": {
+        contentType: "text/plain; charset=utf-8",
+        body: ["# Remote Notes", "", "![Diagram](./images/diagram.png)"].join("\n")
+      },
+      "/images/diagram.png": {
+        contentType: "image/png",
+        body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 8, 9, 10, 11])
+      }
+    });
+
+    try {
+      const manifest = await ingestInput(rootDir, `${server.baseUrl}/notes.md`);
+      expect(manifest.sourceKind).toBe("markdown");
+      expect(manifest.attachments).toHaveLength(1);
+
+      const attachment = manifest.attachments?.[0];
+      const storedMarkdown = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");
+      expect(storedMarkdown).toContain(
+        `../assets/${manifest.sourceId}/${attachmentRelativePath(manifest.sourceId, attachment?.path ?? "")}`
+      );
+      expect(storedMarkdown).not.toContain("./images/diagram.png");
+      await expect(fs.access(path.join(rootDir, attachment?.path ?? ""))).resolves.toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("skips oversized remote assets without failing URL ingest", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const server = await startFixtureServer({
+      "/notes.md": {
+        contentType: "text/plain; charset=utf-8",
+        body: ["# Large Asset Note", "", "![Oversized](./images/large.png)"].join("\n")
+      },
+      "/images/large.png": {
+        contentType: "image/png",
+        body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+      }
+    });
+
+    try {
+      const manifest = await ingestInput(rootDir, `${server.baseUrl}/notes.md`, { maxAssetSize: 8 });
+      expect(manifest.attachments).toBeUndefined();
+
+      const storedMarkdown = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");
+      expect(storedMarkdown).toContain("./images/large.png");
+    } finally {
+      await server.close();
+    }
   });
 
   it("threads the schema through compile and query and marks pages stale when the schema changes", async () => {

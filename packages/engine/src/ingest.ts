@@ -7,8 +7,10 @@ import TurndownService from "turndown";
 import { inferCodeLanguage } from "./code-analysis.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { appendLogEntry } from "./logs.js";
-import type { InboxImportResult, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
+import type { InboxImportResult, IngestOptions, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
 import { ensureDir, fileExists, listFilesRecursive, readJsonFile, sha256, slugify, toPosix, writeJsonFile } from "./utils.js";
+
+const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
 
 type PreparedAttachment = {
   relativePath: string;
@@ -30,6 +32,7 @@ type PreparedInput = {
   extractedText?: string;
   attachments?: PreparedAttachment[];
   contentHash?: string;
+  logDetails?: string[];
 };
 
 type IngestPersistResult = {
@@ -40,6 +43,11 @@ type IngestPersistResult = {
 type InboxAttachmentRef = {
   absolutePath: string;
   relativeRef: string;
+};
+
+type NormalizedIngestOptions = {
+  includeAssets: boolean;
+  maxAssetSize: number;
 };
 
 function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKind"] {
@@ -71,6 +79,13 @@ function titleFromText(fallback: string, content: string): string {
 
 function guessMimeType(target: string): string {
   return mime.lookup(target) || "application/octet-stream";
+}
+
+function normalizeIngestOptions(options?: IngestOptions): NormalizedIngestOptions {
+  return {
+    includeAssets: options?.includeAssets ?? true,
+    maxAssetSize: Math.max(0, Math.floor(options?.maxAssetSize ?? DEFAULT_MAX_ASSET_SIZE))
+  };
 }
 
 function buildCompositeHash(payloadBytes: Buffer, attachments: PreparedAttachment[] = []): string {
@@ -142,6 +157,48 @@ function extractMarkdownReferences(content: string): string[] {
   return references;
 }
 
+function normalizeRemoteReference(value: string, baseUrl: string): string | null {
+  const trimmed = value.trim().replace(/^<|>$/g, "");
+  const [withoutTitle] = trimmed.split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/, 1);
+  const candidate = withoutTitle.split("#")[0]?.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  const lowered = candidate.toLowerCase();
+  if (lowered.startsWith("data:") || lowered.startsWith("mailto:") || lowered.startsWith("#")) {
+    return null;
+  }
+
+  let resolved: URL;
+  try {
+    resolved = new URL(candidate, baseUrl);
+  } catch {
+    return null;
+  }
+
+  if (!/^https?:$/i.test(resolved.protocol)) {
+    return null;
+  }
+
+  resolved.hash = "";
+  return resolved.toString();
+}
+
+function extractMarkdownImageReferences(content: string, baseUrl: string): string[] {
+  const references: string[] = [];
+  const imagePattern = /!\[[^\]]*]\(([^)]+)\)/g;
+
+  for (const match of content.matchAll(imagePattern)) {
+    const normalized = normalizeRemoteReference(match[1] ?? "", baseUrl);
+    if (normalized) {
+      references.push(normalized);
+    }
+  }
+
+  return references;
+}
+
 async function convertHtmlToMarkdown(html: string, url: string): Promise<{ markdown: string; title: string }> {
   const dom = new JSDOM(html, { url });
   const article = new Readability(dom.window.document).parse();
@@ -166,6 +223,174 @@ async function readManifestByHash(manifestsDir: string, contentHash: string): Pr
     }
   }
   return null;
+}
+
+function resolveUrlMimeType(input: string, response: Response): string {
+  const headerMimeType = response.headers.get("content-type")?.split(";")[0]?.trim();
+  const guessedMimeType = guessMimeType(new URL(input).pathname);
+  if (!headerMimeType) {
+    return guessedMimeType;
+  }
+
+  if (
+    (headerMimeType === "text/plain" || headerMimeType === "application/octet-stream") &&
+    guessedMimeType !== "application/octet-stream"
+  ) {
+    return guessedMimeType;
+  }
+
+  return headerMimeType;
+}
+
+function buildRemoteAssetRelativePath(assetUrl: string, mimeType: string): string {
+  const url = new URL(assetUrl);
+  const normalized = sanitizeAssetRelativePath(`${url.hostname}${url.pathname || "/asset"}`);
+  const extension = path.posix.extname(normalized);
+  const directory = path.posix.dirname(normalized);
+  const basename = extension ? path.posix.basename(normalized, extension) : path.posix.basename(normalized);
+  const resolvedExtension = extension || `.${mime.extension(mimeType) || "bin"}`;
+  const hashedName = `${basename || "asset"}-${sha256(assetUrl).slice(0, 8)}${resolvedExtension}`;
+  return directory === "." ? hashedName : path.posix.join(directory, hashedName);
+}
+
+async function readResponseBytesWithinLimit(response: Response, maxBytes: number): Promise<Buffer> {
+  const contentLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(`asset exceeds max size (${contentLength} > ${maxBytes})`);
+  }
+
+  if (!response.body) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > maxBytes) {
+      throw new Error(`asset exceeds max size (${bytes.length} > ${maxBytes})`);
+    }
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel("asset exceeds configured size limit");
+      throw new Error(`asset exceeds max size (${total} > ${maxBytes})`);
+    }
+
+    chunks.push(Buffer.from(value));
+  }
+
+  return Buffer.concat(chunks);
+}
+
+async function fetchRemoteImageAttachment(assetUrl: string, maxAssetSize: number): Promise<PreparedAttachment> {
+  const response = await fetch(assetUrl);
+  if (!response.ok) {
+    throw new Error(`failed with ${response.status} ${response.statusText}`);
+  }
+
+  const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim() || guessMimeType(new URL(assetUrl).pathname);
+  if (!mimeType.startsWith("image/")) {
+    throw new Error(`unsupported mime type ${mimeType}`);
+  }
+
+  const bytes = await readResponseBytesWithinLimit(response, maxAssetSize);
+  return {
+    relativePath: buildRemoteAssetRelativePath(assetUrl, mimeType),
+    mimeType,
+    originalPath: assetUrl,
+    bytes
+  };
+}
+
+async function collectRemoteImageAttachments(
+  assetUrls: string[],
+  options: NormalizedIngestOptions
+): Promise<{ attachments: PreparedAttachment[]; skippedCount: number }> {
+  if (!options.includeAssets || options.maxAssetSize === 0 || !assetUrls.length) {
+    return { attachments: [], skippedCount: 0 };
+  }
+
+  const attachments: PreparedAttachment[] = [];
+  let skippedCount = 0;
+
+  for (const assetUrl of [...new Set(assetUrls)]) {
+    try {
+      attachments.push(await fetchRemoteImageAttachment(assetUrl, options.maxAssetSize));
+    } catch {
+      skippedCount += 1;
+    }
+  }
+
+  return { attachments, skippedCount };
+}
+
+function extractHtmlImageReferences(html: string, baseUrl: string): string[] {
+  const dom = new JSDOM(html, { url: baseUrl });
+  const document = dom.window.document;
+  const references: string[] = [];
+
+  for (const image of [...document.querySelectorAll("img[src]")]) {
+    const src = image.getAttribute("src");
+    if (!src) {
+      continue;
+    }
+    const normalized = normalizeRemoteReference(src, baseUrl);
+    if (normalized) {
+      references.push(normalized);
+    }
+  }
+
+  return references;
+}
+
+function rewriteHtmlImageReferences(html: string, baseUrl: string, replacements: Map<string, string>): string {
+  const dom = new JSDOM(html, { url: baseUrl });
+  const document = dom.window.document;
+
+  for (const image of [...document.querySelectorAll("img[src]")]) {
+    const src = image.getAttribute("src");
+    if (!src) {
+      continue;
+    }
+    const normalized = normalizeRemoteReference(src, baseUrl);
+    const replacement = normalized ? replacements.get(normalized) : undefined;
+    if (replacement) {
+      image.setAttribute("src", replacement);
+    }
+  }
+
+  return dom.serialize();
+}
+
+function rewriteMarkdownImageReferences(content: string, baseUrl: string, replacements: Map<string, string>): string {
+  return content.replace(/(!\[[^\]]*]\()([^)]+)(\))/g, (fullMatch, prefix, target, suffix) => {
+    const normalized = normalizeRemoteReference(target, baseUrl);
+    const replacement = normalized ? replacements.get(normalized) : undefined;
+    if (!replacement) {
+      return fullMatch;
+    }
+    return `${prefix}${replacement}${suffix}`;
+  });
+}
+
+function rewriteMarkdownImageTargets(content: string, replacements: Map<string, string>): string {
+  return content.replace(/(!\[[^\]]*]\()([^)]+)(\))/g, (fullMatch, prefix, target, suffix) => {
+    const trimmed = target.trim().replace(/^<|>$/g, "");
+    const [withoutTitle] = trimmed.split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/, 1);
+    const candidate = withoutTitle.trim();
+    const replacement = replacements.get(candidate);
+    if (!replacement) {
+      return fullMatch;
+    }
+    return `${prefix}${replacement}${suffix}`;
+  });
 }
 
 async function persistPreparedInput(rootDir: string, prepared: PreparedInput, paths: ResolvedPaths): Promise<IngestPersistResult> {
@@ -225,7 +450,8 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
   await appendLogEntry(rootDir, "ingest", prepared.title, [
     `source_id=${sourceId}`,
     `kind=${prepared.sourceKind}`,
-    `attachments=${manifestAttachments.length}`
+    `attachments=${manifestAttachments.length}`,
+    ...(prepared.logDetails ?? [])
   ]);
 
   return { manifest, isNew: true };
@@ -260,35 +486,92 @@ async function prepareFileInput(_rootDir: string, absoluteInput: string): Promis
   };
 }
 
-async function prepareUrlInput(input: string): Promise<PreparedInput> {
+async function prepareUrlInput(input: string, options: NormalizedIngestOptions): Promise<PreparedInput> {
   const response = await fetch(input);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${input}: ${response.status} ${response.statusText}`);
   }
 
-  let payloadBytes = Buffer.from(await response.arrayBuffer());
-  let mimeType = response.headers.get("content-type")?.split(";")[0]?.trim() || guessMimeType(input);
-  let sourceKind = inferKind(mimeType, input);
-  const language = inferCodeLanguage(input, mimeType);
+  const inputUrl = new URL(input);
+  const originalPayloadBytes = Buffer.from(await response.arrayBuffer());
+  let payloadBytes = originalPayloadBytes;
+  let mimeType = resolveUrlMimeType(input, response);
+  let sourceKind = inferKind(mimeType, inputUrl.pathname);
+  const language = inferCodeLanguage(inputUrl.pathname, mimeType);
   let storedExtension = ".bin";
-  let title = new URL(input).hostname + new URL(input).pathname;
+  let title = inputUrl.hostname + inputUrl.pathname;
   let extractedText: string | undefined;
+  let attachments: PreparedAttachment[] | undefined;
+  let contentHash: string | undefined;
+  const logDetails: string[] = [];
 
   if (sourceKind === "html" || mimeType.startsWith("text/html")) {
-    const html = payloadBytes.toString("utf8");
-    const converted = await convertHtmlToMarkdown(html, input);
-    title = converted.title;
+    const html = originalPayloadBytes.toString("utf8");
+    const initialConversion = await convertHtmlToMarkdown(html, input);
+    title = initialConversion.title;
+
+    let localizedHtml = html;
+    let localAssetReplacements: Map<string, string> | undefined;
+    if (options.includeAssets) {
+      const { attachments: remoteAttachments, skippedCount } = await collectRemoteImageAttachments(
+        extractHtmlImageReferences(html, input),
+        options
+      );
+      if (remoteAttachments.length) {
+        attachments = remoteAttachments;
+        contentHash = buildCompositeHash(originalPayloadBytes, remoteAttachments);
+        const sourceId = `${slugify(title)}-${contentHash.slice(0, 8)}`;
+        localAssetReplacements = new Map(
+          remoteAttachments.map((attachment) => [attachment.originalPath ?? "", `../assets/${sourceId}/${attachment.relativePath}`])
+        );
+        localizedHtml = rewriteHtmlImageReferences(html, input, localAssetReplacements);
+        logDetails.push(`remote_assets=${remoteAttachments.length}`);
+      }
+      if (skippedCount) {
+        logDetails.push(`remote_asset_skips=${skippedCount}`);
+      }
+    }
+
+    const converted =
+      localizedHtml === html && !attachments?.length ? initialConversion : await convertHtmlToMarkdown(localizedHtml, input);
     extractedText = converted.markdown;
-    payloadBytes = Buffer.from(converted.markdown, "utf8");
+    if (localAssetReplacements?.size) {
+      const absoluteLocalAssetReplacements = new Map(
+        [...localAssetReplacements.values()].map((replacement) => [new URL(replacement, input).toString(), replacement])
+      );
+      extractedText = rewriteMarkdownImageTargets(extractedText, absoluteLocalAssetReplacements);
+    }
+    payloadBytes = Buffer.from(extractedText, "utf8");
     mimeType = "text/markdown";
     sourceKind = "markdown";
     storedExtension = ".md";
   } else {
-    const extension = path.extname(new URL(input).pathname);
+    const extension = path.extname(inputUrl.pathname);
     storedExtension = extension || `.${mime.extension(mimeType) || "bin"}`;
     if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
       extractedText = payloadBytes.toString("utf8");
-      title = titleFromText(title || new URL(input).hostname, extractedText);
+      title = titleFromText(title || inputUrl.hostname, extractedText);
+
+      if (sourceKind === "markdown" && options.includeAssets) {
+        const { attachments: remoteAttachments, skippedCount } = await collectRemoteImageAttachments(
+          extractMarkdownImageReferences(extractedText, input),
+          options
+        );
+        if (remoteAttachments.length) {
+          attachments = remoteAttachments;
+          contentHash = buildCompositeHash(originalPayloadBytes, remoteAttachments);
+          const sourceId = `${slugify(title)}-${contentHash.slice(0, 8)}`;
+          const replacements = new Map(
+            remoteAttachments.map((attachment) => [attachment.originalPath ?? "", `../assets/${sourceId}/${attachment.relativePath}`])
+          );
+          extractedText = rewriteMarkdownImageReferences(extractedText, input, replacements);
+          payloadBytes = Buffer.from(extractedText, "utf8");
+          logDetails.push(`remote_assets=${remoteAttachments.length}`);
+        }
+        if (skippedCount) {
+          logDetails.push(`remote_asset_skips=${skippedCount}`);
+        }
+      }
     }
   }
 
@@ -301,7 +584,10 @@ async function prepareUrlInput(input: string): Promise<PreparedInput> {
     mimeType,
     storedExtension,
     payloadBytes,
-    extractedText
+    extractedText,
+    attachments,
+    contentHash,
+    logDetails
   };
 }
 
@@ -409,10 +695,11 @@ function isSupportedInboxKind(sourceKind: SourceManifest["sourceKind"]): boolean
   return ["markdown", "text", "html", "pdf", "image"].includes(sourceKind);
 }
 
-export async function ingestInput(rootDir: string, input: string): Promise<SourceManifest> {
+export async function ingestInput(rootDir: string, input: string, options?: IngestOptions): Promise<SourceManifest> {
   const { paths } = await initWorkspace(rootDir);
+  const normalizedOptions = normalizeIngestOptions(options);
   const prepared = /^https?:\/\//i.test(input)
-    ? await prepareUrlInput(input)
+    ? await prepareUrlInput(input, normalizedOptions)
     : await prepareFileInput(rootDir, path.resolve(rootDir, input));
 
   const result = await persistPreparedInput(rootDir, prepared, paths);

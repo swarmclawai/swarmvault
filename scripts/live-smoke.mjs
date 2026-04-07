@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -22,6 +23,7 @@ await loadEnvFile(path.join(repoRoot, ".env.local"));
 const args = parseArgs(process.argv.slice(2));
 const lane = args.lane ?? "heuristic";
 const version = args.version ?? (await readPackageVersion());
+const installSpecs = args.installSpecs?.length ? args.installSpecs : [`@swarmvaultai/cli@${version}`];
 const keepArtifacts = args.keepArtifacts ?? process.env.KEEP_LIVE_SMOKE_ARTIFACTS === "1";
 const artifactDir =
   args.artifactDir ??
@@ -49,7 +51,7 @@ await fs.mkdir(logsDir, { recursive: true });
 
 try {
   await runStep("install-published-cli", async () => {
-    await runCommand("npm-install", "npm", ["install", "-g", "--prefix", prefixDir, `@swarmvaultai/cli@${version}`], {
+    await runCommand("npm-install", "npm", ["install", "-g", "--prefix", prefixDir, ...installSpecs], {
       cwd: repoRoot
     });
     installedCli = await resolveInstalledCli(prefixDir);
@@ -124,6 +126,86 @@ try {
         await assertExists(path.join(workspaceDir, attachment.path));
       }
       await runCliJson(["compile"]);
+    });
+
+    await runStep("remote-url-assets", async () => {
+      const routes = {
+        "/article": {
+          contentType: "text/html; charset=utf-8",
+          body: ""
+        },
+        "/notes.md": {
+          contentType: "text/plain; charset=utf-8",
+          body: ["# Remote Notes", "", "![Diagram](./images/diagram.png)"].join("\n")
+        },
+        "/large.md": {
+          contentType: "text/plain; charset=utf-8",
+          body: ["# Large Asset Note", "", "![Oversized](./images/large.png)"].join("\n")
+        },
+        "/images/relative.png": {
+          contentType: "image/png",
+          body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3])
+        },
+        "/images/absolute.png": {
+          contentType: "image/png",
+          body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 4, 5, 6, 7])
+        },
+        "/images/diagram.png": {
+          contentType: "image/png",
+          body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 8, 9, 10, 11])
+        },
+        "/images/large.png": {
+          contentType: "image/png",
+          body: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+        }
+      };
+      const server = await startFixtureServer(routes);
+      try {
+        routes["/article"].body = [
+          "<html><head><title>Remote Article</title></head><body>",
+          "<article>",
+          "<h1>Remote Article</h1>",
+          "<p>SwarmVault localizes remote images during URL ingest.</p>",
+          '<img alt="Relative" src="/images/relative.png" />',
+          `<img alt="Absolute" src="${server.baseUrl}/images/absolute.png" />`,
+          "</article>",
+          "</body></html>"
+        ].join("");
+
+        const htmlManifest = await runCliJson(["ingest", `${server.baseUrl}/article`]);
+        assert.equal(htmlManifest.attachments.length, 2, "expected HTML URL ingest to localize both remote images");
+        const htmlStored = await fs.readFile(path.join(workspaceDir, htmlManifest.storedPath), "utf8");
+        for (const attachment of htmlManifest.attachments) {
+          const relativePath = attachment.path.replace(`raw/assets/${htmlManifest.sourceId}/`, "");
+          assert.ok(htmlStored.includes(`../assets/${htmlManifest.sourceId}/${relativePath}`), "HTML ingest did not rewrite a local asset path");
+          await assertExists(path.join(workspaceDir, attachment.path));
+        }
+        assert.ok(!htmlStored.includes(`${server.baseUrl}/images/absolute.png`), "HTML ingest left a remote absolute asset reference");
+
+        const markdownManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md`]);
+        assert.equal(markdownManifest.attachments.length, 1, "expected markdown URL ingest to localize one remote image");
+        const markdownStored = await fs.readFile(path.join(workspaceDir, markdownManifest.storedPath), "utf8");
+        const markdownAsset = markdownManifest.attachments[0];
+        const markdownRelativePath = markdownAsset.path.replace(`raw/assets/${markdownManifest.sourceId}/`, "");
+        assert.ok(
+          markdownStored.includes(`../assets/${markdownManifest.sourceId}/${markdownRelativePath}`),
+          "markdown URL ingest did not rewrite to a local asset path"
+        );
+
+        const skippedManifest = await runCliJson(["ingest", `${server.baseUrl}/large.md`, "--max-asset-size", "8"]);
+        assert.ok(!skippedManifest.attachments?.length, "oversized asset should not have been attached");
+        const skippedStored = await fs.readFile(path.join(workspaceDir, skippedManifest.storedPath), "utf8");
+        assert.ok(skippedStored.includes("./images/large.png"), "oversized asset should leave the original markdown reference intact");
+
+        const disabledManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md?no-assets=1`, "--no-include-assets"]);
+        assert.ok(!disabledManifest.attachments?.length, "--no-include-assets should skip remote asset downloads");
+        const disabledStored = await fs.readFile(path.join(workspaceDir, disabledManifest.storedPath), "utf8");
+        assert.ok(disabledStored.includes("./images/diagram.png"), "--no-include-assets should leave the original markdown reference intact");
+
+        await runCliJson(["compile"]);
+      } finally {
+        await server.close();
+      }
     });
   }
 
@@ -532,6 +614,12 @@ function parseArgs(argv) {
     }
     if (value === "--keep-artifacts") {
       parsed.keepArtifacts = true;
+      continue;
+    }
+    if (value === "--install-spec") {
+      parsed.installSpecs ??= [];
+      parsed.installSpecs.push(argv[index + 1]);
+      index += 1;
     }
   }
   return parsed;
@@ -619,6 +707,51 @@ async function fetchJson(url, init) {
   const text = await response.text();
   assert.equal(response.ok, true, `HTTP ${response.status} from ${url}: ${text}`);
   return text ? JSON.parse(text) : null;
+}
+
+async function startFixtureServer(routes) {
+  const server = createServer((request, response) => {
+    const requestUrl = request.url ? new URL(request.url, "http://127.0.0.1") : null;
+    const route = requestUrl ? routes[requestUrl.pathname] : undefined;
+    if (!route) {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("not found");
+      return;
+    }
+
+    const body = typeof route.body === "string" ? Buffer.from(route.body, "utf8") : route.body;
+    response.writeHead(200, {
+      "content-type": route.contentType ?? "text/plain; charset=utf-8",
+      "content-length": String(body.length)
+    });
+    response.end(body);
+  });
+
+  const port = await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("failed to bind fixture server"));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    close: async () =>
+      await new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      })
+  };
 }
 
 async function runInstalledCliCommand(label, args, options = {}) {

@@ -32,7 +32,7 @@ const program = new Command();
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.11")
+  .version("0.1.12")
   .option("--json", "Emit structured JSON output", false);
 
 function isJson(): boolean {
@@ -68,8 +68,16 @@ program
   .command("ingest")
   .description("Ingest a local file path or URL into the raw SwarmVault workspace.")
   .argument("<input>", "Local file path or URL")
-  .action(async (input: string) => {
-    const manifest = await ingestInput(process.cwd(), input);
+  .option("--include-assets", "Download remote image assets when ingesting URLs", true)
+  .option("--no-include-assets", "Skip downloading remote image assets when ingesting URLs")
+  .option("--max-asset-size <bytes>", "Maximum number of bytes to fetch for a single remote image asset")
+  .action(async (input: string, options: { includeAssets?: boolean; maxAssetSize?: string }) => {
+    const maxAssetSize =
+      typeof options.maxAssetSize === "string" && options.maxAssetSize.trim() ? Number.parseInt(options.maxAssetSize, 10) : undefined;
+    const manifest = await ingestInput(process.cwd(), input, {
+      includeAssets: options.includeAssets,
+      maxAssetSize: Number.isFinite(maxAssetSize) ? maxAssetSize : undefined
+    });
     if (isJson()) {
       emitJson(manifest);
     } else {

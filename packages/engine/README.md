@@ -117,9 +117,10 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 ### Ingest
 
-- `ingestInput(rootDir, input)` ingests a local path or URL
+- `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local path or URL
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files and browser-clipper style bundles
 - `.js`, `.jsx`, `.ts`, and `.tsx` inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
+- HTML and markdown URL ingests localize remote image references into `raw/assets/<sourceId>/` by default and rewrite the stored markdown to local relative paths
 
 ### Compile + Query
 
@@ -160,8 +161,8 @@ Running the engine produces a local workspace with these main areas:
 - `swarmvault.schema.md`: vault-specific compile and query instructions
 - `inbox/`: capture staging area for markdown bundles and imported files
 - `raw/sources/`: immutable source copies
-- `raw/assets/`: copied attachments referenced by ingested markdown bundles
-- `wiki/`: generated markdown pages, staged candidates, saved query outputs, exploration hub pages, and a human-only `insights/` area
+- `raw/assets/`: copied attachments referenced by ingested markdown bundles and remote URL ingests
+- `wiki/`: generated markdown pages, the append-only `log.md` activity trail, staged candidates, saved query outputs, exploration hub pages, and a human-only `insights/` area
 - `wiki/outputs/assets/`: local chart/image artifacts and JSON manifests for saved visual outputs
 - `wiki/code/`: generated module pages for ingested JS/TS sources
 - `wiki/projects/`: generated project rollups over canonical pages
@@ -178,6 +179,7 @@ Running the engine produces a local workspace with these main areas:
 
 Saved outputs are indexed immediately into the graph page registry and search index, then linked back into compiled source, concept, and entity pages immediately through the lightweight artifact sync path. New concept and entity pages stage into `wiki/candidates/` first and promote to active pages on the next matching compile. Insight pages are indexed into search and page reads, but compile does not mutate them. Project-scoped pages receive `project_ids`, project tags, and layered root-plus-project schema hashes when all contributing sources resolve to the same configured project.
 JS/TS code sources also emit module and symbol nodes into `state/graph.json`, so local imports, exports, inheritance, and same-module call edges are queryable through the same viewer and search pipeline.
+Ingest, inbox import, compile, query, lint, review, and candidate operations also append human-readable entries to `wiki/log.md`.
 
 ## Notes
 

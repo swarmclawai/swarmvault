@@ -196,6 +196,11 @@ export interface SourceAttachment {
   originalPath?: string;
 }
 
+export interface IngestOptions {
+  includeAssets?: boolean;
+  maxAssetSize?: number;
+}
+
 export interface SourceManifest {
   sourceId: string;
   title: string;

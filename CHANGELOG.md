@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.12
+
+- Added remote image localization for HTML and markdown URL ingests, with local asset copies under `raw/assets/<sourceId>/`, rewritten local markdown links, and non-fatal size-limited fetch control through `swarmvault ingest --no-include-assets` plus `--max-asset-size`
+- Added regression coverage for HTML URL localization, markdown URL localization, and oversized-asset skip behavior without failing ingest
+- Expanded the installed-package live smoke runner to validate remote URL asset capture and to support local tarball preflight installs before publish
+- Updated `spec.md`, OSS docs, and site docs to remove stale “missing” items like `wiki/log.md` and to document the shipped remote-asset ingest behavior
+
 ## 0.1.11
 
 - Fixed saved `query` and `explore` refreshes so they no longer auto-promote staged candidate concept and entity pages outside the compile flow
