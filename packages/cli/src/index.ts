@@ -32,7 +32,7 @@ const program = new Command();
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.13")
+  .version("0.1.14")
   .option("--json", "Emit structured JSON output", false);
 
 function isJson(): boolean {

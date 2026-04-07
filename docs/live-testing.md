@@ -38,9 +38,11 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.13 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.14 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 ```
+
+Use `pnpm pack` for local tarball preflight installs. Raw `npm pack` preserves workspace dependency specs in the CLI package and does not reflect the publish-time manifest rewrite.
 
 ## What The Smoke Runner Covers
 

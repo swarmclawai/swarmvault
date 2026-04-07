@@ -4,6 +4,12 @@
 
 Nothing yet.
 
+## 0.1.14
+
+- Fixed the published CLI manifest so real `npm install -g @swarmvaultai/cli` resolves `@swarmvaultai/engine` to the released semver instead of a `workspace:*` dependency
+- Re-ran the published-install OpenAI smoke lane against the registry package after publish to confirm `0.1.14` installs and passes with `gpt-4o-mini`
+- Updated live-testing docs to note that tarball preflight validation must use `pnpm pack`, not raw `npm pack`, when workspace dependencies are involved
+
 ## 0.1.13
 
 - Fixed the OpenAI provider structured-output path so `gpt-4o-mini` and other strict-schema models work for provider-backed `lint --deep`, including Responses API payload extraction, strict JSON-schema normalization, and null-placeholder cleanup before Zod parsing
