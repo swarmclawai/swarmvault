@@ -14,6 +14,7 @@ import {
   type ViewerCandidateRecord,
   type ViewerGraphArtifact,
   type ViewerGraphNode,
+  type ViewerOutputAsset,
   type ViewerPagePayload,
   type ViewerSearchResult
 } from "./lib";
@@ -36,6 +37,10 @@ function uniqueStrings(values: string[]): string[] {
 
 function emptyGraph(): ViewerGraphArtifact {
   return { generatedAt: "", nodes: [], edges: [], communities: [], pages: [] };
+}
+
+function assetUrl(asset: ViewerOutputAsset): string {
+  return asset.dataUrl ?? `/api/asset?path=${encodeURIComponent(asset.path)}`;
 }
 
 export function App() {
@@ -633,6 +638,24 @@ export function App() {
                     : "Global / unassigned"}
                 </p>
                 <p>{snippetFromContent(activePage.content)}</p>
+                {activePage.assets.length ? (
+                  <div className="asset-preview">
+                    {activePage.assets.map((asset) =>
+                      asset.mimeType.startsWith("image/") ? (
+                        <figure key={asset.id} className="asset-card">
+                          <img src={assetUrl(asset)} alt={activePage.title} />
+                          <figcaption>
+                            {asset.role} / {asset.mimeType}
+                          </figcaption>
+                        </figure>
+                      ) : (
+                        <a key={asset.id} className="link-button" href={assetUrl(asset)} target="_blank" rel="noreferrer">
+                          Open {asset.role}
+                        </a>
+                      )
+                    )}
+                  </div>
+                ) : null}
                 {backlinkPages.length ? (
                   <div className="linked-pages">
                     <span className="panel-label">Backlinks</span>

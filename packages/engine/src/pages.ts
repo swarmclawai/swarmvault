@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import type { GraphPage, OutputFormat, OutputOrigin, PageKind, PageManager, PageStatus } from "./types.js";
+import type { GraphPage, OutputAsset, OutputFormat, OutputOrigin, PageKind, PageManager, PageStatus } from "./types.js";
 import { fileExists, listFilesRecursive, sha256, slugify, toPosix } from "./utils.js";
 
 export interface StoredPage {
@@ -37,7 +37,38 @@ export function normalizePageManager(value: unknown, fallback: PageManager = "sy
 }
 
 function normalizeOutputFormat(value: unknown, fallback: OutputFormat = "markdown"): OutputFormat {
-  return value === "report" || value === "slides" ? value : fallback;
+  return value === "report" || value === "slides" || value === "chart" || value === "image" ? value : fallback;
+}
+
+export function normalizeOutputAssets(value: unknown): OutputAsset[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.reduce<OutputAsset[]>((assets, item) => {
+    if (!item || typeof item !== "object") {
+      return assets;
+    }
+    const candidate = item as Record<string, unknown>;
+    const id = typeof candidate.id === "string" ? candidate.id : "";
+    const role = candidate.role;
+    const assetPath = typeof candidate.path === "string" ? candidate.path : "";
+    const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType : "";
+    if (!id || !assetPath || !mimeType || (role !== "primary" && role !== "preview" && role !== "manifest" && role !== "poster")) {
+      return assets;
+    }
+
+    assets.push({
+      id,
+      role,
+      path: assetPath,
+      mimeType,
+      width: typeof candidate.width === "number" ? candidate.width : undefined,
+      height: typeof candidate.height === "number" ? candidate.height : undefined,
+      dataPath: typeof candidate.dataPath === "string" ? candidate.dataPath : undefined
+    });
+    return assets;
+  }, []);
 }
 
 function normalizeTimestamp(value: unknown, fallback: string): string {
@@ -143,6 +174,7 @@ export function parseStoredPage(
   const relatedSourceIds = normalizeStringArray(parsed.data.related_source_ids);
   const backlinks = normalizeStringArray(parsed.data.backlinks);
   const compiledFrom = normalizeStringArray(parsed.data.compiled_from);
+  const outputAssets = normalizeOutputAssets(parsed.data.output_assets);
 
   return {
     id: typeof parsed.data.page_id === "string" ? parsed.data.page_id : `${kind}:${slugify(relativePath.replace(/\.md$/, ""))}`,
@@ -167,7 +199,8 @@ export function parseStoredPage(
     managedBy: normalizePageManager(parsed.data.managed_by, kind === "insight" ? "human" : "system"),
     origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
     question: typeof parsed.data.question === "string" ? parsed.data.question : undefined,
-    outputFormat: kind === "output" ? normalizeOutputFormat(parsed.data.output_format) : undefined
+    outputFormat: kind === "output" ? normalizeOutputFormat(parsed.data.output_format) : undefined,
+    outputAssets: kind === "output" ? outputAssets : []
   };
 }
 
@@ -224,7 +257,8 @@ export async function loadInsightPages(wikiDir: string): Promise<StoredPage[]> {
         compiledFrom: compiledFrom.length ? compiledFrom : sourceIds,
         managedBy: normalizePageManager(parsed.data.managed_by, "human"),
         origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
-        question: typeof parsed.data.question === "string" ? parsed.data.question : undefined
+        question: typeof parsed.data.question === "string" ? parsed.data.question : undefined,
+        outputAssets: normalizeOutputAssets(parsed.data.output_assets)
       },
       content,
       contentHash: sha256(content)

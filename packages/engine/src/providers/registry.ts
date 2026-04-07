@@ -33,7 +33,7 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
         apiKey: envOrUndefined(config.apiKeyEnv),
         headers: config.headers,
         apiStyle: config.apiStyle ?? "responses",
-        capabilities: resolveCapabilities(config, ["responses", "chat", "structured", "tools", "vision", "streaming"])
+        capabilities: resolveCapabilities(config, ["responses", "chat", "structured", "tools", "vision", "streaming", "image_generation"])
       });
     case "ollama":
       return new OpenAiCompatibleProviderAdapter(id, "ollama", config.model, {
@@ -82,6 +82,9 @@ export async function getProviderForTask(
 ): Promise<ProviderAdapter> {
   const { config } = await loadVaultConfig(rootDir);
   const providerId = config.tasks[task];
+  if (!providerId) {
+    throw new Error(`No provider configured for task "${String(task)}".`);
+  }
   const providerConfig = config.providers[providerId];
   if (!providerConfig) {
     throw new Error(`No provider configured with id "${providerId}" for task "${task}".`);

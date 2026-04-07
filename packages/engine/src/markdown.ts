@@ -3,6 +3,7 @@ import { modulePageTitle } from "./code-analysis.js";
 import type {
   Freshness,
   GraphPage,
+  OutputAsset,
   OutputFormat,
   OutputOrigin,
   PageKind,
@@ -65,6 +66,27 @@ export function candidatePagePathFor(kind: "concept" | "entity", slug: string): 
 
 function pageLink(page: Pick<GraphPage, "path" | "title">): string {
   return `[[${page.path.replace(/\.md$/, "")}|${page.title}]]`;
+}
+
+function assetMarkdownPath(assetPath: string): string {
+  return `./${assetPath.replace(/^outputs\//, "")}`;
+}
+
+function primaryOutputAsset(assets: OutputAsset[]): OutputAsset | undefined {
+  return assets.find((asset) => asset.role === "poster") ?? assets.find((asset) => asset.role === "primary");
+}
+
+function outputAssetSection(assets: OutputAsset[]): string[] {
+  if (!assets.length) {
+    return [];
+  }
+
+  return [
+    "## Assets",
+    "",
+    ...assets.map((asset) => `- \`${asset.role}\` - [${asset.path}](${assetMarkdownPath(asset.path)}) (${asset.mimeType})`),
+    ""
+  ];
 }
 
 function relatedOutputsSection(relatedOutputs: GraphPage[]): string[] {
@@ -671,6 +693,7 @@ export function buildOutputPage(input: {
   citations: string[];
   schemaHash: string;
   outputFormat: OutputFormat;
+  outputAssets?: OutputAsset[];
   relatedPageIds?: string[];
   relatedNodeIds?: string[];
   relatedSourceIds?: string[];
@@ -686,6 +709,7 @@ export function buildOutputPage(input: {
   const relatedPageIds = input.relatedPageIds ?? [];
   const relatedNodeIds = input.relatedNodeIds ?? [];
   const relatedSourceIds = input.relatedSourceIds ?? input.citations;
+  const outputAssets = input.outputAssets ?? [];
   const backlinks = [...new Set([...relatedPageIds, ...relatedSourceIds.map((sourceId) => `source:${sourceId}`)])];
   const frontmatter = {
     page_id: pageId,
@@ -711,6 +735,7 @@ export function buildOutputPage(input: {
     origin: input.origin,
     question: input.question,
     output_format: input.outputFormat,
+    output_assets: outputAssets,
     ...(input.outputFormat === "slides" ? { marp: true } : {})
   };
 
@@ -738,7 +763,8 @@ export function buildOutputPage(input: {
       managedBy: input.metadata.managedBy,
       origin: input.origin,
       question: input.question,
-      outputFormat: input.outputFormat
+      outputFormat: input.outputFormat,
+      outputAssets
     },
     content: matter.stringify(
       (input.outputFormat === "slides"
@@ -758,24 +784,16 @@ export function buildOutputPage(input: {
             ...input.citations.map((citation) => `- [source:${citation}]`),
             ""
           ]
-        : input.outputFormat === "report"
+        : input.outputFormat === "chart" || input.outputFormat === "image"
           ? [
-              input.answer,
-              "",
-              "## Related Pages",
-              "",
-              ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
-              "",
-              "## Citations",
-              "",
-              ...input.citations.map((citation) => `- [source:${citation}]`),
-              ""
-            ]
-          : [
               `# ${input.title ?? input.question}`,
               "",
+              ...(primaryOutputAsset(outputAssets)
+                ? [`![${input.title ?? input.question}](${assetMarkdownPath(primaryOutputAsset(outputAssets)?.path ?? "")})`, ""]
+                : []),
               input.answer,
               "",
+              ...outputAssetSection(outputAssets),
               "## Related Pages",
               "",
               ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
@@ -785,6 +803,35 @@ export function buildOutputPage(input: {
               ...input.citations.map((citation) => `- [source:${citation}]`),
               ""
             ]
+          : input.outputFormat === "report"
+            ? [
+                input.answer,
+                "",
+                ...outputAssetSection(outputAssets),
+                "## Related Pages",
+                "",
+                ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
+                "",
+                "## Citations",
+                "",
+                ...input.citations.map((citation) => `- [source:${citation}]`),
+                ""
+              ]
+            : [
+                `# ${input.title ?? input.question}`,
+                "",
+                input.answer,
+                "",
+                ...outputAssetSection(outputAssets),
+                "## Related Pages",
+                "",
+                ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
+                "",
+                "## Citations",
+                "",
+                ...input.citations.map((citation) => `- [source:${citation}]`),
+                ""
+              ]
       ).join("\n"),
       frontmatter
     )
@@ -798,6 +845,7 @@ export function buildExploreHubPage(input: {
   citations: string[];
   schemaHash: string;
   outputFormat: OutputFormat;
+  outputAssets?: OutputAsset[];
   slug?: string;
   projectIds?: string[];
   extraTags?: string[];
@@ -809,6 +857,7 @@ export function buildExploreHubPage(input: {
   const relatedPageIds = input.stepPages.map((page) => page.id);
   const relatedSourceIds = [...new Set(input.citations)];
   const relatedNodeIds = [...new Set(input.stepPages.flatMap((page) => page.nodeIds))];
+  const outputAssets = input.outputAssets ?? [];
   const backlinks = [...new Set([...relatedPageIds, ...relatedSourceIds.map((sourceId) => `source:${sourceId}`)])];
   const title = `Explore: ${input.question}`;
 
@@ -836,6 +885,7 @@ export function buildExploreHubPage(input: {
     origin: "explore" satisfies OutputOrigin,
     question: input.question,
     output_format: input.outputFormat,
+    output_assets: outputAssets,
     ...(input.outputFormat === "slides" ? { marp: true } : {})
   };
 
@@ -863,7 +913,8 @@ export function buildExploreHubPage(input: {
       managedBy: input.metadata.managedBy,
       origin: "explore",
       question: input.question,
-      outputFormat: input.outputFormat
+      outputFormat: input.outputFormat,
+      outputAssets
     },
     content: matter.stringify(
       (input.outputFormat === "slides"
@@ -891,28 +942,56 @@ export function buildExploreHubPage(input: {
             ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
             ""
           ]
-        : [
-            `# ${title}`,
-            "",
-            "## Root Question",
-            "",
-            input.question,
-            "",
-            "## Steps",
-            "",
-            ...(input.stepPages.length ? input.stepPages.map((page) => `- ${pageLink(page)}`) : ["- No steps recorded."]),
-            "",
-            "## Follow-Up Questions",
-            "",
-            ...(input.followUpQuestions.length
-              ? input.followUpQuestions.map((question) => `- ${question}`)
-              : ["- No follow-up questions generated."]),
-            "",
-            "## Citations",
-            "",
-            ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
-            ""
-          ]
+        : input.outputFormat === "chart" || input.outputFormat === "image"
+          ? [
+              `# ${title}`,
+              "",
+              ...(primaryOutputAsset(outputAssets)
+                ? [`![${title}](${assetMarkdownPath(primaryOutputAsset(outputAssets)?.path ?? "")})`, ""]
+                : []),
+              "## Root Question",
+              "",
+              input.question,
+              "",
+              ...outputAssetSection(outputAssets),
+              "## Steps",
+              "",
+              ...(input.stepPages.length ? input.stepPages.map((page) => `- ${pageLink(page)}`) : ["- No steps recorded."]),
+              "",
+              "## Follow-Up Questions",
+              "",
+              ...(input.followUpQuestions.length
+                ? input.followUpQuestions.map((question) => `- ${question}`)
+                : ["- No follow-up questions generated."]),
+              "",
+              "## Citations",
+              "",
+              ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
+              ""
+            ]
+          : [
+              `# ${title}`,
+              "",
+              "## Root Question",
+              "",
+              input.question,
+              "",
+              ...outputAssetSection(outputAssets),
+              "## Steps",
+              "",
+              ...(input.stepPages.length ? input.stepPages.map((page) => `- ${pageLink(page)}`) : ["- No steps recorded."]),
+              "",
+              "## Follow-Up Questions",
+              "",
+              ...(input.followUpQuestions.length
+                ? input.followUpQuestions.map((question) => `- ${question}`)
+                : ["- No follow-up questions generated."]),
+              "",
+              "## Citations",
+              "",
+              ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
+              ""
+            ]
       ).join("\n"),
       frontmatter
     )

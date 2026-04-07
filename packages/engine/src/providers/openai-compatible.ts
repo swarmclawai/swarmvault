@@ -1,4 +1,10 @@
-import type { GenerationRequest, GenerationResponse, ProviderCapability } from "../types.js";
+import type {
+  GenerationRequest,
+  GenerationResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  ProviderCapability
+} from "../types.js";
 import { BaseProviderAdapter } from "./base.js";
 
 export interface OpenAiCompatibleOptions {
@@ -32,6 +38,52 @@ export class OpenAiCompatibleProviderAdapter extends BaseProviderAdapter {
       return this.generateViaChatCompletions(request);
     }
     return this.generateViaResponses(request);
+  }
+
+  public async generateImage(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
+    const encodedAttachments = await this.encodeAttachments(request.attachments);
+    const response = await fetch(`${this.baseUrl}/images/generations`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...buildAuthHeaders(this.apiKey),
+        ...this.headers
+      },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: request.prompt,
+        size:
+          request.width && request.height
+            ? `${Math.max(256, Math.round(request.width))}x${Math.max(256, Math.round(request.height))}`
+            : undefined,
+        response_format: "b64_json",
+        ...(encodedAttachments.length
+          ? {
+              input_image: encodedAttachments.map((item) => `data:${item.mimeType};base64,${item.base64}`)
+            }
+          : {})
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Provider ${this.id} failed: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<{ b64_json?: string; revised_prompt?: string }>;
+    };
+    const image = payload.data?.[0];
+    if (!image?.b64_json) {
+      throw new Error(`Provider ${this.id} returned no image data.`);
+    }
+
+    return {
+      mimeType: "image/png",
+      bytes: Buffer.from(image.b64_json, "base64"),
+      width: request.width,
+      height: request.height,
+      revisedPrompt: image.revised_prompt
+    };
   }
 
   private async generateViaResponses(request: GenerationRequest): Promise<GenerationResponse> {

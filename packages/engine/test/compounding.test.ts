@@ -197,10 +197,10 @@ describe("compounding loop", () => {
     const result = await exploreVault(rootDir, { question: "How does this vault work?", steps: 2 });
     expect(result.stepCount).toBeGreaterThan(0);
     expect(result.stepCount).toBeLessThanOrEqual(2);
-    expect(result.steps.every((step) => step.savedPath.length > 0)).toBe(true);
-    await expect(fs.access(result.hubPath)).resolves.toBeUndefined();
+    expect(result.steps.every((step) => (step.savedPath ?? step.stagedPath ?? "").length > 0)).toBe(true);
+    await expect(fs.access(result.hubPath as string)).resolves.toBeUndefined();
 
-    const hub = await fs.readFile(result.hubPath, "utf8");
+    const hub = await fs.readFile(result.hubPath as string, "utf8");
     expect(hub).toContain("## Steps");
     expect(hub).toContain("## Follow-Up Questions");
   });

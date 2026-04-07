@@ -4,6 +4,7 @@ import matter from "gray-matter";
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
 import { listManifests } from "./ingest.js";
+import { runConfiguredRoles, summarizeRoleQuestions } from "./orchestration.js";
 import { getProviderForTask } from "./providers/registry.js";
 import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact, LintFinding } from "./types.js";
@@ -242,7 +243,41 @@ export async function runDeepLint(
   }
 
   if (!options.web) {
-    return findings;
+    const roleResults = await runConfiguredRoles(rootDir, ["audit", "safety"], {
+      title: "Deep lint review",
+      instructions: "Review the vault state and return advisory audit or safety findings only.",
+      context: [
+        `Structural findings: ${structuralFindings.length}`,
+        `Context pages: ${contextPages.length}`,
+        "",
+        contextPages
+          .map((page) => [`# ${page.title}`, `kind=${page.kind}`, `path=${page.path}`, page.excerpt].join("\n"))
+          .join("\n\n---\n\n")
+      ].join("\n")
+    });
+    const roleQuestions = summarizeRoleQuestions(roleResults);
+    return uniqueBy(
+      [
+        ...findings,
+        ...roleResults.flatMap((result) =>
+          result.findings.map((finding) => ({
+            severity: finding.severity,
+            code: `${result.role}_review`,
+            message: finding.message,
+            relatedSourceIds: finding.relatedSourceIds,
+            relatedPageIds: finding.relatedPageIds,
+            suggestedQuery: finding.suggestedQuery
+          }))
+        ),
+        ...roleQuestions.map((question) => ({
+          severity: "info" as const,
+          code: "follow_up_question",
+          message: `Orchestration suggested a follow-up question: ${question}`,
+          suggestedQuery: question
+        }))
+      ],
+      (item) => `${item.code}:${item.message}`
+    );
   }
 
   const webSearch = await getWebSearchAdapterForTask(rootDir, "deepLintProvider");
@@ -256,5 +291,37 @@ export async function runDeepLint(
     finding.evidence = queryCache.get(query);
   }
 
-  return findings;
+  const roleResults = await runConfiguredRoles(rootDir, ["audit", "safety", "research"], {
+    title: "Deep lint review with web search",
+    instructions: "Review the vault state and return advisory findings, follow-up questions, and safer search angles.",
+    context: [
+      `Structural findings: ${structuralFindings.length}`,
+      `Context pages: ${contextPages.length}`,
+      "",
+      contextPages.map((page) => [`# ${page.title}`, `kind=${page.kind}`, `path=${page.path}`, page.excerpt].join("\n")).join("\n\n---\n\n")
+    ].join("\n")
+  });
+  const roleQuestions = summarizeRoleQuestions(roleResults);
+  return uniqueBy(
+    [
+      ...findings,
+      ...roleResults.flatMap((result) =>
+        result.findings.map((finding) => ({
+          severity: finding.severity,
+          code: `${result.role}_review`,
+          message: finding.message,
+          relatedSourceIds: finding.relatedSourceIds,
+          relatedPageIds: finding.relatedPageIds,
+          suggestedQuery: finding.suggestedQuery
+        }))
+      ),
+      ...roleQuestions.map((question) => ({
+        severity: "info" as const,
+        code: "follow_up_question",
+        message: `Orchestration suggested a follow-up question: ${question}`,
+        suggestedQuery: question
+      }))
+    ],
+    (item) => `${item.code}:${item.message}`
+  );
 }

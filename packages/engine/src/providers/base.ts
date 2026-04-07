@@ -4,6 +4,8 @@ import type {
   GenerationAttachment,
   GenerationRequest,
   GenerationResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
   ProviderAdapter,
   ProviderCapability,
   ProviderType
@@ -23,6 +25,10 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
   }
 
   public abstract generateText(request: GenerationRequest): Promise<GenerationResponse>;
+
+  public async generateImage(_request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
+    throw new Error(`Provider ${this.id} does not support image generation.`);
+  }
 
   public async generateStructured<T>(request: GenerationRequest, schema: z.ZodType<T>): Promise<T> {
     const schemaDescription = JSON.stringify(z.toJSONSchema(schema), null, 2);

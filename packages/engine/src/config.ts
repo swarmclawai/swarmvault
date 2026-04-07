@@ -27,6 +27,53 @@ const providerConfigSchema = z.object({
   apiStyle: z.enum(["responses", "chat"]).optional()
 });
 
+const scheduleTriggerSchema = z
+  .object({
+    cron: z.string().min(1).optional(),
+    every: z.string().min(1).optional()
+  })
+  .refine((value) => Boolean(value.cron || value.every), {
+    message: "Schedule triggers require `cron` or `every`."
+  });
+
+const scheduledTaskSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("compile"),
+    approve: z.boolean().optional()
+  }),
+  z.object({
+    type: z.literal("lint"),
+    deep: z.boolean().optional(),
+    web: z.boolean().optional()
+  }),
+  z.object({
+    type: z.literal("query"),
+    question: z.string().min(1),
+    format: z.enum(["markdown", "report", "slides", "chart", "image"]).optional(),
+    save: z.boolean().optional()
+  }),
+  z.object({
+    type: z.literal("explore"),
+    question: z.string().min(1),
+    steps: z.number().int().positive().optional(),
+    format: z.enum(["markdown", "report", "slides", "chart", "image"]).optional()
+  })
+]);
+
+const roleExecutorConfigSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("provider"),
+    provider: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("command"),
+    command: z.array(z.string().min(1)).min(1),
+    cwd: z.string().min(1).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    timeoutMs: z.number().int().positive().optional()
+  })
+]);
+
 const webSearchProviderConfigSchema = z.object({
   type: webSearchProviderTypeSchema,
   endpoint: z.string().url().optional(),
@@ -57,7 +104,8 @@ const vaultConfigSchema = z.object({
     compileProvider: z.string().min(1),
     queryProvider: z.string().min(1),
     lintProvider: z.string().min(1),
-    visionProvider: z.string().min(1)
+    visionProvider: z.string().min(1),
+    imageProvider: z.string().min(1).optional()
   }),
   viewer: z.object({
     port: z.number().int().positive()
@@ -72,6 +120,23 @@ const vaultConfigSchema = z.object({
     )
     .optional(),
   agents: z.array(z.enum(["codex", "claude", "cursor"])).default(["codex", "claude", "cursor"]),
+  schedules: z
+    .record(z.string(), z.object({ enabled: z.boolean().optional(), when: scheduleTriggerSchema, task: scheduledTaskSchema }))
+    .optional(),
+  orchestration: z
+    .object({
+      maxParallelRoles: z.number().int().positive().optional(),
+      compilePostPass: z.boolean().optional(),
+      roles: z
+        .object({
+          research: z.object({ executor: roleExecutorConfigSchema }).optional(),
+          audit: z.object({ executor: roleExecutorConfigSchema }).optional(),
+          context: z.object({ executor: roleExecutorConfigSchema }).optional(),
+          safety: z.object({ executor: roleExecutorConfigSchema }).optional()
+        })
+        .optional()
+    })
+    .optional(),
   webSearch: z
     .object({
       providers: z.record(z.string(), webSearchProviderConfigSchema),
@@ -102,13 +167,20 @@ export function defaultVaultConfig(): VaultConfig {
       compileProvider: "local",
       queryProvider: "local",
       lintProvider: "local",
-      visionProvider: "local"
+      visionProvider: "local",
+      imageProvider: "local"
     },
     viewer: {
       port: 4123
     },
     projects: {},
-    agents: ["codex", "claude", "cursor"]
+    agents: ["codex", "claude", "cursor"],
+    schedules: {},
+    orchestration: {
+      maxParallelRoles: 2,
+      compilePostPass: false,
+      roles: {}
+    }
   };
 }
 
@@ -180,9 +252,11 @@ export function resolvePaths(
   const rawSourcesDir = path.join(rawDir, "sources");
   const rawAssetsDir = path.join(rawDir, "assets");
   const wikiDir = path.resolve(rootDir, effective.workspace.wikiDir);
+  const outputsAssetsDir = path.join(wikiDir, "outputs", "assets");
   const projectsDir = path.join(wikiDir, "projects");
   const candidatesDir = path.join(wikiDir, "candidates");
   const stateDir = path.resolve(rootDir, effective.workspace.stateDir);
+  const schedulesDir = path.join(stateDir, "schedules");
   const agentDir = path.resolve(rootDir, effective.workspace.agentDir);
   const inboxDir = path.resolve(rootDir, effective.workspace.inboxDir);
 
@@ -193,11 +267,13 @@ export function resolvePaths(
     rawSourcesDir,
     rawAssetsDir,
     wikiDir,
+    outputsAssetsDir,
     projectsDir,
     candidatesDir,
     candidateConceptsDir: path.join(candidatesDir, "concepts"),
     candidateEntitiesDir: path.join(candidatesDir, "entities"),
     stateDir,
+    schedulesDir,
     agentDir,
     inboxDir,
     manifestsDir: path.join(stateDir, "manifests"),
@@ -235,11 +311,13 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
   await Promise.all([
     ensureDir(paths.rawDir),
     ensureDir(paths.wikiDir),
+    ensureDir(paths.outputsAssetsDir),
     ensureDir(paths.projectsDir),
     ensureDir(paths.candidatesDir),
     ensureDir(paths.candidateConceptsDir),
     ensureDir(paths.candidateEntitiesDir),
     ensureDir(paths.stateDir),
+    ensureDir(paths.schedulesDir),
     ensureDir(paths.sessionsDir),
     ensureDir(paths.approvalsDir),
     ensureDir(paths.agentDir),

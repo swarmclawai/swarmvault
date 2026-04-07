@@ -4,6 +4,15 @@
 
 Nothing yet.
 
+## 0.1.7
+
+- Added `chart` and `image` output formats for `query` and `explore`, with local wrapper pages in `wiki/outputs/` plus asset bundles in `wiki/outputs/assets/`
+- Added graph/viewer/export support for saved visual assets through `output_assets`, `/api/asset`, and standalone HTML embedding
+- Added config-backed scheduling with `swarmvault schedule list|run|serve` for recurring `compile`, `lint`, `query`, and `explore` jobs
+- Added approval-gated scheduled `query` and `explore` writes so automated outputs stage through review instead of activating immediately
+- Added role-based orchestration config for `research`, `audit`, `context`, and `safety`, plus integrations in deep lint, explore, and compile post-pass staging
+- Updated the OSS docs, package READMEs, ClawHub skill, changelog, and site docs for the v0.1.7 visual-output, scheduling, and orchestration workflows
+
 ## 0.1.6
 
 - Added a reviewable compile flow with `compile --approve`, `review list|show|accept|reject`, `candidate list|promote|archive`, and matching viewer/server approval and candidate queues

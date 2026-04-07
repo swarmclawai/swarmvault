@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import matter from "gray-matter";
 import mime from "mime-types";
 import { loadVaultConfig } from "./config.js";
+import { normalizeOutputAssets } from "./pages.js";
 import { searchPages } from "./search.js";
 import type { GraphArtifact } from "./types.js";
 import { fileExists, readJsonFile } from "./utils.js";
@@ -29,6 +30,7 @@ async function readViewerPage(
   title: string;
   frontmatter: Record<string, unknown>;
   content: string;
+  assets: ReturnType<typeof normalizeOutputAssets>;
 } | null> {
   const { paths } = await loadVaultConfig(rootDir);
   const absolutePath = path.resolve(paths.wikiDir, relativePath);
@@ -42,8 +44,29 @@ async function readViewerPage(
     path: relativePath,
     title: typeof parsed.data.title === "string" ? parsed.data.title : path.basename(relativePath, path.extname(relativePath)),
     frontmatter: parsed.data,
-    content: parsed.content
+    content: parsed.content,
+    assets: normalizeOutputAssets(parsed.data.output_assets)
   };
+}
+
+async function readViewerAsset(rootDir: string, relativePath: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const absolutePath = path.resolve(paths.wikiDir, relativePath);
+  if (!absolutePath.startsWith(paths.wikiDir) || !(await fileExists(absolutePath))) {
+    return null;
+  }
+  return {
+    buffer: await fs.readFile(absolutePath),
+    mimeType: mime.lookup(absolutePath) || "application/octet-stream"
+  };
+}
+
+async function assetDataUrl(rootDir: string, relativePath: string): Promise<string | undefined> {
+  const asset = await readViewerAsset(rootDir, relativePath);
+  if (!asset) {
+    return undefined;
+  }
+  return `data:${asset.mimeType};base64,${asset.buffer.toString("base64")}`;
 }
 
 async function readJsonBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {
@@ -120,6 +143,19 @@ export async function startGraphServer(rootDir: string, port?: number): Promise<
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(page));
+      return;
+    }
+
+    if (url.pathname === "/api/asset") {
+      const relativePath = url.searchParams.get("path") ?? "";
+      const asset = await readViewerAsset(rootDir, relativePath);
+      if (!asset) {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: `Asset not found: ${relativePath}` }));
+        return;
+      }
+      response.writeHead(200, { "content-type": asset.mimeType });
+      response.end(asset.buffer);
       return;
     }
 
@@ -237,7 +273,13 @@ export async function exportGraphHtml(rootDir: string, outputPath: string): Prom
             kind: page.kind,
             status: page.status,
             projectIds: page.projectIds,
-            content: loaded.content
+            content: loaded.content,
+            assets: await Promise.all(
+              loaded.assets.map(async (asset) => ({
+                ...asset,
+                dataUrl: await assetDataUrl(rootDir, asset.path)
+              }))
+            )
           }
         : null;
     })

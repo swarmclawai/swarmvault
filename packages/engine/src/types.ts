@@ -1,6 +1,16 @@
 import { z } from "zod";
 
-export const providerCapabilitySchema = z.enum(["responses", "chat", "structured", "tools", "vision", "embeddings", "streaming", "local"]);
+export const providerCapabilitySchema = z.enum([
+  "responses",
+  "chat",
+  "structured",
+  "tools",
+  "vision",
+  "embeddings",
+  "streaming",
+  "local",
+  "image_generation"
+]);
 
 export type ProviderCapability = z.infer<typeof providerCapabilitySchema>;
 
@@ -13,7 +23,8 @@ export type Freshness = "fresh" | "stale";
 export type ClaimStatus = "extracted" | "inferred" | "conflicted" | "stale";
 export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore";
-export type OutputFormat = "markdown" | "report" | "slides";
+export type OutputFormat = "markdown" | "report" | "slides" | "chart" | "image";
+export type OutputAssetRole = "primary" | "preview" | "manifest" | "poster";
 export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
@@ -21,6 +32,7 @@ export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "binary" | "code";
 export type CodeLanguage = "javascript" | "jsx" | "typescript" | "tsx";
 export type CodeSymbolKind = "function" | "class" | "interface" | "type_alias" | "enum" | "variable";
+export type OrchestrationRole = "research" | "audit" | "context" | "safety";
 
 export const webSearchProviderTypeSchema = z.enum(["http-json", "custom"]);
 
@@ -46,6 +58,22 @@ export interface GenerationResponse {
   };
 }
 
+export interface ImageGenerationRequest {
+  prompt: string;
+  system?: string;
+  width?: number;
+  height?: number;
+  attachments?: GenerationAttachment[];
+}
+
+export interface ImageGenerationResponse {
+  mimeType: string;
+  bytes: Uint8Array;
+  width?: number;
+  height?: number;
+  revisedPrompt?: string;
+}
+
 export interface ProviderAdapter {
   readonly id: string;
   readonly type: ProviderType;
@@ -53,6 +81,7 @@ export interface ProviderAdapter {
   readonly capabilities: Set<ProviderCapability>;
   generateText(request: GenerationRequest): Promise<GenerationResponse>;
   generateStructured<T>(request: GenerationRequest, schema: z.ZodType<T>): Promise<T>;
+  generateImage?(request: ImageGenerationRequest): Promise<ImageGenerationResponse>;
 }
 
 export interface ProviderConfig {
@@ -109,6 +138,7 @@ export interface VaultConfig {
     queryProvider: string;
     lintProvider: string;
     visionProvider: string;
+    imageProvider?: string;
   };
   viewer: {
     port: number;
@@ -121,6 +151,8 @@ export interface VaultConfig {
     }
   >;
   agents: Array<"codex" | "claude" | "cursor">;
+  schedules?: Record<string, ScheduleJobConfig>;
+  orchestration?: OrchestrationConfig;
   webSearch?: {
     providers: Record<string, WebSearchProviderConfig>;
     tasks: {
@@ -136,11 +168,13 @@ export interface ResolvedPaths {
   rawSourcesDir: string;
   rawAssetsDir: string;
   wikiDir: string;
+  outputsAssetsDir: string;
   projectsDir: string;
   candidatesDir: string;
   candidateConceptsDir: string;
   candidateEntitiesDir: string;
   stateDir: string;
+  schedulesDir: string;
   agentDir: string;
   inboxDir: string;
   manifestsDir: string;
@@ -299,6 +333,7 @@ export interface GraphPage {
   origin?: OutputOrigin;
   question?: string;
   outputFormat?: OutputFormat;
+  outputAssets?: OutputAsset[];
 }
 
 export interface GraphArtifact {
@@ -380,6 +415,8 @@ export interface CompileResult {
   staged: boolean;
   approvalId?: string;
   approvalDir?: string;
+  postPassApprovalId?: string;
+  postPassApprovalDir?: string;
   promotedPageIds: string[];
   candidatePageCount: number;
 }
@@ -399,11 +436,13 @@ export interface QueryOptions {
   question: string;
   save?: boolean;
   format?: OutputFormat;
+  review?: boolean;
 }
 
 export interface QueryResult {
   answer: string;
   savedPath?: string;
+  stagedPath?: string;
   savedPageId?: string;
   citations: string[];
   relatedPageIds: string[];
@@ -411,6 +450,10 @@ export interface QueryResult {
   relatedSourceIds: string[];
   outputFormat: OutputFormat;
   saved: boolean;
+  staged: boolean;
+  approvalId?: string;
+  approvalDir?: string;
+  outputAssets: OutputAsset[];
 }
 
 export interface LintFinding {
@@ -493,25 +536,196 @@ export interface ExploreOptions {
   question: string;
   steps?: number;
   format?: OutputFormat;
+  review?: boolean;
 }
 
 export interface ExploreStepResult {
   step: number;
   question: string;
   answer: string;
-  savedPath: string;
+  savedPath?: string;
+  stagedPath?: string;
   savedPageId: string;
   citations: string[];
   followUpQuestions: string[];
   outputFormat: OutputFormat;
+  outputAssets: OutputAsset[];
 }
 
 export interface ExploreResult {
   rootQuestion: string;
-  hubPath: string;
+  hubPath?: string;
+  stagedHubPath?: string;
   hubPageId: string;
   stepCount: number;
   steps: ExploreStepResult[];
   suggestedQuestions: string[];
   outputFormat: OutputFormat;
+  staged: boolean;
+  approvalId?: string;
+  approvalDir?: string;
+  hubAssets: OutputAsset[];
+}
+
+export interface OutputAsset {
+  id: string;
+  role: OutputAssetRole;
+  path: string;
+  mimeType: string;
+  width?: number;
+  height?: number;
+  dataPath?: string;
+}
+
+export interface ChartDatum {
+  label: string;
+  value: number;
+}
+
+export interface ChartSpec {
+  kind: "bar" | "line";
+  title: string;
+  subtitle?: string;
+  xLabel?: string;
+  yLabel?: string;
+  seriesLabel?: string;
+  data: ChartDatum[];
+  notes?: string[];
+}
+
+export interface SceneElement {
+  kind: "shape" | "label";
+  shape?: "rect" | "circle" | "line";
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  text?: string;
+  fontSize?: number;
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  opacity?: number;
+}
+
+export interface SceneSpec {
+  title: string;
+  alt: string;
+  background?: string;
+  width?: number;
+  height?: number;
+  elements: SceneElement[];
+}
+
+export interface ScheduledCompileTask {
+  type: "compile";
+  approve?: boolean;
+}
+
+export interface ScheduledLintTask {
+  type: "lint";
+  deep?: boolean;
+  web?: boolean;
+}
+
+export interface ScheduledQueryTask {
+  type: "query";
+  question: string;
+  format?: OutputFormat;
+  save?: boolean;
+}
+
+export interface ScheduledExploreTask {
+  type: "explore";
+  question: string;
+  steps?: number;
+  format?: OutputFormat;
+}
+
+export type ScheduledTaskConfig = ScheduledCompileTask | ScheduledLintTask | ScheduledQueryTask | ScheduledExploreTask;
+
+export interface ScheduleTriggerConfig {
+  cron?: string;
+  every?: string;
+}
+
+export interface ScheduleJobConfig {
+  enabled?: boolean;
+  when: ScheduleTriggerConfig;
+  task: ScheduledTaskConfig;
+}
+
+export interface ProviderRoleExecutorConfig {
+  type: "provider";
+  provider: string;
+}
+
+export interface CommandRoleExecutorConfig {
+  type: "command";
+  command: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+export type RoleExecutorConfig = ProviderRoleExecutorConfig | CommandRoleExecutorConfig;
+
+export interface OrchestrationRoleConfig {
+  executor: RoleExecutorConfig;
+}
+
+export interface OrchestrationConfig {
+  maxParallelRoles?: number;
+  compilePostPass?: boolean;
+  roles?: Partial<Record<OrchestrationRole, OrchestrationRoleConfig>>;
+}
+
+export interface OrchestrationFinding {
+  role: OrchestrationRole;
+  severity: "error" | "warning" | "info";
+  message: string;
+  relatedPageIds?: string[];
+  relatedSourceIds?: string[];
+  suggestedQuery?: string;
+}
+
+export interface OrchestrationProposal {
+  path: string;
+  content: string;
+  reason: string;
+}
+
+export interface OrchestrationRoleResult {
+  role: OrchestrationRole;
+  summary?: string;
+  findings: OrchestrationFinding[];
+  questions: string[];
+  proposals: OrchestrationProposal[];
+}
+
+export interface ScheduleStateRecord {
+  jobId: string;
+  enabled: boolean;
+  taskType: ScheduledTaskConfig["type"];
+  nextRunAt?: string;
+  lastRunAt?: string;
+  lastStatus?: "success" | "failed";
+  lastSessionId?: string;
+  lastApprovalId?: string;
+  error?: string;
+}
+
+export interface ScheduledRunResult {
+  jobId: string;
+  taskType: ScheduledTaskConfig["type"];
+  startedAt: string;
+  finishedAt: string;
+  success: boolean;
+  approvalId?: string;
+  error?: string;
+}
+
+export interface ScheduleController {
+  close(): Promise<void>;
 }

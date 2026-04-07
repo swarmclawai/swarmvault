@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
 import {
+  normalizeOutputAssets,
   normalizePageManager,
   normalizePageStatus,
   normalizeProjectIds,
@@ -109,9 +110,13 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredPage[
         origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
         question: typeof parsed.data.question === "string" ? parsed.data.question : undefined,
         outputFormat:
-          parsed.data.output_format === "report" || parsed.data.output_format === "slides"
+          parsed.data.output_format === "report" ||
+          parsed.data.output_format === "slides" ||
+          parsed.data.output_format === "chart" ||
+          parsed.data.output_format === "image"
             ? (parsed.data.output_format as OutputFormat)
-            : "markdown"
+            : "markdown",
+        outputAssets: normalizeOutputAssets(parsed.data.output_assets)
       },
       content,
       contentHash: sha256(content)

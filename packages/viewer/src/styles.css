@@ -166,6 +166,30 @@ article {
   margin: 14px 0;
 }
 
+.asset-preview {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.asset-card {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.asset-card img {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(2, 6, 23, 0.8);
+}
+
+.asset-card figcaption {
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
 .result-card {
   border: 1px solid rgba(148, 163, 184, 0.16);
   background: rgba(2, 6, 23, 0.8);

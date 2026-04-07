@@ -13,11 +13,14 @@ import {
   lintVault,
   listApprovals,
   listCandidates,
+  listSchedules,
   loadVaultConfig,
   promoteCandidate,
   queryVault,
   readApproval,
   rejectApproval,
+  runSchedule,
+  serveSchedules,
   startGraphServer,
   startMcpServer,
   watchVault
@@ -29,7 +32,7 @@ const program = new Command();
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.6")
+  .version("0.1.7")
   .option("--json", "Emit structured JSON output", false);
 
 function isJson(): boolean {
@@ -112,8 +115,10 @@ program
   .description("Query the compiled SwarmVault wiki.")
   .argument("<question>", "Question to ask SwarmVault")
   .option("--no-save", "Do not persist the answer to wiki/outputs")
-  .addOption(new Option("--format <format>", "Output format").choices(["markdown", "report", "slides"]).default("markdown"))
-  .action(async (question: string, options: { save?: boolean; format?: "markdown" | "report" | "slides" }) => {
+  .addOption(
+    new Option("--format <format>", "Output format").choices(["markdown", "report", "slides", "chart", "image"]).default("markdown")
+  )
+  .action(async (question: string, options: { save?: boolean; format?: "markdown" | "report" | "slides" | "chart" | "image" }) => {
     const result = await queryVault(process.cwd(), {
       question,
       save: options.save ?? true,
@@ -134,8 +139,12 @@ program
   .description("Run a save-first multi-step exploration loop against the vault.")
   .argument("<question>", "Root question to explore")
   .option("--steps <n>", "Maximum number of exploration steps", "3")
-  .addOption(new Option("--format <format>", "Output format for step pages").choices(["markdown", "report", "slides"]).default("markdown"))
-  .action(async (question: string, options: { steps?: string; format?: "markdown" | "report" | "slides" }) => {
+  .addOption(
+    new Option("--format <format>", "Output format for step pages")
+      .choices(["markdown", "report", "slides", "chart", "image"])
+      .default("markdown")
+  )
+  .action(async (question: string, options: { steps?: string; format?: "markdown" | "report" | "slides" | "chart" | "image" }) => {
     const stepCount = Number.parseInt(options.steps ?? "3", 10);
     const result = await exploreVault(process.cwd(), {
       question,
@@ -331,6 +340,62 @@ program
       emitJson({ status: "watching", inboxDir: paths.inboxDir });
     } else {
       log("Watching inbox for changes. Press Ctrl+C to stop.");
+    }
+    process.on("SIGINT", async () => {
+      await controller.close();
+      process.exit(0);
+    });
+  });
+
+const schedule = program.command("schedule").description("Run scheduled vault maintenance jobs.");
+schedule
+  .command("list")
+  .description("List configured schedule jobs and their next run state.")
+  .action(async () => {
+    const schedules = await listSchedules(process.cwd());
+    if (isJson()) {
+      emitJson(schedules);
+      return;
+    }
+    if (!schedules.length) {
+      log("No schedules configured.");
+      return;
+    }
+    for (const entry of schedules) {
+      log(
+        `${entry.jobId} enabled=${entry.enabled} task=${entry.taskType} next=${entry.nextRunAt ?? "n/a"} last=${entry.lastRunAt ?? "never"} status=${entry.lastStatus ?? "n/a"} approval=${entry.lastApprovalId ?? "none"}`
+      );
+    }
+  });
+
+schedule
+  .command("run")
+  .description("Run one configured schedule job immediately.")
+  .argument("<jobId>", "Schedule identifier")
+  .action(async (jobId: string) => {
+    const result = await runSchedule(process.cwd(), jobId);
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(
+      `${jobId} ${result.success ? "completed" : "failed"} (${result.taskType})${result.approvalId ? ` approval=${result.approvalId}` : ""}${
+        result.error ? ` error=${result.error}` : ""
+      }`
+    );
+  });
+
+schedule
+  .command("serve")
+  .description("Run the local schedule loop.")
+  .option("--poll <ms>", "Polling interval in milliseconds", "30000")
+  .action(async (options: { poll?: string }) => {
+    const pollMs = Number.parseInt(options.poll ?? "30000", 10);
+    const controller = await serveSchedules(process.cwd(), Number.isFinite(pollMs) ? pollMs : 30_000);
+    if (isJson()) {
+      emitJson({ status: "serving", pollMs: Number.isFinite(pollMs) ? pollMs : 30_000 });
+    } else {
+      log("Serving schedules. Press Ctrl+C to stop.");
     }
     process.on("SIGINT", async () => {
       await controller.close();

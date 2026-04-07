@@ -3,6 +3,7 @@ export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig,
 export { importInbox, ingestInput, listManifests, readExtractedText } from "./ingest.js";
 export { createMcpServer, startMcpServer } from "./mcp.js";
 export { assertProviderCapability, createProvider, getProviderForTask } from "./providers/registry.js";
+export { listSchedules, runSchedule, serveSchedules } from "./schedule.js";
 export { loadVaultSchema, loadVaultSchemas } from "./schema.js";
 export type * from "./types.js";
 export {

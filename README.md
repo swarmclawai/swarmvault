@@ -22,10 +22,12 @@ The open source runtime gives you:
 - A structured graph artifact for relationships, provenance, and freshness
 - A vault-specific schema file that guides compile and query behavior
 - Human-only insight pages in `wiki/insights/` that SwarmVault can read but does not rewrite
+- Visual output artifacts that save wrapper markdown pages plus local chart/image assets
 - Local full-text search over compiled pages
 - Canonical session artifacts in `state/sessions/` for compile, query, explore, lint, and watch runs
-- CLI workflows for ingest, inbox import, compile, query, explore, lint, watch, MCP, and graph serving
+- CLI workflows for ingest, inbox import, compile, query, explore, lint, scheduling, watch, MCP, and graph serving
 - Pluggable model providers, including OpenAI, Anthropic, Gemini, Ollama, generic OpenAI-compatible APIs, and custom adapters
+- Optional role orchestration for research, audit, context, and safety work
 - Optional web-search augmentation for deep lint findings
 
 ## Install
@@ -49,8 +51,10 @@ swarmvault ingest ./notes.md
 swarmvault compile
 swarmvault query "What are the main ideas?"
 swarmvault query "Turn this into slides" --format slides
+swarmvault query "Show this as a chart" --format chart
 swarmvault explore "What should I investigate next?" --steps 3
 swarmvault lint --deep
+swarmvault schedule list
 swarmvault review list
 swarmvault candidate list
 swarmvault graph serve
@@ -90,6 +94,8 @@ my-vault/
 |   |-- concepts/
 |   |-- entities/
 |   `-- outputs/
+|       |-- assets/
+|       `-- index.md
 |-- state/
 |   |-- manifests/
 |   |-- extracts/
@@ -98,6 +104,7 @@ my-vault/
 |   |-- search.sqlite
 |   |-- sessions/
 |   |-- approvals/
+|   |-- schedules/
 |   `-- jobs.ndjson
 |-- .obsidian/
 `-- agent/
@@ -129,9 +136,10 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault ingest <input>`: ingest a local file path or URL
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
 - `swarmvault compile [--approve]`: build wiki pages, graph data, and the search index using the vault schema as guidance, or stage a review bundle before applying changes
-- `swarmvault query "<question>" [--no-save] [--format markdown|report|slides]`: answer questions against the compiled vault and save the result by default
-- `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides]`: run a save-first multi-step research loop and write a hub page plus step outputs
+- `swarmvault query "<question>" [--no-save] [--format markdown|report|slides|chart|image]`: answer questions against the compiled vault and save the result by default
+- `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides|chart|image]`: run a save-first multi-step research loop and write a hub page plus step outputs
 - `swarmvault lint [--deep] [--web]`: run structural lint, optional LLM-powered deep lint, and optional web-augmented evidence gathering
+- `swarmvault schedule list|run|serve`: run configured recurring jobs for compile, lint, query, and explore
 - `swarmvault watch --lint`: watch the inbox and run import/compile cycles on changes
 - `swarmvault mcp`: start a local MCP server over stdio
 - `swarmvault review list|show|accept|reject`: inspect and resolve staged approval bundles
@@ -150,11 +158,14 @@ SwarmVault is designed so useful work compounds:
 - `query --no-save` keeps the answer ephemeral
 - saved outputs are indexed immediately into search and the graph page registry
 - saved outputs immediately refresh related source, concept, and entity pages
+- `chart` and `image` saves also write local assets into `wiki/outputs/assets/<slug>/`
 - new concept and entity pages land in `wiki/candidates/` first, then promote on the next matching compile
 - `review` turns `compile --approve` bundles into a local accept/reject workflow instead of a dead-end staging directory
 - `candidate` lets you promote or archive staged concept and entity pages without waiting for another compile
 - `explore` chains several saved queries together and writes a hub page you can revisit
+- scheduled `query` and `explore` jobs stage saved output pages through approvals instead of activating them immediately
 - `lint --deep` can suggest missing citations, coverage gaps, candidate pages, and follow-up questions without mutating the vault
+- orchestration roles can add audit, safety, context, and research feedback without bypassing the approval flow
 - compile, query, explore, lint, and watch each write a session artifact to `state/sessions/`
 
 ## Why This Exists
@@ -186,14 +197,15 @@ Example provider config:
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1-mini",
       "apiStyle": "chat",
-      "capabilities": ["chat", "structured"]
+      "capabilities": ["chat", "structured", "image_generation"]
     }
   },
   "tasks": {
     "compileProvider": "primary",
     "queryProvider": "primary",
     "lintProvider": "primary",
-    "visionProvider": "primary"
+    "visionProvider": "primary",
+    "imageProvider": "primary"
   }
 }
 ```

@@ -32,11 +32,14 @@ import {
   installAgent,
   getWebSearchAdapterForTask,
   lintVault,
+  listSchedules,
   loadVaultConfig,
   loadVaultSchema,
   loadVaultSchemas,
   queryVault,
+  runSchedule,
   searchVault,
+  serveSchedules,
   startGraphServer,
   startMcpServer,
   watchVault,
@@ -82,6 +85,7 @@ The engine treats that file as vault-specific operating guidance for compile and
 - compile and query prompts include the schema content
 - generated pages store `schema_hash`
 - generated pages also carry lifecycle metadata such as `status`, `created_at`, `updated_at`, `compiled_from`, `managed_by`, and `project_ids`
+- saved visual outputs also carry `output_assets`
 - `lintVault()` marks generated pages stale when the schema changes
 
 ## Provider Model
@@ -105,6 +109,7 @@ Providers are capability-driven. Each provider declares support for features suc
 - `embeddings`
 - `streaming`
 - `local`
+- `image_generation`
 
 This matters because many "OpenAI-compatible" backends only implement part of the OpenAI surface.
 
@@ -119,17 +124,21 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 ### Compile + Query
 
 - `compileVault(rootDir, { approve })` writes wiki pages, graph data, and search state using the vault schema as guidance, or stages a review bundle
-- `queryVault(rootDir, { question, save, format })` answers against the compiled vault using the same schema layer and saves by default
-- `exploreVault(rootDir, { question, steps, format })` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
+- `queryVault(rootDir, { question, save, format, review })` answers against the compiled vault using the same schema layer and saves by default
+- `exploreVault(rootDir, { question, steps, format, review })` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
 - project-aware compile also builds `wiki/projects/index.md` plus `wiki/projects/<project>/index.md` rollups without duplicating page trees
 - human-authored insight pages in `wiki/insights/` are indexed into search and available to query without being rewritten by compile
+- `chart` and `image` formats save wrapper markdown pages plus local output assets under `wiki/outputs/assets/<slug>/`
 
 ### Automation
 
 - `watchVault(rootDir, options)` watches the inbox and appends run records to `state/jobs.ndjson`
 - `lintVault(rootDir, options)` runs structural lint, optional deep lint, and optional web-augmented evidence gathering
+- `listSchedules(rootDir)`, `runSchedule(rootDir, jobId)`, and `serveSchedules(rootDir)` manage recurring local jobs from config
 - compile, query, explore, lint, and watch also write canonical markdown session artifacts to `state/sessions/`
+- scheduled `query` and `explore` jobs stage saved outputs through approvals when they write artifacts
+- optional orchestration roles can enrich `lint`, `explore`, and compile post-pass behavior without bypassing the approval flow
 
 ### Web Search Adapters
 
@@ -153,6 +162,7 @@ Running the engine produces a local workspace with these main areas:
 - `raw/sources/`: immutable source copies
 - `raw/assets/`: copied attachments referenced by ingested markdown bundles
 - `wiki/`: generated markdown pages, staged candidates, saved query outputs, exploration hub pages, and a human-only `insights/` area
+- `wiki/outputs/assets/`: local chart/image artifacts and JSON manifests for saved visual outputs
 - `wiki/code/`: generated module pages for ingested JS/TS sources
 - `wiki/projects/`: generated project rollups over canonical pages
 - `wiki/candidates/`: staged concept and entity pages awaiting confirmation on a later compile
@@ -163,6 +173,7 @@ Running the engine produces a local workspace with these main areas:
 - `state/search.sqlite`: full-text index
 - `state/sessions/`: canonical session artifacts
 - `state/approvals/`: staged review bundles from `compileVault({ approve: true })`
+- `state/schedules/`: persisted schedule state and leases
 - `state/jobs.ndjson`: watch-mode automation logs
 
 Saved outputs are indexed immediately into the graph page registry and search index, then linked back into compiled source, concept, and entity pages immediately through the lightweight artifact sync path. New concept and entity pages stage into `wiki/candidates/` first and promote to active pages on the next matching compile. Insight pages are indexed into search and page reads, but compile does not mutate them. Project-scoped pages receive `project_ids`, project tags, and layered root-plus-project schema hashes when all contributing sources resolve to the same configured project.

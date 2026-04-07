@@ -1,3 +1,14 @@
+export type ViewerOutputAsset = {
+  id: string;
+  role: string;
+  path: string;
+  mimeType: string;
+  width?: number;
+  height?: number;
+  dataPath?: string;
+  dataUrl?: string;
+};
+
 export type ViewerGraphNode = {
   id: string;
   type: string;
@@ -31,6 +42,7 @@ export type ViewerGraphPage = {
   status: string;
   projectIds: string[];
   content: string;
+  assets: ViewerOutputAsset[];
 };
 
 export type ViewerGraphArtifact = {
@@ -71,6 +83,7 @@ export type ViewerPagePayload = {
   title: string;
   frontmatter: Record<string, unknown>;
   content: string;
+  assets: ViewerOutputAsset[];
 };
 
 export type ViewerApprovalSummary = {
@@ -228,7 +241,8 @@ export async function fetchViewerPage(path: string): Promise<ViewerPagePayload> 
         status: page.status,
         project_ids: page.projectIds
       },
-      content: page.content
+      content: page.content,
+      assets: page.assets ?? []
     };
   }
 

@@ -24,6 +24,15 @@ import {
   type ManagedGraphPageMetadata,
   type ManagedPageMetadata
 } from "./markdown.js";
+import { runConfiguredRoles, summarizeRoleQuestions } from "./orchestration.js";
+import {
+  buildOutputAssetManifest,
+  chartSpecSchema,
+  renderChartSvg,
+  renderRasterPosterSvg,
+  renderSceneSvg,
+  sceneSpecSchema
+} from "./output-artifacts.js";
 import { loadSavedOutputPages, relatedOutputsForPage, resolveUniqueOutputSlug } from "./outputs.js";
 import { loadExistingManagedPageState, loadInsightPages, parseStoredPage } from "./pages.js";
 import { getProviderForTask } from "./providers/registry.js";
@@ -55,6 +64,7 @@ import type {
   InitOptions,
   LintFinding,
   LintOptions,
+  OutputAsset,
   OutputFormat,
   PageManager,
   PageStatus,
@@ -95,6 +105,22 @@ type QueryExecutionResult = {
   };
 };
 
+type PersistedOutputPageResult = {
+  page: GraphPage;
+  savedPath: string;
+  outputAssets: OutputAsset[];
+};
+
+type GeneratedOutputArtifacts = {
+  answer: string;
+  outputAssets: OutputAsset[];
+  assetFiles: Array<{
+    relativePath: string;
+    content: string | Uint8Array;
+    encoding?: BufferEncoding;
+  }>;
+};
+
 type ProjectEntry = {
   id: string;
   roots: string[];
@@ -112,7 +138,7 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 function normalizeOutputFormat(format: OutputFormat | undefined): OutputFormat {
-  return format === "report" || format === "slides" ? format : "markdown";
+  return format === "report" || format === "slides" || format === "chart" || format === "image" ? format : "markdown";
 }
 
 function outputFormatInstruction(format: OutputFormat): string {
@@ -121,9 +147,383 @@ function outputFormatInstruction(format: OutputFormat): string {
       return "Return a concise markdown report with a title, a brief summary, key findings, and cited evidence.";
     case "slides":
       return "Return Marp-compatible markdown slide content with short slide titles, `---` separators, and cited evidence. Do not include YAML frontmatter.";
+    case "chart":
+      return "Return concise markdown that explains the key visual takeaway for a chart and cites the supporting source IDs.";
+    case "image":
+      return "Return concise markdown that explains the key visual takeaway for an illustrative image and cites the supporting source IDs.";
     default:
       return "Return concise markdown grounded in the provided context with cited evidence.";
   }
+}
+
+function outputAssetPath(slug: string, fileName: string): string {
+  return toPosix(path.join("outputs", "assets", slug, fileName));
+}
+
+function outputAssetId(slug: string, role: OutputAsset["role"]): string {
+  return `output:${slug}:asset:${role}`;
+}
+
+function extensionForMimeType(mimeType: string): string {
+  switch (mimeType) {
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+      return "jpg";
+    case "image/webp":
+      return "webp";
+    case "image/svg+xml":
+      return "svg";
+    case "application/json":
+      return "json";
+    default:
+      return "bin";
+  }
+}
+
+function defaultChartSpec(question: string, answer: string, citations: string[], relatedPageCount: number, relatedNodeCount: number) {
+  return {
+    kind: "bar" as const,
+    title: question,
+    subtitle: truncate(normalizeWhitespace(answer), 120),
+    xLabel: "Metric",
+    yLabel: "Count",
+    seriesLabel: "Vault context",
+    data: [
+      { label: "Citations", value: citations.length },
+      { label: "Pages", value: relatedPageCount },
+      { label: "Nodes", value: relatedNodeCount }
+    ],
+    notes: citations.length ? [`Sources: ${citations.join(", ")}`] : ["No citations recorded."]
+  };
+}
+
+function defaultSceneSpec(question: string, answer: string, citations: string[]): z.infer<typeof sceneSpecSchema> {
+  const summary = truncate(normalizeWhitespace(answer), 140);
+  const citationLine = citations.length ? `Sources: ${citations.join(", ")}` : "No citations recorded.";
+  return {
+    title: question,
+    alt: `${question}. ${summary}`,
+    background: "#f8fafc",
+    width: 1200,
+    height: 720,
+    elements: [
+      {
+        kind: "shape",
+        shape: "rect",
+        x: 48,
+        y: 112,
+        width: 1104,
+        height: 220,
+        fill: "#dbeafe",
+        stroke: "#0ea5e9",
+        strokeWidth: 3
+      },
+      {
+        kind: "label",
+        x: 78,
+        y: 170,
+        text: "Vault Summary",
+        fontSize: 30,
+        fill: "#0f172a"
+      },
+      {
+        kind: "label",
+        x: 78,
+        y: 218,
+        text: summary,
+        fontSize: 22,
+        fill: "#1e293b"
+      },
+      {
+        kind: "shape",
+        shape: "rect",
+        x: 48,
+        y: 372,
+        width: 520,
+        height: 210,
+        fill: "#ecfccb",
+        stroke: "#65a30d",
+        strokeWidth: 3
+      },
+      {
+        kind: "label",
+        x: 78,
+        y: 430,
+        text: `Citations: ${citations.length}`,
+        fontSize: 28,
+        fill: "#14532d"
+      },
+      {
+        kind: "label",
+        x: 78,
+        y: 476,
+        text: citationLine,
+        fontSize: 20,
+        fill: "#166534"
+      },
+      {
+        kind: "shape",
+        shape: "circle",
+        x: 864,
+        y: 478,
+        radius: 116,
+        fill: "#fee2e2",
+        stroke: "#ef4444",
+        strokeWidth: 4
+      },
+      {
+        kind: "label",
+        x: 792,
+        y: 470,
+        text: "Image",
+        fontSize: 34,
+        fill: "#7f1d1d"
+      },
+      {
+        kind: "label",
+        x: 754,
+        y: 512,
+        text: "Fallback",
+        fontSize: 26,
+        fill: "#991b1b"
+      }
+    ]
+  };
+}
+
+async function resolveImageGenerationProvider(rootDir: string) {
+  const { config } = await loadVaultConfig(rootDir);
+  const preferredProviderId = config.tasks.imageProvider;
+  if (!preferredProviderId) {
+    return getProviderForTask(rootDir, "queryProvider");
+  }
+  const providerConfig = config.providers[preferredProviderId];
+  if (!providerConfig) {
+    throw new Error(`No provider configured with id "${preferredProviderId}" for task "imageProvider".`);
+  }
+  const { createProvider } = await import("./providers/registry.js");
+  return createProvider(preferredProviderId, providerConfig, rootDir);
+}
+
+async function generateOutputArtifacts(
+  rootDir: string,
+  input: {
+    slug: string;
+    title: string;
+    question: string;
+    answer: string;
+    citations: string[];
+    format: OutputFormat;
+    relatedPageCount: number;
+    relatedNodeCount: number;
+    projectId?: string | null;
+  }
+): Promise<GeneratedOutputArtifacts> {
+  if (input.format !== "chart" && input.format !== "image") {
+    return {
+      answer: input.answer,
+      outputAssets: [],
+      assetFiles: []
+    };
+  }
+
+  const schemas = await loadVaultSchemas(rootDir);
+  const schema = getEffectiveSchema(schemas, input.projectId ?? null);
+
+  if (input.format === "chart") {
+    const provider = await getProviderForTask(rootDir, "queryProvider");
+    const chartSpec =
+      provider.type === "heuristic"
+        ? defaultChartSpec(input.question, input.answer, input.citations, input.relatedPageCount, input.relatedNodeCount)
+        : await provider.generateStructured(
+            {
+              system: buildSchemaPrompt(
+                schema,
+                "Create a grounded chart spec. Use only the supplied answer and citations. Prefer simple bar or line charts with 2-12 points."
+              ),
+              prompt: [
+                `Question: ${input.question}`,
+                "",
+                "Answer:",
+                input.answer,
+                "",
+                `Citations: ${input.citations.join(", ") || "none"}`,
+                `Related pages: ${input.relatedPageCount}`,
+                `Related nodes: ${input.relatedNodeCount}`
+              ].join("\n")
+            },
+            chartSpecSchema
+          );
+    const rendered = renderChartSvg(chartSpec);
+    const primaryAsset: OutputAsset = {
+      id: outputAssetId(input.slug, "primary"),
+      role: "primary",
+      path: outputAssetPath(input.slug, "primary.svg"),
+      mimeType: "image/svg+xml",
+      width: rendered.width,
+      height: rendered.height
+    };
+    const manifestAsset: OutputAsset = {
+      id: outputAssetId(input.slug, "manifest"),
+      role: "manifest",
+      path: outputAssetPath(input.slug, "manifest.json"),
+      mimeType: "application/json"
+    };
+    const outputAssets = [primaryAsset, manifestAsset];
+    return {
+      answer: input.answer,
+      outputAssets,
+      assetFiles: [
+        { relativePath: primaryAsset.path, content: rendered.svg, encoding: "utf8" },
+        {
+          relativePath: manifestAsset.path,
+          content: buildOutputAssetManifest({
+            slug: input.slug,
+            format: input.format,
+            question: input.question,
+            title: input.title,
+            citations: input.citations,
+            answer: input.answer,
+            assets: outputAssets,
+            spec: chartSpec
+          }),
+          encoding: "utf8"
+        }
+      ]
+    };
+  }
+
+  const imageProvider = await resolveImageGenerationProvider(rootDir);
+  const nativePrompt = [
+    `Create a single grounded illustration for: ${input.question}`,
+    "",
+    "Use only the supplied vault context.",
+    input.answer,
+    "",
+    `Citations: ${input.citations.join(", ") || "none"}`
+  ].join("\n");
+
+  if (imageProvider.capabilities.has("image_generation") && typeof imageProvider.generateImage === "function") {
+    try {
+      const image = await imageProvider.generateImage({
+        prompt: nativePrompt,
+        system: buildSchemaPrompt(schema, "Create one grounded image prompt. Avoid text-heavy diagrams."),
+        width: 1200,
+        height: 720
+      });
+      const extension = extensionForMimeType(image.mimeType);
+      const primaryAsset: OutputAsset = {
+        id: outputAssetId(input.slug, "primary"),
+        role: "primary",
+        path: outputAssetPath(input.slug, `primary.${extension}`),
+        mimeType: image.mimeType,
+        width: image.width,
+        height: image.height
+      };
+      const poster = renderRasterPosterSvg({
+        title: input.title,
+        alt: image.revisedPrompt ?? input.answer,
+        rasterFileName: `primary.${extension}`,
+        width: image.width,
+        height: image.height
+      });
+      const posterAsset: OutputAsset = {
+        id: outputAssetId(input.slug, "poster"),
+        role: "poster",
+        path: outputAssetPath(input.slug, "poster.svg"),
+        mimeType: "image/svg+xml",
+        width: poster.width,
+        height: poster.height
+      };
+      const manifestAsset: OutputAsset = {
+        id: outputAssetId(input.slug, "manifest"),
+        role: "manifest",
+        path: outputAssetPath(input.slug, "manifest.json"),
+        mimeType: "application/json"
+      };
+      const outputAssets = [primaryAsset, posterAsset, manifestAsset];
+      return {
+        answer: input.answer,
+        outputAssets,
+        assetFiles: [
+          { relativePath: primaryAsset.path, content: image.bytes },
+          { relativePath: posterAsset.path, content: poster.svg, encoding: "utf8" },
+          {
+            relativePath: manifestAsset.path,
+            content: buildOutputAssetManifest({
+              slug: input.slug,
+              format: input.format,
+              question: input.question,
+              title: input.title,
+              citations: input.citations,
+              answer: input.answer,
+              assets: outputAssets,
+              spec: {
+                mode: "native",
+                prompt: nativePrompt,
+                revisedPrompt: image.revisedPrompt
+              }
+            }),
+            encoding: "utf8"
+          }
+        ]
+      };
+    } catch {
+      // Fall back to deterministic SVG scene generation below.
+    }
+  }
+
+  const sceneSpec =
+    imageProvider.type === "heuristic"
+      ? defaultSceneSpec(input.question, input.answer, input.citations)
+      : await imageProvider.generateStructured(
+          {
+            system: buildSchemaPrompt(
+              schema,
+              "Create a grounded SVG scene spec with shapes and short labels only. Avoid inventing unsupported details."
+            ),
+            prompt: nativePrompt
+          },
+          sceneSpecSchema
+        );
+  const renderedScene = renderSceneSvg(sceneSpec);
+  const primaryAsset: OutputAsset = {
+    id: outputAssetId(input.slug, "primary"),
+    role: "primary",
+    path: outputAssetPath(input.slug, "primary.svg"),
+    mimeType: "image/svg+xml",
+    width: renderedScene.width,
+    height: renderedScene.height
+  };
+  const manifestAsset: OutputAsset = {
+    id: outputAssetId(input.slug, "manifest"),
+    role: "manifest",
+    path: outputAssetPath(input.slug, "manifest.json"),
+    mimeType: "application/json"
+  };
+  const outputAssets = [primaryAsset, manifestAsset];
+  return {
+    answer: input.answer,
+    outputAssets,
+    assetFiles: [
+      { relativePath: primaryAsset.path, content: renderedScene.svg, encoding: "utf8" },
+      {
+        relativePath: manifestAsset.path,
+        content: buildOutputAssetManifest({
+          slug: input.slug,
+          format: input.format,
+          question: input.question,
+          title: input.title,
+          citations: input.citations,
+          answer: input.answer,
+          assets: outputAssets,
+          spec: sceneSpec
+        }),
+        encoding: "utf8"
+      }
+    ]
+  };
 }
 
 function normalizeProjectRoot(root: string): string {
@@ -1696,10 +2096,12 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
   await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
 }
 
-async function persistOutputPage(
+async function prepareOutputPageSave(
   rootDir: string,
-  input: Omit<Parameters<typeof buildOutputPage>[0], "metadata">
-): Promise<{ page: GraphPage; savedPath: string }> {
+  input: Omit<Parameters<typeof buildOutputPage>[0], "metadata"> & {
+    assetFiles?: GeneratedOutputArtifacts["assetFiles"];
+  }
+): Promise<PersistedOutputPageResult & { content: string; assetFiles: GeneratedOutputArtifacts["assetFiles"] }> {
   const { paths } = await loadVaultConfig(rootDir);
   const slug = await resolveUniqueOutputSlug(paths.wikiDir, input.slug ?? slugify(input.question));
   const now = new Date().toISOString();
@@ -1716,15 +2118,43 @@ async function persistOutputPage(
     }
   });
   const absolutePath = path.join(paths.wikiDir, output.page.path);
-  await ensureDir(path.dirname(absolutePath));
-  await fs.writeFile(absolutePath, output.content, "utf8");
-  return { page: output.page, savedPath: absolutePath };
+  return {
+    page: output.page,
+    savedPath: absolutePath,
+    outputAssets: output.page.outputAssets ?? [],
+    content: output.content,
+    assetFiles: input.assetFiles ?? []
+  };
 }
 
-async function persistExploreHub(
+async function persistOutputPage(
   rootDir: string,
-  input: Omit<Parameters<typeof buildExploreHubPage>[0], "metadata">
-): Promise<{ page: GraphPage; savedPath: string }> {
+  input: Omit<Parameters<typeof buildOutputPage>[0], "metadata"> & {
+    assetFiles?: GeneratedOutputArtifacts["assetFiles"];
+  }
+): Promise<PersistedOutputPageResult> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const prepared = await prepareOutputPageSave(rootDir, input);
+  await ensureDir(path.dirname(prepared.savedPath));
+  await fs.writeFile(prepared.savedPath, prepared.content, "utf8");
+  for (const assetFile of prepared.assetFiles) {
+    const assetPath = path.join(paths.wikiDir, assetFile.relativePath);
+    await ensureDir(path.dirname(assetPath));
+    if (typeof assetFile.content === "string") {
+      await fs.writeFile(assetPath, assetFile.content, assetFile.encoding ?? "utf8");
+    } else {
+      await fs.writeFile(assetPath, assetFile.content);
+    }
+  }
+  return { page: prepared.page, savedPath: prepared.savedPath, outputAssets: prepared.outputAssets };
+}
+
+async function prepareExploreHubSave(
+  rootDir: string,
+  input: Omit<Parameters<typeof buildExploreHubPage>[0], "metadata"> & {
+    assetFiles?: GeneratedOutputArtifacts["assetFiles"];
+  }
+): Promise<PersistedOutputPageResult & { content: string; assetFiles: GeneratedOutputArtifacts["assetFiles"] }> {
   const { paths } = await loadVaultConfig(rootDir);
   const slug = await resolveUniqueOutputSlug(paths.wikiDir, input.slug ?? `explore-${slugify(input.question)}`);
   const now = new Date().toISOString();
@@ -1741,9 +2171,93 @@ async function persistExploreHub(
     }
   });
   const absolutePath = path.join(paths.wikiDir, hub.page.path);
-  await ensureDir(path.dirname(absolutePath));
-  await fs.writeFile(absolutePath, hub.content, "utf8");
-  return { page: hub.page, savedPath: absolutePath };
+  return {
+    page: hub.page,
+    savedPath: absolutePath,
+    outputAssets: hub.page.outputAssets ?? [],
+    content: hub.content,
+    assetFiles: input.assetFiles ?? []
+  };
+}
+
+async function persistExploreHub(
+  rootDir: string,
+  input: Omit<Parameters<typeof buildExploreHubPage>[0], "metadata"> & {
+    assetFiles?: GeneratedOutputArtifacts["assetFiles"];
+  }
+): Promise<PersistedOutputPageResult> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const prepared = await prepareExploreHubSave(rootDir, input);
+  await ensureDir(path.dirname(prepared.savedPath));
+  await fs.writeFile(prepared.savedPath, prepared.content, "utf8");
+  for (const assetFile of prepared.assetFiles) {
+    const assetPath = path.join(paths.wikiDir, assetFile.relativePath);
+    await ensureDir(path.dirname(assetPath));
+    if (typeof assetFile.content === "string") {
+      await fs.writeFile(assetPath, assetFile.content, assetFile.encoding ?? "utf8");
+    } else {
+      await fs.writeFile(assetPath, assetFile.content);
+    }
+  }
+  return { page: prepared.page, savedPath: prepared.savedPath, outputAssets: prepared.outputAssets };
+}
+
+async function stageOutputApprovalBundle(
+  rootDir: string,
+  stagedPages: Array<{ page: GraphPage; content: string; assetFiles?: GeneratedOutputArtifacts["assetFiles"] }>
+): Promise<{ approvalId: string; approvalDir: string }> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const previousGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const changedFiles = stagedPages.flatMap((item) => [
+    { relativePath: item.page.path, content: item.content },
+    ...((item.assetFiles ?? []).map((assetFile) => ({
+      relativePath: assetFile.relativePath,
+      content: typeof assetFile.content === "string" ? assetFile.content : Buffer.from(assetFile.content).toString("base64"),
+      binary: typeof assetFile.content !== "string"
+    })) as Array<{ relativePath: string; content: string; binary: boolean }>)
+  ]);
+
+  const approvalId = `schedule-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const approvalDir = path.join(paths.approvalsDir, approvalId);
+  await ensureDir(approvalDir);
+  await ensureDir(path.join(approvalDir, "wiki"));
+  await ensureDir(path.join(approvalDir, "state"));
+
+  for (const file of changedFiles) {
+    const targetPath = path.join(approvalDir, "wiki", file.relativePath);
+    await ensureDir(path.dirname(targetPath));
+    if ("binary" in file && file.binary) {
+      await fs.writeFile(targetPath, Buffer.from(file.content, "base64"));
+    } else {
+      await fs.writeFile(targetPath, file.content, "utf8");
+    }
+  }
+
+  const nextPages = sortGraphPages([
+    ...(previousGraph?.pages ?? []).filter((page) => !stagedPages.some((item) => item.page.id === page.id || item.page.path === page.path)),
+    ...stagedPages.map((item) => item.page)
+  ]);
+  const graph: GraphArtifact = {
+    generatedAt: new Date().toISOString(),
+    nodes: previousGraph?.nodes ?? [],
+    edges: previousGraph?.edges ?? [],
+    sources: previousGraph?.sources ?? [],
+    pages: nextPages
+  };
+  await fs.writeFile(path.join(approvalDir, "state", "graph.json"), JSON.stringify(graph, null, 2), "utf8");
+  await writeApprovalManifest(paths, {
+    approvalId,
+    createdAt: new Date().toISOString(),
+    entries: await buildApprovalEntries(
+      paths,
+      stagedPages.map((item) => ({ relativePath: item.page.path, content: item.content })),
+      [],
+      previousGraph ?? null,
+      graph
+    )
+  });
+
+  return { approvalId, approvalDir };
 }
 
 async function executeQuery(rootDir: string, question: string, format: OutputFormat): Promise<QueryExecutionResult> {
@@ -2027,16 +2541,38 @@ export async function acceptApproval(rootDir: string, approvalId: string, target
       const nextPage =
         bundleGraph?.pages.find((page) => page.id === entry.pageId && page.path === entry.nextPath) ??
         parseStoredPage(entry.nextPath, stagedContent);
+      if (nextPage.kind === "output" && nextPage.outputAssets?.length) {
+        const outputAssetDir = path.join(paths.wikiDir, "outputs", "assets", path.basename(nextPage.path, ".md"));
+        await fs.rm(outputAssetDir, { recursive: true, force: true });
+        for (const asset of nextPage.outputAssets) {
+          const stagedAssetPath = path.join(paths.approvalsDir, approvalId, "wiki", asset.path);
+          if (!(await fileExists(stagedAssetPath))) {
+            continue;
+          }
+          const targetAssetPath = path.join(paths.wikiDir, asset.path);
+          await ensureDir(path.dirname(targetAssetPath));
+          await fs.copyFile(stagedAssetPath, targetAssetPath);
+        }
+      }
       nextPages = nextPages.filter(
         (page) => page.id !== entry.pageId && page.path !== entry.nextPath && (!entry.previousPath || page.path !== entry.previousPath)
       );
       nextPages.push(nextPage);
       updateCandidateHistory(compileState, nextPage);
     } else {
+      const deletedPage =
+        nextPages.find((page) => page.id === entry.pageId || page.path === entry.previousPath) ??
+        bundleGraph?.pages.find((page) => page.id === entry.pageId || page.path === entry.previousPath) ??
+        null;
       if (entry.previousPath) {
         await fs.rm(path.join(paths.wikiDir, entry.previousPath), { force: true });
       }
-      const deletedPage = nextPages.find((page) => page.id === entry.pageId || page.path === entry.previousPath) ?? null;
+      if (deletedPage?.kind === "output") {
+        await fs.rm(path.join(paths.wikiDir, "outputs", "assets", path.basename(deletedPage.path, ".md")), {
+          recursive: true,
+          force: true
+        });
+      }
       nextPages = nextPages.filter((page) => page.id !== entry.pageId && page.path !== entry.previousPath);
       updateCandidateHistory(compileState, deletedPage, true);
     }
@@ -2524,6 +3060,55 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     previousState,
     approve: options.approve
   });
+  let postPassApprovalId: string | undefined;
+  let postPassApprovalDir: string | undefined;
+  if (!options.approve && !sync.staged && config.orchestration?.compilePostPass) {
+    const roleResults = await runConfiguredRoles(rootDir, ["context", "safety"], {
+      title: "Compile post-pass",
+      instructions:
+        "Review the compiled vault and optionally propose markdown page updates. Proposals must be complete markdown files with frontmatter.",
+      context: [
+        `Pages: ${sync.allPages.length}`,
+        `Changed pages: ${sync.changedPages.join(", ") || "none"}`,
+        "",
+        sync.allPages
+          .slice(0, 18)
+          .map((page) => [`# ${page.title}`, `path=${page.path}`, `kind=${page.kind}`, `status=${page.status}`].join("\n"))
+          .join("\n\n---\n\n")
+      ].join("\n")
+    });
+    const proposals = roleResults
+      .flatMap((result) => result.proposals)
+      .map((proposal) => ({
+        ...proposal,
+        path: toPosix(proposal.path.replace(/^wiki\//, "").replace(/^\/+/, ""))
+      }))
+      .filter((proposal) => proposal.path.endsWith(".md"))
+      .filter((proposal) => !proposal.path.startsWith("insights/"))
+      .filter((proposal) => !proposal.path.startsWith("../"));
+
+    if (proposals.length) {
+      const proposedPages = proposals.map((proposal) => parseStoredPage(proposal.path, proposal.content));
+      const proposalGraph: GraphArtifact = {
+        ...sync.graph,
+        generatedAt: new Date().toISOString(),
+        pages: sortGraphPages(
+          sync.graph.pages
+            .filter((page) => !proposedPages.some((proposalPage) => proposalPage.id === page.id || proposalPage.path === page.path))
+            .concat(proposedPages)
+        )
+      };
+      const staged = await stageApprovalBundle(
+        paths,
+        proposals.map((proposal) => ({ relativePath: proposal.path, content: proposal.content })),
+        [],
+        sync.graph,
+        proposalGraph
+      );
+      postPassApprovalId = staged.approvalId;
+      postPassApprovalDir = staged.approvalDir;
+    }
+  }
 
   await recordSession(rootDir, {
     operation: "compile",
@@ -2545,6 +3130,7 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
       `candidates=${sync.candidatePageCount}`,
       `promoted=${sync.promotedPageIds.length}`,
       `staged=${sync.staged}`,
+      `postPassApproval=${postPassApprovalId ?? "none"}`,
       `schema=${schemas.effective.global.hash.slice(0, 12)}`
     ]
   });
@@ -2557,6 +3143,8 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     staged: sync.staged,
     approvalId: sync.approvalId,
     approvalDir: sync.approvalDir,
+    postPassApprovalId,
+    postPassApprovalDir,
     promotedPageIds: sync.promotedPageIds,
     candidatePageCount: sync.candidatePageCount
   };
@@ -2565,29 +3153,69 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
 export async function queryVault(rootDir: string, options: QueryOptions): Promise<QueryResult> {
   const startedAt = new Date().toISOString();
   const save = options.save ?? true;
+  const review = options.review ?? false;
   const outputFormat = normalizeOutputFormat(options.format);
   const schemas = await loadVaultSchemas(rootDir);
   const query = await executeQuery(rootDir, options.question, outputFormat);
   let savedPath: string | undefined;
+  let stagedPath: string | undefined;
   let savedPageId: string | undefined;
+  let approvalId: string | undefined;
+  let approvalDir: string | undefined;
+  let outputAssets: OutputAsset[] = [];
 
   if (save) {
-    const saved = await persistOutputPage(rootDir, {
+    const assetBundle = await generateOutputArtifacts(rootDir, {
+      slug: slugify(options.question),
+      title: options.question,
       question: options.question,
       answer: query.answer,
       citations: query.citations,
+      format: outputFormat,
+      relatedPageCount: query.relatedPageIds.length,
+      relatedNodeCount: query.relatedNodeIds.length,
+      projectId: query.projectIds[0] ?? null
+    });
+    outputAssets = assetBundle.outputAssets;
+    const outputInput = {
+      question: options.question,
+      answer: assetBundle.answer,
+      citations: query.citations,
       schemaHash: query.schemaHash,
       outputFormat,
+      outputAssets: assetBundle.outputAssets,
       relatedPageIds: query.relatedPageIds,
       relatedNodeIds: query.relatedNodeIds,
       relatedSourceIds: query.relatedSourceIds,
       projectIds: query.projectIds,
-      extraTags: categoryTagsForSchema(getEffectiveSchema(schemas, query.projectIds[0] ?? null), [options.question, query.answer]),
+      extraTags: categoryTagsForSchema(getEffectiveSchema(schemas, query.projectIds[0] ?? null), [options.question, assetBundle.answer]),
       origin: "query"
-    });
-    await refreshVaultAfterOutputSave(rootDir);
-    savedPath = saved.savedPath;
-    savedPageId = saved.page.id;
+    } satisfies Omit<Parameters<typeof buildOutputPage>[0], "metadata">;
+    if (review) {
+      const staged = await prepareOutputPageSave(rootDir, {
+        ...outputInput,
+        assetFiles: assetBundle.assetFiles
+      });
+      const approval = await stageOutputApprovalBundle(rootDir, [
+        {
+          page: staged.page,
+          content: staged.content,
+          assetFiles: staged.assetFiles
+        }
+      ]);
+      stagedPath = path.join(approval.approvalDir, "wiki", staged.page.path);
+      savedPageId = staged.page.id;
+      approvalId = approval.approvalId;
+      approvalDir = approval.approvalDir;
+    } else {
+      const saved = await persistOutputPage(rootDir, {
+        ...outputInput,
+        assetFiles: assetBundle.assetFiles
+      });
+      await refreshVaultAfterOutputSave(rootDir);
+      savedPath = saved.savedPath;
+      savedPageId = saved.page.id;
+    }
   }
 
   const provider = await getProviderForTask(rootDir, "queryProvider");
@@ -2606,6 +3234,7 @@ export async function queryVault(rootDir: string, options: QueryOptions): Promis
     lines: [
       `citations=${query.citations.join(",") || "none"}`,
       `saved=${Boolean(savedPath)}`,
+      `staged=${Boolean(stagedPath)}`,
       `format=${outputFormat}`,
       `rawSources=${query.relatedSourceIds.length}`
     ]
@@ -2614,13 +3243,18 @@ export async function queryVault(rootDir: string, options: QueryOptions): Promis
   return {
     answer: query.answer,
     savedPath,
+    stagedPath,
     savedPageId,
     citations: query.citations,
     relatedPageIds: query.relatedPageIds,
     relatedNodeIds: query.relatedNodeIds,
     relatedSourceIds: query.relatedSourceIds,
     outputFormat,
-    saved: Boolean(savedPath)
+    saved: Boolean(savedPath),
+    staged: Boolean(stagedPath),
+    approvalId,
+    approvalDir,
+    outputAssets
   };
 }
 
@@ -2628,9 +3262,11 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
   const startedAt = new Date().toISOString();
   const stepLimit = Math.max(1, options.steps ?? 3);
   const outputFormat = normalizeOutputFormat(options.format);
+  const review = options.review ?? false;
   const schemas = await loadVaultSchemas(rootDir);
   const stepResults: ExploreStepResult[] = [];
   const stepPages: GraphPage[] = [];
+  const stagedStepPages: Array<{ page: GraphPage; content: string; assetFiles?: GeneratedOutputArtifacts["assetFiles"] }> = [];
   const visited = new Set<string>();
   const suggestedQuestions: string[] = [];
   const relatedPageIds = new Set<string>();
@@ -2641,6 +3277,8 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
     outputTokens: 0
   };
   let currentQuestion = options.question;
+  let approvalId: string | undefined;
+  let approvalDir: string | undefined;
 
   for (let step = 1; step <= stepLimit; step++) {
     const normalizedQuestion = normalizeWhitespace(currentQuestion).toLowerCase();
@@ -2661,34 +3299,96 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
     });
     tokenUsage.inputTokens += query.usage?.inputTokens ?? 0;
     tokenUsage.outputTokens += query.usage?.outputTokens ?? 0;
-    const saved = await persistOutputPage(rootDir, {
+    const roleResults = await runConfiguredRoles(rootDir, ["research", "context", "safety"], {
+      title: currentQuestion,
+      instructions:
+        "Review this exploration step. Research should suggest follow-up questions, context should highlight cross-links, and safety should flag caveats.",
+      context: [
+        `Question: ${currentQuestion}`,
+        "",
+        "Answer:",
+        query.answer,
+        "",
+        `Related pages: ${query.relatedPageIds.join(", ") || "none"}`,
+        `Related nodes: ${query.relatedNodeIds.join(", ") || "none"}`,
+        `Citations: ${query.citations.join(", ") || "none"}`
+      ].join("\n")
+    });
+    const orchestrationNotes = roleResults.flatMap((result) => result.findings.map((finding) => `- [${result.role}] ${finding.message}`));
+    const enrichedAnswer = orchestrationNotes.length
+      ? `${query.answer}\n\n## Agent Review\n\n${orchestrationNotes.join("\n")}\n`
+      : query.answer;
+    const assetBundle = await generateOutputArtifacts(rootDir, {
+      slug: `explore-${slugify(options.question)}-step-${step}`,
       title: `Explore Step ${step}: ${currentQuestion}`,
       question: currentQuestion,
-      answer: query.answer,
+      answer: enrichedAnswer,
+      citations: query.citations,
+      format: outputFormat,
+      relatedPageCount: query.relatedPageIds.length,
+      relatedNodeCount: query.relatedNodeIds.length,
+      projectId: query.projectIds[0] ?? null
+    });
+    const outputInput = {
+      title: `Explore Step ${step}: ${currentQuestion}`,
+      question: currentQuestion,
+      answer: assetBundle.answer,
       citations: query.citations,
       schemaHash: query.schemaHash,
       outputFormat,
+      outputAssets: assetBundle.outputAssets,
       relatedPageIds: query.relatedPageIds,
       relatedNodeIds: query.relatedNodeIds,
       relatedSourceIds: query.relatedSourceIds,
       projectIds: query.projectIds,
-      extraTags: categoryTagsForSchema(getEffectiveSchema(schemas, query.projectIds[0] ?? null), [currentQuestion, query.answer]),
+      extraTags: categoryTagsForSchema(getEffectiveSchema(schemas, query.projectIds[0] ?? null), [currentQuestion, assetBundle.answer]),
       origin: "explore",
       slug: `explore-${slugify(options.question)}-step-${step}`
-    });
+    } satisfies Omit<Parameters<typeof buildOutputPage>[0], "metadata">;
+    let savedPathForStep: string | undefined;
+    let stagedPathForStep: string | undefined;
+    let savedPage: GraphPage;
+    let savedAssets: OutputAsset[];
+    if (review) {
+      const staged = await prepareOutputPageSave(rootDir, {
+        ...outputInput,
+        assetFiles: assetBundle.assetFiles
+      });
+      stagedStepPages.push({
+        page: staged.page,
+        content: staged.content,
+        assetFiles: staged.assetFiles
+      });
+      savedPage = staged.page;
+      savedAssets = staged.outputAssets;
+      stagedPathForStep = staged.savedPath;
+    } else {
+      const saved = await persistOutputPage(rootDir, {
+        ...outputInput,
+        assetFiles: assetBundle.assetFiles
+      });
+      savedPage = saved.page;
+      savedAssets = saved.outputAssets;
+      savedPathForStep = saved.savedPath;
+    }
 
-    const followUpQuestions = await generateFollowUpQuestions(rootDir, currentQuestion, query.answer);
+    const followUpQuestions = uniqueBy(
+      [...(await generateFollowUpQuestions(rootDir, currentQuestion, enrichedAnswer)), ...summarizeRoleQuestions(roleResults)],
+      (item) => item
+    );
     stepResults.push({
       step,
       question: currentQuestion,
-      answer: query.answer,
-      savedPath: saved.savedPath,
-      savedPageId: saved.page.id,
+      answer: enrichedAnswer,
+      savedPath: savedPathForStep,
+      stagedPath: stagedPathForStep,
+      savedPageId: savedPage.id,
       citations: query.citations,
       followUpQuestions,
-      outputFormat
+      outputFormat,
+      outputAssets: savedAssets
     });
-    stepPages.push(saved.page);
+    stepPages.push(savedPage);
     suggestedQuestions.push(...followUpQuestions);
 
     const nextQuestion = followUpQuestions.find((item) => !visited.has(normalizeWhitespace(item).toLowerCase()));
@@ -2702,7 +3402,18 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
     stepResults.flatMap((step) => step.citations),
     (item) => item
   );
-  const hub = await persistExploreHub(rootDir, {
+  const hubAssetBundle = await generateOutputArtifacts(rootDir, {
+    slug: `explore-${slugify(options.question)}`,
+    title: `Explore: ${options.question}`,
+    question: options.question,
+    answer: stepResults.map((step) => step.answer).join("\n\n"),
+    citations: allCitations,
+    format: outputFormat,
+    relatedPageCount: stepPages.length,
+    relatedNodeCount: uniqueStrings(stepPages.flatMap((page) => page.nodeIds)).length,
+    projectId: stepPages[0]?.projectIds[0] ?? null
+  });
+  const hubInput = {
     question: options.question,
     stepPages,
     followUpQuestions: uniqueBy(suggestedQuestions, (item) => item),
@@ -2714,14 +3425,54 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
         .filter((schema): schema is NonNullable<typeof schema> => Boolean(schema?.hash))
     ).hash,
     outputFormat,
+    outputAssets: hubAssetBundle.outputAssets,
     projectIds: scopedProjectIdsFromSources(
       allCitations,
       Object.fromEntries(stepPages.flatMap((page) => page.sourceIds.map((sourceId) => [sourceId, page.projectIds[0] ?? null])))
     ),
     extraTags: categoryTagsForSchema(schemas.effective.global, [options.question, ...stepResults.map((step) => step.answer)]),
     slug: `explore-${slugify(options.question)}`
-  });
-  await refreshVaultAfterOutputSave(rootDir);
+  } satisfies Omit<Parameters<typeof buildExploreHubPage>[0], "metadata">;
+  let hubPath: string | undefined;
+  let stagedHubPath: string | undefined;
+  let hubPage: GraphPage;
+  let hubAssets: OutputAsset[];
+  let stagedHubRecord: (PersistedOutputPageResult & { content: string; assetFiles: GeneratedOutputArtifacts["assetFiles"] }) | undefined;
+  if (review) {
+    stagedHubRecord = await prepareExploreHubSave(rootDir, {
+      ...hubInput,
+      assetFiles: hubAssetBundle.assetFiles
+    });
+    hubPage = stagedHubRecord.page;
+    hubAssets = stagedHubRecord.outputAssets;
+    stagedHubPath = stagedHubRecord.savedPath;
+  } else {
+    const savedHub = await persistExploreHub(rootDir, {
+      ...hubInput,
+      assetFiles: hubAssetBundle.assetFiles
+    });
+    hubPage = savedHub.page;
+    hubAssets = savedHub.outputAssets;
+    hubPath = savedHub.savedPath;
+  }
+  if (review) {
+    const approval = await stageOutputApprovalBundle(rootDir, [
+      ...stagedStepPages,
+      {
+        page: stagedHubRecord?.page ?? hubPage,
+        content: stagedHubRecord?.content ?? "",
+        assetFiles: stagedHubRecord?.assetFiles
+      }
+    ]);
+    approvalId = approval.approvalId;
+    approvalDir = approval.approvalDir;
+    stepResults.forEach((result, index) => {
+      result.stagedPath = path.join(approval.approvalDir as string, "wiki", stagedStepPages[index]?.page.path ?? "");
+    });
+    stagedHubPath = path.join(approval.approvalDir, "wiki", hubPage.path);
+  } else {
+    await refreshVaultAfterOutputSave(rootDir);
+  }
 
   const provider = await getProviderForTask(rootDir, "queryProvider");
   await recordSession(rootDir, {
@@ -2732,7 +3483,7 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
     providerId: provider.id,
     success: true,
     relatedSourceIds: [...relatedSourceIds],
-    relatedPageIds: uniqueStrings([...relatedPageIds, ...stepPages.map((page) => page.id), hub.page.id]),
+    relatedPageIds: uniqueStrings([...relatedPageIds, ...stepPages.map((page) => page.id), hubPage.id]),
     relatedNodeIds: [...relatedNodeIds],
     citations: allCitations,
     tokenUsage:
@@ -2742,17 +3493,28 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
             outputTokens: tokenUsage.outputTokens
           }
         : undefined,
-    lines: [`steps=${stepResults.length}`, `hub=${hub.page.id}`, `format=${outputFormat}`, `citations=${allCitations.join(",") || "none"}`]
+    lines: [
+      `steps=${stepResults.length}`,
+      `hub=${hubPage.id}`,
+      `format=${outputFormat}`,
+      `citations=${allCitations.join(",") || "none"}`,
+      `staged=${review}`
+    ]
   });
 
   return {
     rootQuestion: options.question,
-    hubPath: hub.savedPath,
-    hubPageId: hub.page.id,
+    hubPath,
+    stagedHubPath,
+    hubPageId: hubPage.id,
     stepCount: stepResults.length,
     steps: stepResults,
     suggestedQuestions: uniqueBy(suggestedQuestions, (item) => item),
-    outputFormat
+    outputFormat,
+    staged: review,
+    approvalId,
+    approvalDir,
+    hubAssets
   };
 }
 
