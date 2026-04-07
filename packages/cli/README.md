@@ -2,7 +2,7 @@
 
 `@swarmvaultai/cli` is the global command-line entry point for SwarmVault.
 
-It gives you the `swarmvault` command for building a local-first knowledge vault from files, URLs, browser clips, and saved query outputs.
+It gives you the `swarmvault` command for building a local-first knowledge vault from files, URLs, browser clips, saved query outputs, and guided exploration runs.
 
 ## Install
 
@@ -27,6 +27,8 @@ sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault compile
 swarmvault query "What keeps recurring?" --save
+swarmvault explore "What should I research next?" --steps 3
+swarmvault lint --deep
 swarmvault graph serve
 ```
 
@@ -66,11 +68,43 @@ The compiler also reads `swarmvault.schema.md` and records a `schema_hash` in ge
 
 ### `swarmvault query "<question>" [--save]`
 
-Query the compiled vault. The query layer also reads `swarmvault.schema.md`, so answers follow the vault’s own structure and grounding rules. With `--save`, the answer is written into `wiki/outputs/` so the result becomes part of the vault.
+Query the compiled vault. The query layer also reads `swarmvault.schema.md`, so answers follow the vault’s own structure and grounding rules.
 
-### `swarmvault lint`
+With `--save`, the answer is written into `wiki/outputs/` and immediately registered in:
+
+- `wiki/index.md`
+- `wiki/outputs/index.md`
+- `state/graph.json`
+- `state/search.sqlite`
+
+Saved outputs also carry related page, node, and source metadata so later compiles can link them back into the wiki.
+
+### `swarmvault explore "<question>" [--steps <n>]`
+
+Run a save-first multi-step research loop.
+
+Each step:
+
+- queries the vault
+- saves the answer into `wiki/outputs/`
+- generates follow-up questions
+- chooses the next follow-up deterministically
+
+The command also writes a hub page linking the root question, saved step pages, and generated follow-up questions.
+
+### `swarmvault lint [--deep] [--web]`
 
 Run anti-drift and vault health checks such as stale pages, missing graph artifacts, and other structural issues.
+
+`--deep` adds an LLM-powered advisory pass that can report:
+
+- `coverage_gap`
+- `contradiction_candidate`
+- `missing_citation`
+- `candidate_page`
+- `follow_up_question`
+
+`--web` can only be used with `--deep`. It enriches deep-lint findings with external evidence snippets and URLs from a configured web-search provider.
 
 ### `swarmvault watch [--lint] [--debounce <ms>]`
 
@@ -126,10 +160,39 @@ Example:
 
 Generic OpenAI-compatible APIs are supported through config when the provider follows the OpenAI request shape closely enough.
 
+Deep lint web augmentation uses a separate `webSearch` config block. Example:
+
+```json
+{
+  "webSearch": {
+    "providers": {
+      "evidence": {
+        "type": "http-json",
+        "endpoint": "https://search.example/api/search",
+        "method": "GET",
+        "apiKeyEnv": "SEARCH_API_KEY",
+        "apiKeyHeader": "Authorization",
+        "apiKeyPrefix": "Bearer ",
+        "queryParam": "q",
+        "limitParam": "limit",
+        "resultsPath": "results",
+        "titleField": "title",
+        "urlField": "url",
+        "snippetField": "snippet"
+      }
+    },
+    "tasks": {
+      "deepLintProvider": "evidence"
+    }
+  }
+}
+```
+
 ## Troubleshooting
 
 - If you are running from a source checkout and `graph serve` says the viewer build is missing, run `pnpm build` in the repository first
 - If a provider claims OpenAI compatibility but fails structured generation, declare only the capabilities it actually supports
+- If `lint --deep --web` fails immediately, make sure a `webSearch` provider is configured and mapped to `tasks.deepLintProvider`
 - Node 24 may emit an experimental warning for `node:sqlite`; that is expected in the current release
 
 ## Links

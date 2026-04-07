@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5
+
+- Added a compounding output loop with immediate output-page indexing for `query --save`
+- Added `swarmvault explore` for save-first multi-step research flows and hub-page generation
+- Added advisory `lint --deep` plus optional `lint --deep --web` evidence gathering through pluggable web-search adapters
+- Added output relationship metadata and compile-time `Related Outputs` sections on source, concept, and entity pages
+- Hardened watch-mode retries, incremental compile artifact validation, grounded query citations, and `watch --json` inbox reporting
+- Updated OSS docs and site docs for the compounding workflow and deep-lint configuration
+
 ## 0.1.4
 
 - Added the schema layer with canonical `swarmvault.schema.md` creation during `swarmvault init`

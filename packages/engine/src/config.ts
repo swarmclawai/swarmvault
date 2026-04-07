@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { providerCapabilitySchema, providerTypeSchema, type ResolvedPaths, type VaultConfig } from "./types.js";
+import {
+  providerCapabilitySchema,
+  providerTypeSchema,
+  type ResolvedPaths,
+  type VaultConfig,
+  webSearchProviderTypeSchema
+} from "./types.js";
 import { ensureDir, fileExists, readJsonFile, writeJsonFile } from "./utils.js";
 
 const PRIMARY_CONFIG_FILENAME = "swarmvault.config.json";
@@ -20,6 +26,23 @@ const providerConfigSchema = z.object({
   module: z.string().min(1).optional(),
   capabilities: z.array(providerCapabilitySchema).optional(),
   apiStyle: z.enum(["responses", "chat"]).optional()
+});
+
+const webSearchProviderConfigSchema = z.object({
+  type: webSearchProviderTypeSchema,
+  endpoint: z.string().url().optional(),
+  method: z.enum(["GET", "POST"]).optional(),
+  apiKeyEnv: z.string().min(1).optional(),
+  apiKeyHeader: z.string().min(1).optional(),
+  apiKeyPrefix: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  queryParam: z.string().min(1).optional(),
+  limitParam: z.string().min(1).optional(),
+  resultsPath: z.string().min(1).optional(),
+  titleField: z.string().min(1).optional(),
+  urlField: z.string().min(1).optional(),
+  snippetField: z.string().min(1).optional(),
+  module: z.string().min(1).optional()
 });
 
 const vaultConfigSchema = z.object({
@@ -40,7 +63,15 @@ const vaultConfigSchema = z.object({
   viewer: z.object({
     port: z.number().int().positive()
   }),
-  agents: z.array(z.enum(["codex", "claude", "cursor"])).default(["codex", "claude", "cursor"])
+  agents: z.array(z.enum(["codex", "claude", "cursor"])).default(["codex", "claude", "cursor"]),
+  webSearch: z
+    .object({
+      providers: z.record(z.string(), webSearchProviderConfigSchema),
+      tasks: z.object({
+        deepLintProvider: z.string().min(1)
+      })
+    })
+    .optional()
 });
 
 export function defaultVaultConfig(): VaultConfig {

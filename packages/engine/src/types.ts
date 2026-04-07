@@ -12,6 +12,11 @@ export type PageKind = "index" | "source" | "concept" | "entity" | "output";
 export type Freshness = "fresh" | "stale";
 export type ClaimStatus = "extracted" | "inferred" | "conflicted" | "stale";
 export type Polarity = "positive" | "negative" | "neutral";
+export type OutputOrigin = "query" | "explore";
+
+export const webSearchProviderTypeSchema = z.enum(["http-json", "custom"]);
+
+export type WebSearchProviderType = z.infer<typeof webSearchProviderTypeSchema>;
 
 export interface GenerationAttachment {
   mimeType: string;
@@ -53,6 +58,35 @@ export interface ProviderConfig {
   apiStyle?: "responses" | "chat";
 }
 
+export interface WebSearchProviderConfig {
+  type: WebSearchProviderType;
+  endpoint?: string;
+  method?: "GET" | "POST";
+  apiKeyEnv?: string;
+  apiKeyHeader?: string;
+  apiKeyPrefix?: string;
+  headers?: Record<string, string>;
+  queryParam?: string;
+  limitParam?: string;
+  resultsPath?: string;
+  titleField?: string;
+  urlField?: string;
+  snippetField?: string;
+  module?: string;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export interface WebSearchAdapter {
+  readonly id: string;
+  readonly type: WebSearchProviderType;
+  search(query: string, limit?: number): Promise<WebSearchResult[]>;
+}
+
 export interface VaultConfig {
   workspace: {
     rawDir: string;
@@ -72,6 +106,12 @@ export interface VaultConfig {
     port: number;
   };
   agents: Array<"codex" | "claude" | "cursor">;
+  webSearch?: {
+    providers: Record<string, WebSearchProviderConfig>;
+    tasks: {
+      deepLintProvider: string;
+    };
+  };
 }
 
 export interface ResolvedPaths {
@@ -177,6 +217,11 @@ export interface GraphPage {
   backlinks: string[];
   schemaHash: string;
   sourceHashes: Record<string, string>;
+  relatedPageIds: string[];
+  relatedNodeIds: string[];
+  relatedSourceIds: string[];
+  origin?: OutputOrigin;
+  question?: string;
 }
 
 export interface GraphArtifact {
@@ -205,7 +250,11 @@ export interface SearchResult {
 export interface QueryResult {
   answer: string;
   savedTo?: string;
+  savedPageId?: string;
   citations: string[];
+  relatedPageIds: string[];
+  relatedNodeIds: string[];
+  relatedSourceIds: string[];
 }
 
 export interface LintFinding {
@@ -213,6 +262,10 @@ export interface LintFinding {
   code: string;
   message: string;
   pagePath?: string;
+  relatedSourceIds?: string[];
+  relatedPageIds?: string[];
+  suggestedQuery?: string;
+  evidence?: WebSearchResult[];
 }
 
 export interface InboxImportSkip {
@@ -257,4 +310,29 @@ export interface CompileState {
   schemaHash: string;
   analyses: Record<string, string>;
   sourceHashes: Record<string, string>;
+  outputHashes: Record<string, string>;
+}
+
+export interface LintOptions {
+  deep?: boolean;
+  web?: boolean;
+}
+
+export interface ExploreStepResult {
+  step: number;
+  question: string;
+  answer: string;
+  savedTo: string;
+  savedPageId: string;
+  citations: string[];
+  followUpQuestions: string[];
+}
+
+export interface ExploreResult {
+  rootQuestion: string;
+  hubPath: string;
+  hubPageId: string;
+  stepCount: number;
+  steps: ExploreStepResult[];
+  suggestedQuestions: string[];
 }

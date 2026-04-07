@@ -8,6 +8,7 @@ export type * from "./types.js";
 export {
   bootstrapDemo,
   compileVault,
+  exploreVault,
   getWorkspaceInfo,
   initVault,
   lintVault,
@@ -18,3 +19,4 @@ export {
 } from "./vault.js";
 export { startGraphServer } from "./viewer.js";
 export { watchVault } from "./watch.js";
+export { createWebSearchAdapter, getWebSearchAdapterForTask } from "./web-search/registry.js";
