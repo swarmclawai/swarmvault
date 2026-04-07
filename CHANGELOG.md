@@ -4,6 +4,12 @@
 
 Nothing yet.
 
+## 0.1.9
+
+- Fixed `lint --deep` and orchestration parsing so non-canonical model severities like `medium`, `critical`, or `low` normalize instead of failing the whole run
+- Added a regression test for provider-backed deep lint severity normalization
+- Updated the published-install smoke documentation and site MCP/install docs to reflect the current validation and query format behavior
+
 ## 0.1.8
 
 - Fixed the MCP `query_vault` tool schema so it accepts the shipped `chart` and `image` output formats

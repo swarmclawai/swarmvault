@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
+import { findingSeveritySchema } from "./findings.js";
 import { createProvider } from "./providers/registry.js";
 import type { OrchestrationRole, OrchestrationRoleConfig, OrchestrationRoleResult, RoleExecutorConfig } from "./types.js";
 
@@ -10,7 +11,7 @@ const orchestrationRoleResultSchema = z.object({
   findings: z
     .array(
       z.object({
-        severity: z.enum(["error", "warning", "info"]).default("info"),
+        severity: findingSeveritySchema,
         message: z.string().min(1),
         relatedPageIds: z.array(z.string()).optional(),
         relatedSourceIds: z.array(z.string()).optional(),

@@ -254,6 +254,59 @@ describe("swarmvault workflow", () => {
     expect(findings.some((finding) => finding.code === "stale_page" && finding.message.includes("vault schema changed"))).toBe(true);
   });
 
+  it("normalizes non-canonical deep-lint severity labels from provider output", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "lint-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() { return { text: 'ok' }; },",
+        "    async generateStructured(_request, schema) {",
+        "      return schema.parse({",
+        "        findings: [",
+        "          { severity: 'medium', code: 'coverage_gap', message: 'Needs broader coverage.' },",
+        "          { severity: 'critical', code: 'missing_citation', message: 'A citation is required.' },",
+        "          { severity: 'low', code: 'follow_up_question', message: 'Investigate a related angle.' }",
+        "        ]",
+        "      });",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.lintTest = {
+      type: "custom",
+      model: "lint-test",
+      module: "./lint-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.lintProvider = "lintTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await fs.writeFile(path.join(rootDir, "notes.md"), "# Deep Lint\n\nThis note exists for deep lint severity normalization.", "utf8");
+    await ingestInput(rootDir, "notes.md");
+    await compileVault(rootDir);
+
+    const findings = await lintVault(rootDir, { deep: true });
+    expect(findings.some((finding) => finding.message === "Needs broader coverage." && finding.severity === "warning")).toBe(true);
+    expect(findings.some((finding) => finding.message === "A citation is required." && finding.severity === "error")).toBe(true);
+    expect(findings.some((finding) => finding.message === "Investigate a related angle." && finding.severity === "info")).toBe(true);
+  });
+
   it("exposes vault operations through the MCP server", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
