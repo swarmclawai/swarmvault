@@ -9,12 +9,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   compileVault,
   createMcpServer,
+  getGitHookStatus,
   importInbox,
+  ingestDirectory,
   ingestInput,
   initVault,
   installAgent,
+  installGitHooks,
   lintVault,
   queryVault,
+  uninstallGitHooks,
   watchVault
 } from "../src/index.js";
 
@@ -137,6 +141,56 @@ describe("swarmvault workflow", () => {
     expect(agentsContent).toContain("# SwarmVault Rules");
     expect(agentsContent.match(/swarmvault:managed:start/g)?.length ?? 0).toBe(1);
     expect(geminiContent).toContain("# SwarmVault Rules");
+  });
+
+  it("installs Claude rules with an optional graph-first pre-search hook", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const claudeTarget = await installAgent(rootDir, "claude", { claudeHook: true });
+    expect(claudeTarget).toBe(path.join(rootDir, "CLAUDE.md"));
+
+    const settingsPath = path.join(rootDir, ".claude", "settings.json");
+    const settings = JSON.parse(await fs.readFile(settingsPath, "utf8")) as {
+      hooks?: { PreToolUse?: Array<{ matcher?: string; hooks?: Array<{ command?: string }> }> };
+    };
+    expect(settings.hooks?.PreToolUse?.some((entry) => entry.matcher === "Glob|Grep")).toBe(true);
+    expect(JSON.stringify(settings)).toContain("wiki/graph/report.md");
+
+    await installAgent(rootDir, "claude", { claudeHook: true });
+    const settingsAgain = await fs.readFile(settingsPath, "utf8");
+    expect(settingsAgain.match(/Glob\|Grep/g)?.length ?? 0).toBe(1);
+  });
+
+  it("installs, reports, and removes git hook blocks idempotently", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.mkdir(path.join(rootDir, ".git", "hooks"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, ".git", "hooks", "post-commit"), "#!/bin/sh\necho existing\n", "utf8");
+
+    const installed = await installGitHooks(rootDir);
+    expect(installed.repoRoot).toBe(rootDir);
+    expect(installed.postCommit).toBe("installed");
+    expect(installed.postCheckout).toBe("installed");
+
+    const postCommit = await fs.readFile(path.join(rootDir, ".git", "hooks", "post-commit"), "utf8");
+    expect(postCommit).toContain("swarmvault watch --repo --once");
+    expect(postCommit).toContain("echo existing");
+
+    const status = await getGitHookStatus(rootDir);
+    expect(status.postCommit).toBe("installed");
+    expect(status.postCheckout).toBe("installed");
+
+    await installGitHooks(rootDir);
+    const postCommitAgain = await fs.readFile(path.join(rootDir, ".git", "hooks", "post-commit"), "utf8");
+    expect(postCommitAgain.match(/swarmvault watch --repo --once/g)?.length ?? 0).toBe(1);
+
+    const removed = await uninstallGitHooks(rootDir);
+    expect(removed.postCommit).toBe("other_content");
+    expect(removed.postCheckout).toBe("not_installed");
+    const postCommitAfter = await fs.readFile(path.join(rootDir, ".git", "hooks", "post-commit"), "utf8");
+    expect(postCommitAfter).toContain("echo existing");
+    expect(postCommitAfter).not.toContain("swarmvault watch --repo --once");
   });
 
   it("ingests, compiles, queries, and lints using the heuristic provider", async () => {
@@ -598,6 +652,44 @@ describe("swarmvault workflow", () => {
 
       const sessionFiles = (await fs.readdir(path.join(rootDir, "state", "sessions"))).filter((file) => file.endsWith(".md"));
       expect(sessionFiles.some((file) => file.includes("-watch-"))).toBe(true);
+    } finally {
+      await controller.close();
+    }
+  }, 25_000);
+
+  it("watches tracked repos and recompiles code changes", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.mkdir(path.join(rootDir, "repo", ".git"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "src"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "repo", "src", "util.py"), "def helper(name):\n    return name.upper()\n", "utf8");
+    await fs.writeFile(
+      path.join(rootDir, "repo", "src", "app.py"),
+      ["from .util import helper", "", "def run(name):", "    return helper(name)"].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, "repo");
+    const utilManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("src/util.py"));
+    await compileVault(rootDir);
+
+    const controller = await watchVault(rootDir, { repo: true, debounceMs: 100 });
+    try {
+      await fs.writeFile(path.join(rootDir, "repo", "src", "util.py"), "def helper(name):\n    return f'watched:{name}'\n", "utf8");
+
+      await waitFor(async () => {
+        const modulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${utilManifest?.sourceId}.md`), "utf8");
+        return modulePage.includes("watched");
+      }, 19_000);
+
+      const jobsLog = await fs.readFile(path.join(rootDir, "state", "jobs.ndjson"), "utf8");
+      const runs = jobsLog
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { success: boolean; importedCount: number });
+      expect(runs.at(-1)?.success).toBe(true);
+      expect((runs.at(-1)?.importedCount ?? 0) > 0).toBe(true);
     } finally {
       await controller.close();
     }

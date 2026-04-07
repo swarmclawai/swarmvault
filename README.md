@@ -20,6 +20,8 @@ swarmvault ingest ./notes
 swarmvault compile
 swarmvault query "What is the auth flow?"
 swarmvault graph query "How does auth connect to billing?"
+swarmvault watch --repo --once
+swarmvault hook install
 swarmvault graph serve
 ```
 
@@ -43,6 +45,7 @@ my-vault/
 - Local full-text search and a graph workspace for graph, search, preview, and review
 - Project-aware schemas and rollups for larger multi-root vaults
 - Repo-aware code ingestion with parser-backed module analysis and local import resolution
+- Repo-aware watch mode and local git hooks for post-commit and post-checkout refreshes
 - Human-only `wiki/insights/` pages that SwarmVault can read but does not rewrite
 - Session artifacts for compile, query, explore, lint, watch, and schedule runs
 - CLI, MCP, and installable agent instructions for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, and OpenCode
@@ -105,7 +108,8 @@ You can also use the capture and automation loop:
 
 ```bash
 swarmvault inbox import
-swarmvault watch --lint
+swarmvault watch --lint --repo
+swarmvault hook install
 ```
 
 And you can expose the vault to compatible agents over MCP:
@@ -127,6 +131,12 @@ swarmvault mcp
 | OpenCode | `swarmvault install --agent opencode` |
 
 Codex, Goose, Pi, and OpenCode share the same canonical `AGENTS.md` managed block. Claude Code uses `CLAUDE.md`, Gemini CLI uses `GEMINI.md`, and Cursor writes `.cursor/rules/swarmvault.mdc`.
+
+If you want Claude Code to bias toward SwarmVault's graph-orientation pages before broad file search, install it with:
+
+```bash
+swarmvault install --agent claude --hook
+```
 
 ## Workspace Layout
 
@@ -199,7 +209,8 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides|chart|image]`: run a save-first multi-step research loop and write a hub page plus step outputs
 - `swarmvault lint [--deep] [--web]`: run structural lint, optional LLM-powered deep lint, and optional web-augmented evidence gathering
 - `swarmvault schedule list|run|serve`: run configured recurring jobs for compile, lint, query, and explore
-- `swarmvault watch --lint`: watch the inbox and run import/compile cycles on changes
+- `swarmvault watch [--lint] [--repo] [--once]`: watch the inbox, optionally refresh tracked repo roots, or run a one-shot refresh cycle
+- `swarmvault hook install|uninstall|status`: manage local git hooks that run repo-aware one-shot refreshes after checkout and commit
 - `swarmvault mcp`: start a local MCP server over stdio
 - `swarmvault review list|show|accept|reject`: inspect and resolve staged approval bundles
 - `swarmvault candidate list|promote|archive`: inspect and resolve staged concept and entity candidates
@@ -217,7 +228,7 @@ When `ingest` targets a remote HTML or markdown URL, SwarmVault downloads refere
 
 When `ingest` targets a local directory, SwarmVault walks the tree recursively, respects `.gitignore` by default, records `repoRelativePath` on matching manifests, and later writes `state/code-index.json` during compile so local imports can resolve across the code graph.
 
-Code-aware ingestion currently ships for JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, and PHP. JavaScript and TypeScript use the TypeScript compiler API; the other shipped languages use parser-backed local analyzers that emit the same module-page and graph model.
+Code-aware ingestion currently ships for JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell. JavaScript and TypeScript use the TypeScript compiler API; the other shipped languages use parser-backed local analyzers that emit the same module-page and graph model.
 
 ## Compounding Loop
 

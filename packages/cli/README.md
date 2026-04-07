@@ -33,6 +33,8 @@ swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
+swarmvault watch --repo --once
+swarmvault hook install
 swarmvault graph serve
 swarmvault graph export --html ./exports/graph.html
 ```
@@ -64,6 +66,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - directory ingest respects `.gitignore` unless you pass `--no-gitignore`
 - repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
 - URL ingest still localizes remote image references by default
+- code-aware directory ingest currently covers JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell
 
 Useful flags:
 
@@ -158,9 +161,19 @@ Run anti-drift and vault health checks such as stale pages, missing graph artifa
 
 `--web` can only be used with `--deep`. It enriches deep-lint findings with external evidence snippets and URLs from a configured web-search provider.
 
-### `swarmvault watch [--lint] [--debounce <ms>]`
+### `swarmvault watch [--lint] [--repo] [--once] [--debounce <ms>]`
 
-Watch the inbox directory and trigger import and compile cycles when files change. With `--lint`, each cycle also runs linting. Each cycle writes a canonical session artifact to `state/sessions/`, and compatibility run metadata is still appended to `state/jobs.ndjson`.
+Watch the inbox directory and trigger import and compile cycles when files change. With `--repo`, each cycle also refreshes tracked repo roots that were previously ingested through directory ingest. With `--once`, SwarmVault runs one refresh cycle immediately instead of starting a long-running watcher. With `--lint`, each cycle also runs linting. Each cycle writes a canonical session artifact to `state/sessions/`, and compatibility run metadata is still appended to `state/jobs.ndjson`.
+
+### `swarmvault hook install|uninstall|status`
+
+Manage SwarmVault's local git hook blocks for the nearest git repository.
+
+- `hook install` writes marker-based `post-commit` and `post-checkout` hooks
+- `hook uninstall` removes only the SwarmVault-managed hook block
+- `hook status` reports whether those managed hook blocks are installed
+
+The installed hooks run `swarmvault watch --repo --once` from the vault root so repo-aware source changes are re-ingested and recompiled after commit and checkout.
 
 ### `swarmvault mcp`
 
@@ -204,6 +217,12 @@ Export the graph workspace as a standalone HTML file with embedded graph and pag
 ### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode>`
 
 Install agent-specific rules into the current project so an agent understands the SwarmVault workspace contract and workflow.
+
+For Claude Code, you can also install the recommended graph-first pre-search hook:
+
+```bash
+swarmvault install --agent claude --hook
+```
 
 ## Provider Configuration
 

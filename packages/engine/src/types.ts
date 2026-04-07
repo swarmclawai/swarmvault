@@ -46,7 +46,21 @@ export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "binary" | "code";
-export type CodeLanguage = "javascript" | "jsx" | "typescript" | "tsx" | "python" | "go" | "rust" | "java" | "csharp" | "c" | "cpp" | "php";
+export type CodeLanguage =
+  | "javascript"
+  | "jsx"
+  | "typescript"
+  | "tsx"
+  | "python"
+  | "go"
+  | "rust"
+  | "java"
+  | "csharp"
+  | "c"
+  | "cpp"
+  | "php"
+  | "ruby"
+  | "powershell";
 export type CodeSymbolKind = "function" | "class" | "interface" | "type_alias" | "enum" | "variable" | "struct" | "trait";
 export type OrchestrationRole = "research" | "audit" | "context" | "safety";
 
@@ -611,6 +625,16 @@ export interface InboxImportResult {
 export interface WatchOptions {
   lint?: boolean;
   debounceMs?: number;
+  repo?: boolean;
+}
+
+export interface RepoSyncResult {
+  repoRoots: string[];
+  scannedCount: number;
+  imported: SourceManifest[];
+  updated: SourceManifest[];
+  removed: SourceManifest[];
+  skipped: DirectoryIngestSkip[];
 }
 
 export interface WatchRunRecord {
@@ -630,6 +654,16 @@ export interface WatchRunRecord {
 
 export interface WatchController {
   close(): Promise<void>;
+}
+
+export interface InstallAgentOptions {
+  claudeHook?: boolean;
+}
+
+export interface GitHookStatus {
+  repoRoot: string | null;
+  postCommit: "installed" | "not_installed" | "other_content";
+  postCheckout: "installed" | "not_installed" | "other_content";
 }
 
 export interface CompileState {

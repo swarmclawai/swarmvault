@@ -8,11 +8,13 @@ import {
   explainGraphVault,
   exploreVault,
   exportGraphHtml,
+  getGitHookStatus,
   importInbox,
   ingestDirectory,
   ingestInput,
   initVault,
   installAgent,
+  installGitHooks,
   lintVault,
   listApprovals,
   listCandidates,
@@ -26,9 +28,11 @@ import {
   readApproval,
   rejectApproval,
   runSchedule,
+  runWatchCycle,
   serveSchedules,
   startGraphServer,
   startMcpServer,
+  uninstallGitHooks,
   watchVault
 } from "@swarmvaultai/engine";
 import { Command, Option } from "commander";
@@ -45,9 +49,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.19";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.20";
   } catch {
-    return "0.1.19";
+    return "0.1.20";
   }
 }
 
@@ -455,25 +459,86 @@ candidate
 
 program
   .command("watch")
-  .description("Watch the inbox directory and run import/compile cycles on changes.")
+  .description("Watch the inbox directory and optionally tracked repos, or run one refresh cycle immediately.")
   .option("--lint", "Run lint after each compile cycle", false)
+  .option("--repo", "Also refresh tracked repo sources and watch their repo roots", false)
+  .option("--once", "Run one import/refresh cycle immediately instead of starting a watcher", false)
   .option("--debounce <ms>", "Debounce window in milliseconds", "900")
-  .action(async (options: { lint?: boolean; debounce?: string }) => {
+  .action(async (options: { lint?: boolean; repo?: boolean; once?: boolean; debounce?: string }) => {
     const debounceMs = Number.parseInt(options.debounce ?? "900", 10);
+    if (options.once) {
+      const result = await runWatchCycle(process.cwd(), {
+        lint: options.lint ?? false,
+        repo: options.repo ?? false,
+        debounceMs: Number.isFinite(debounceMs) ? debounceMs : 900
+      });
+      if (isJson()) {
+        emitJson(result);
+      } else {
+        log(
+          `Refreshed inbox${options.repo ? " and tracked repos" : ""}. Imported ${result.importedCount}, repo imported ${result.repoImportedCount}, repo updated ${result.repoUpdatedCount}, repo removed ${result.repoRemovedCount}.`
+        );
+      }
+      return;
+    }
     const { paths } = await loadVaultConfig(process.cwd());
     const controller = await watchVault(process.cwd(), {
       lint: options.lint ?? false,
+      repo: options.repo ?? false,
       debounceMs: Number.isFinite(debounceMs) ? debounceMs : 900
     });
     if (isJson()) {
-      emitJson({ status: "watching", inboxDir: paths.inboxDir });
+      emitJson({ status: "watching", inboxDir: paths.inboxDir, repo: options.repo ?? false });
     } else {
-      log("Watching inbox for changes. Press Ctrl+C to stop.");
+      log(`Watching inbox${options.repo ? " and tracked repos" : ""} for changes. Press Ctrl+C to stop.`);
     }
     process.on("SIGINT", async () => {
       await controller.close();
       process.exit(0);
     });
+  });
+
+const hook = program.command("hook").description("Install local git hooks that keep tracked repos and the vault in sync.");
+hook
+  .command("install")
+  .description("Install post-commit and post-checkout hooks for the nearest git repository.")
+  .action(async () => {
+    const status = await installGitHooks(process.cwd());
+    if (isJson()) {
+      emitJson(status);
+      return;
+    }
+    log(`Installed hooks in ${status.repoRoot}`);
+  });
+
+hook
+  .command("uninstall")
+  .description("Remove the SwarmVault-managed git hook blocks from the nearest git repository.")
+  .action(async () => {
+    const status = await uninstallGitHooks(process.cwd());
+    if (isJson()) {
+      emitJson(status);
+      return;
+    }
+    log(`Removed SwarmVault hook blocks from ${status.repoRoot ?? "the current workspace"}`);
+  });
+
+hook
+  .command("status")
+  .description("Show whether SwarmVault-managed git hooks are installed.")
+  .action(async () => {
+    const status = await getGitHookStatus(process.cwd());
+    if (isJson()) {
+      emitJson(status);
+      return;
+    }
+    if (!status.repoRoot) {
+      log("No git repository found.");
+      return;
+    }
+    log(`repo=${status.repoRoot}`);
+    log(`post-commit=${status.postCommit}`);
+    log(`post-checkout=${status.postCheckout}`);
   });
 
 const schedule = program.command("schedule").description("Run scheduled vault maintenance jobs.");
@@ -550,10 +615,14 @@ program
   .command("install")
   .description("Install SwarmVault instructions for an agent in the current project.")
   .requiredOption("--agent <agent>", "codex, claude, cursor, goose, pi, gemini, or opencode")
-  .action(async (options: { agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" | "opencode" }) => {
-    const target = await installAgent(process.cwd(), options.agent);
+  .option("--hook", "Also install the recommended Claude pre-search hook when agent=claude", false)
+  .action(async (options: { agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" | "opencode"; hook?: boolean }) => {
+    if (options.hook && options.agent !== "claude") {
+      throw new Error("--hook is only supported for --agent claude");
+    }
+    const target = await installAgent(process.cwd(), options.agent, { claudeHook: options.hook ?? false });
     if (isJson()) {
-      emitJson({ agent: options.agent, target });
+      emitJson({ agent: options.agent, target, hook: options.hook ?? false });
     } else {
       log(`Installed rules into ${target}`);
     }

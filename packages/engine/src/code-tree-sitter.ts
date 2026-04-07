@@ -93,7 +93,9 @@ const grammarFileByLanguage: Record<Exclude<CodeLanguage, "javascript" | "jsx" |
   csharp: "tree-sitter-c-sharp.wasm",
   c: "tree-sitter-cpp.wasm",
   cpp: "tree-sitter-cpp.wasm",
-  php: "tree-sitter-php.wasm"
+  php: "tree-sitter-php.wasm",
+  ruby: "tree-sitter-ruby.wasm",
+  powershell: "tree-sitter-powershell.wasm"
 };
 
 async function getTreeSitterModule(): Promise<TreeSitterModule> {
@@ -390,13 +392,35 @@ function extractIdentifier(node: TreeNode | null | undefined): string | undefine
   if (!node) {
     return undefined;
   }
-  if (["identifier", "field_identifier", "type_identifier", "name", "package_identifier"].includes(node.type)) {
+  if (
+    [
+      "identifier",
+      "field_identifier",
+      "type_identifier",
+      "name",
+      "package_identifier",
+      "constant",
+      "simple_name",
+      "function_name"
+    ].includes(node.type)
+  ) {
     return node.text.trim();
   }
   const preferred =
     node.childForFieldName("name") ??
     node.namedChildren.find(
-      (child) => child && ["identifier", "field_identifier", "type_identifier", "name", "package_identifier"].includes(child.type)
+      (child) =>
+        child &&
+        [
+          "identifier",
+          "field_identifier",
+          "type_identifier",
+          "name",
+          "package_identifier",
+          "constant",
+          "simple_name",
+          "function_name"
+        ].includes(child.type)
     ) ??
     node.namedChildren.at(-1) ??
     null;
@@ -630,6 +654,63 @@ function parseCppInclude(text: string): CodeImport | undefined {
     isExternal: match[1].startsWith("<"),
     reExport: false
   };
+}
+
+function rubyStringContent(node: TreeNode | null | undefined): string | undefined {
+  if (!node) {
+    return undefined;
+  }
+  const contentNode =
+    node.descendantsOfType(["string_content", "simple_symbol", "bare_string"]).find((item): item is TreeNode => item !== null) ?? null;
+  return contentNode?.text.trim() || undefined;
+}
+
+function parsePowerShellImport(commandNode: TreeNode): CodeImport | undefined {
+  const commandName = commandNode
+    .descendantsOfType(["command_name", "command_name_expr"])
+    .find((item): item is TreeNode => item !== null)
+    ?.text.trim();
+  const genericTokens = commandNode
+    .descendantsOfType("generic_token")
+    .filter((item): item is TreeNode => item !== null)
+    .map((item) => item.text.trim());
+
+  if (commandNode.namedChildren.some((child) => child?.type === "command_invokation_operator")) {
+    const specifier = commandName?.trim();
+    if (specifier) {
+      return {
+        specifier,
+        importedSymbols: [],
+        isExternal: false,
+        reExport: false
+      };
+    }
+  }
+
+  if (!commandName) {
+    return undefined;
+  }
+
+  const lowerName = commandName.toLowerCase();
+  if (lowerName === "using" && genericTokens.length >= 2 && genericTokens[0]?.toLowerCase() === "module") {
+    return {
+      specifier: genericTokens[1],
+      importedSymbols: [],
+      isExternal: !genericTokens[1]?.startsWith("."),
+      reExport: false
+    };
+  }
+
+  if (lowerName === "import-module" && genericTokens[0]) {
+    return {
+      specifier: genericTokens[0],
+      importedSymbols: [],
+      isExternal: !genericTokens[0].startsWith("."),
+      reExport: false
+    };
+  }
+
+  return undefined;
 }
 
 function pythonCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
@@ -1096,6 +1177,192 @@ function phpCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnosti
   });
 }
 
+function rubyCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  let namespaceName: string | undefined;
+
+  const visitStatements = (node: TreeNode | null | undefined, scopeName?: string, namespaceParts: string[] = []) => {
+    if (!node) {
+      return;
+    }
+
+    for (const child of node.namedChildren) {
+      if (!child) {
+        continue;
+      }
+
+      if (child.type === "call") {
+        const callee = extractIdentifier(child.namedChildren.at(0) ?? null);
+        if (callee === "require" || callee === "require_relative") {
+          const specifier = rubyStringContent(child.childForFieldName("arguments") ?? child.namedChildren.at(1) ?? null);
+          if (specifier) {
+            imports.push({
+              specifier,
+              importedSymbols: [],
+              isExternal: callee === "require" && !specifier.startsWith("."),
+              reExport: false
+            });
+          }
+        }
+        continue;
+      }
+
+      if (child.type === "module") {
+        const moduleName = extractIdentifier(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null);
+        if (!moduleName) {
+          continue;
+        }
+        const nextNamespace = [...namespaceParts, moduleName];
+        namespaceName ??= nextNamespace.join("::");
+        visitStatements(findNamedChild(child, "body_statement"), undefined, nextNamespace);
+        continue;
+      }
+
+      if (child.type === "class") {
+        const className = extractIdentifier(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null);
+        if (!className) {
+          continue;
+        }
+        const body = findNamedChild(child, "body_statement");
+        const mixins = body
+          ? body.namedChildren
+              .filter((item): item is TreeNode => item !== null && item.type === "call")
+              .filter((item) => extractIdentifier(item.namedChildren.at(0) ?? null) === "include")
+              .flatMap((item) =>
+                item
+                  .descendantsOfType(["constant", "identifier"])
+                  .filter((descendant): descendant is TreeNode => descendant !== null)
+                  .slice(1)
+                  .map((descendant) => normalizeSymbolReference(descendant.text))
+                  .filter(Boolean)
+              )
+          : [];
+        draftSymbols.push({
+          name: scopeName ? `${scopeName}::${className}` : className,
+          kind: "class",
+          signature: singleLineSignature(child.text),
+          exported: true,
+          callNames: [],
+          extendsNames: descendantTypeNames(child.childForFieldName("superclass")),
+          implementsNames: uniqueBy(mixins, (item) => item),
+          bodyText: body?.text
+        });
+        exportLabels.push(scopeName ? `${scopeName}::${className}` : className);
+        visitStatements(body, scopeName ? `${scopeName}::${className}` : className, namespaceParts);
+        continue;
+      }
+
+      if (child.type === "method") {
+        const methodName = extractIdentifier(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null);
+        if (!methodName) {
+          continue;
+        }
+        const symbolName = scopeName ? `${scopeName}#${methodName}` : methodName;
+        draftSymbols.push({
+          name: symbolName,
+          kind: "function",
+          signature: singleLineSignature(child.text),
+          exported: true,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: nodeText(findNamedChild(child, "body_statement") ?? child.childForFieldName("body"))
+        });
+        exportLabels.push(symbolName);
+      }
+    }
+  };
+
+  visitStatements(rootNode, undefined, []);
+  return finalizeCodeAnalysis(manifest, "ruby", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: namespaceName
+  });
+}
+
+function powershellCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  for (const child of rootNode
+    .descendantsOfType(["command", "class_statement", "function_statement"])
+    .filter((item): item is TreeNode => item !== null)) {
+    if (child.type === "command") {
+      const parsed = parsePowerShellImport(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+
+    if (child.type === "class_statement") {
+      const names = child.namedChildren
+        .filter((item): item is TreeNode => item !== null && item.type === "simple_name")
+        .map((item) => item.text.trim());
+      const className = names[0];
+      if (!className) {
+        continue;
+      }
+      draftSymbols.push({
+        name: className,
+        kind: "class",
+        signature: singleLineSignature(child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: names.slice(1, 2),
+        implementsNames: [],
+        bodyText: nodeText(child.childForFieldName("body")) || child.text
+      });
+      exportLabels.push(className);
+
+      for (const methodNode of child.descendantsOfType("class_method_definition").filter((item): item is TreeNode => item !== null)) {
+        const methodName = methodNode
+          .descendantsOfType("simple_name")
+          .filter((item): item is TreeNode => item !== null)
+          .map((item) => item.text.trim())[0];
+        if (!methodName) {
+          continue;
+        }
+        const symbolName = `${className}.${methodName}`;
+        draftSymbols.push({
+          name: symbolName,
+          kind: "function",
+          signature: singleLineSignature(methodNode.text),
+          exported: true,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: nodeText(findNamedChild(methodNode, "script_block") ?? methodNode.childForFieldName("body")) || methodNode.text
+        });
+        exportLabels.push(symbolName);
+      }
+      continue;
+    }
+
+    if (child.type === "function_statement") {
+      const functionName = extractIdentifier(findNamedChild(child, "function_name") ?? child.childForFieldName("name"));
+      if (!functionName) {
+        continue;
+      }
+      draftSymbols.push({
+        name: functionName,
+        kind: "function",
+        signature: singleLineSignature(child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(child, "script_block") ?? child.childForFieldName("body")) || child.text
+      });
+      exportLabels.push(functionName);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "powershell", imports, draftSymbols, exportLabels, diagnostics);
+}
+
 function cFamilyCodeAnalysis(
   manifest: SourceManifest,
   language: "c" | "cpp",
@@ -1238,6 +1505,10 @@ export async function analyzeTreeSitterCode(
         return { code: csharpCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "php":
         return { code: phpCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "ruby":
+        return { code: rubyCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "powershell":
+        return { code: powershellCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "c":
       case "cpp":
         return { code: cFamilyCodeAnalysis(manifest, language, tree.rootNode, diagnostics), rationales };

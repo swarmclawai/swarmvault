@@ -1,7 +1,7 @@
 ---
 name: swarmvault
-description: "Operate SwarmVault knowledge bases from the CLI: initialize vaults, shape swarmvault.schema.md, ingest sources, compile/query/lint/watch, and expose the vault over MCP when agents need durable markdown, graph, and search artifacts on disk."
-version: "0.1.19"
+description: "Operate SwarmVault knowledge bases from the CLI: initialize vaults, shape swarmvault.schema.md, ingest sources, compile/query/lint/watch/hook, and expose the vault over MCP when agents need durable markdown, graph, and search artifacts on disk."
+version: "0.1.20"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -20,7 +20,7 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 1. Initialize a vault with `swarmvault init` when needed.
 2. Update `swarmvault.schema.md` before a serious compile. Use it for naming rules, categories, grounding, freshness expectations, and exclusions.
 3. Ingest one-off inputs with `swarmvault ingest <path-or-url>`, or ingest a whole repo tree with `swarmvault ingest <directory>`.
-4. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint` when the workflow should stay automated.
+4. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint --repo` when the workflow should stay automated. Install `swarmvault hook install` when git checkouts and commits should trigger repo-aware refreshes automatically.
 5. Compile with `swarmvault compile`, or use `swarmvault compile --approve` when changes should go through the local review queue first.
 6. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
 7. Ask questions with `swarmvault query "<question>"`. It saves durable answers into `wiki/outputs/` by default; add `--no-save` only for ephemeral checks.
@@ -43,7 +43,7 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 - `swarmvault.schema.md`: vault-specific compile and query rules.
 - `raw/sources/` and `raw/assets/`: canonical source storage.
 - `wiki/`: generated pages plus saved outputs.
-- `wiki/code/`: module pages for ingested JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, and PHP sources.
+- `wiki/code/`: module pages for ingested JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell sources.
 - `state/code-index.json`: repo-aware code aliases and local import resolution data.
 - `wiki/projects/`: project rollups over canonical pages.
 - `wiki/candidates/`: staged concept and entity pages awaiting promotion.
@@ -56,4 +56,5 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 ## Agent integration
 
 - `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode` installs agent-specific rules into the current project.
+- `swarmvault install --agent claude --hook` also installs the recommended Claude Code graph-first pre-search hook.
 - `swarmvault mcp` exposes tools and resources for page search, page reads, source listing, query, ingest, compile, and lint.

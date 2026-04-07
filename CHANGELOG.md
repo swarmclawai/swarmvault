@@ -4,6 +4,14 @@
 
 Nothing yet.
 
+## 0.1.20
+
+- Added repo-aware watch automation with `swarmvault watch --repo` plus `swarmvault watch --repo --once` so tracked repo roots refresh through the same pipeline as inbox automation
+- Added `swarmvault hook install|uninstall|status` with marker-based `post-commit` and `post-checkout` git hooks that run repo-aware one-shot refreshes from the vault root
+- Added `swarmvault install --agent claude --hook` to install the recommended Claude Code graph-first pre-search hook alongside `CLAUDE.md`
+- Expanded parser-backed code ingestion with Ruby and PowerShell while documenting Kotlin, Swift, and Scala as still deferred until matching vendored parser assets are available
+- Updated OSS docs, the site docs, and the ClawHub skill for the new watch, hook, Claude hook, and code-language surfaces
+
 ## 0.1.19
 
 - Added graph-first orientation pages under `wiki/graph/`, including a top-level report plus per-community summaries generated from the compiled graph

@@ -1891,6 +1891,12 @@ export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage
   if (extension === ".php") {
     return "php";
   }
+  if (extension === ".rb") {
+    return "ruby";
+  }
+  if (extension === ".ps1" || extension === ".psm1" || extension === ".psd1") {
+    return "powershell";
+  }
   if (extension === ".c") {
     return "c";
   }
@@ -2002,6 +2008,10 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       return [".cs"];
     case "php":
       return [".php"];
+    case "ruby":
+      return [".rb"];
+    case "powershell":
+      return [".ps1", ".psm1", ".psd1"];
     case "c":
       return [".c", ".h"];
     case "cpp":
@@ -2068,6 +2078,10 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
         if (normalizedNamespace) {
           recordAlias(aliases, `${normalizedNamespace}\\${basename}`);
         }
+        break;
+      case "ruby":
+      case "powershell":
+        recordAlias(aliases, basename);
         break;
       default:
         break;
@@ -2193,13 +2207,20 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
     case "csharp":
       return aliasMatches(lookup, codeImport.specifier);
     case "php":
+    case "ruby":
+    case "powershell":
       if (repoRelativePath && isLocalIncludeSpecifier(codeImport.specifier)) {
         return repoPathMatches(
           lookup,
           ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language))
         );
       }
-      return aliasMatches(lookup, codeImport.specifier, codeImport.specifier.replace(/\\/g, "/"));
+      return aliasMatches(
+        lookup,
+        codeImport.specifier,
+        codeImport.specifier.replace(/\\/g, "/"),
+        stripCodeExtension(codeImport.specifier.replace(/\\/g, "/"))
+      );
     case "rust":
       return aliasMatches(lookup, codeImport.specifier, ...resolveRustAliases(manifest, codeImport.specifier));
     case "c":
@@ -2228,6 +2249,8 @@ function importLooksLocal(manifest: SourceManifest, codeImport: CodeImport, cand
     case "rust":
       return /^(crate|self|super)::/.test(codeImport.specifier);
     case "php":
+    case "ruby":
+    case "powershell":
     case "c":
     case "cpp":
       return !codeImport.isExternal;

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileVault, ingestDirectory, ingestInput, initVault, searchVault } from "../src/index.js";
+import { compileVault, ingestDirectory, ingestInput, initVault, searchVault, syncTrackedRepos } from "../src/index.js";
 import type { CodeIndexArtifact, GraphArtifact, SourceAnalysis } from "../src/types.js";
 
 const tempDirs: string[] = [];
@@ -366,5 +366,112 @@ describe("code-aware ingestion", () => {
     expect(second.updated).toHaveLength(1);
     expect(second.updated[0]?.sourceId).toBe(utilManifest?.sourceId);
     expect(second.imported).toHaveLength(0);
+  });
+
+  it("builds parser-backed module pages for Ruby and PowerShell sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "repo", ".git"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "ruby"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "pwsh"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "repo", "ruby", "helper.rb"),
+      ["module Sample", "  def self.format_name(name)", '    "Ruby:#{name}"', "  end", "end"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "repo", "ruby", "app.rb"),
+      [
+        'require_relative "./helper"',
+        "",
+        "module Sample",
+        "  class Widget < BaseWidget",
+        "    include Renderable",
+        "",
+        "    def run(name)",
+        "      helper(name)",
+        "    end",
+        "  end",
+        "",
+        "  def helper(name)",
+        "    Sample.format_name(name)",
+        "  end",
+        "end"
+      ].join("\n"),
+      "utf8"
+    );
+
+    await fs.writeFile(
+      path.join(rootDir, "repo", "pwsh", "Helper.psm1"),
+      ["function Helper {", "  param([string]$name)", "  return $name.ToUpper()", "}"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "repo", "pwsh", "Widget.ps1"),
+      [
+        "using module ./Helper.psm1",
+        "",
+        "class Widget : BaseWidget {",
+        "  [string] Run([string]$name) {",
+        "    return (Helper $name)",
+        "  }",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, "repo");
+    const rubyApp = result.imported.find((manifest) => manifest.originalPath?.endsWith("ruby/app.rb"));
+    const rubyHelper = result.imported.find((manifest) => manifest.originalPath?.endsWith("ruby/helper.rb"));
+    const powershellWidget = result.imported.find((manifest) => manifest.originalPath?.endsWith("pwsh/Widget.ps1"));
+    const powershellHelper = result.imported.find((manifest) => manifest.originalPath?.endsWith("pwsh/Helper.psm1"));
+
+    expect(rubyApp?.language).toBe("ruby");
+    expect(rubyHelper?.language).toBe("ruby");
+    expect(powershellWidget?.language).toBe("powershell");
+    expect(powershellHelper?.language).toBe("powershell");
+
+    await compileVault(rootDir);
+
+    const rubyPage = await fs.readFile(path.join(rootDir, "wiki", "code", `${rubyApp?.sourceId}.md`), "utf8");
+    const powershellPage = await fs.readFile(path.join(rootDir, "wiki", "code", `${powershellWidget?.sourceId}.md`), "utf8");
+
+    expect(rubyPage).toContain("Language: `ruby`");
+    expect(rubyPage).toContain("Namespace/Package: `Sample`");
+    expect(rubyPage).toContain(`code/${rubyHelper?.sourceId}`);
+    expect(rubyPage).toContain("Renderable");
+
+    expect(powershellPage).toContain("Language: `powershell`");
+    expect(powershellPage).toContain(`code/${powershellHelper?.sourceId}`);
+    expect(powershellPage).toContain("BaseWidget");
+
+    const searchResults = await searchVault(rootDir, "Widget", 20);
+    expect(searchResults.some((entry) => entry.path === `code/${rubyApp?.sourceId}.md`)).toBe(true);
+    expect(searchResults.some((entry) => entry.path === `code/${powershellWidget?.sourceId}.md`)).toBe(true);
+  });
+
+  it("syncs tracked repo manifests and removes deleted files", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "repo", ".git"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "src"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "repo", "src", "keep.py"), "def keep():\n    return 'keep'\n", "utf8");
+    await fs.writeFile(path.join(rootDir, "repo", "src", "drop.py"), "def drop():\n    return 'drop'\n", "utf8");
+
+    const initial = await ingestDirectory(rootDir, "repo");
+    const droppedManifest = initial.imported.find((manifest) => manifest.originalPath?.endsWith("src/drop.py"));
+    expect(droppedManifest).toBeTruthy();
+
+    await fs.rm(path.join(rootDir, "repo", "src", "drop.py"));
+    const sync = await syncTrackedRepos(rootDir);
+    expect(sync.removed.some((manifest) => manifest.sourceId === droppedManifest?.sourceId)).toBe(true);
+
+    await compileVault(rootDir);
+
+    await expect(fs.access(path.join(rootDir, "state", "manifests", `${droppedManifest?.sourceId}.json`))).rejects.toThrow();
+    await expect(fs.access(path.join(rootDir, "wiki", "code", `${droppedManifest?.sourceId}.md`))).rejects.toThrow();
   });
 });

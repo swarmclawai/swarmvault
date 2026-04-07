@@ -8,7 +8,15 @@ import TurndownService from "turndown";
 import { inferCodeLanguage } from "./code-analysis.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { appendLogEntry } from "./logs.js";
-import type { DirectoryIngestResult, InboxImportResult, IngestOptions, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
+import type {
+  DirectoryIngestResult,
+  InboxImportResult,
+  IngestOptions,
+  RepoSyncResult,
+  ResolvedPaths,
+  SourceAttachment,
+  SourceManifest
+} from "./types.js";
 import { ensureDir, fileExists, listFilesRecursive, readJsonFile, sha256, slugify, toPosix, writeJsonFile } from "./utils.js";
 
 const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
@@ -139,6 +147,21 @@ async function findNearestGitRoot(startPath: string): Promise<string | null> {
 function withinRoot(rootPath: string, targetPath: string): boolean {
   const relative = path.relative(rootPath, targetPath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function repoRootFromManifest(manifest: SourceManifest): string | null {
+  if (manifest.originType !== "file" || !manifest.originalPath || !manifest.repoRelativePath) {
+    return null;
+  }
+
+  const repoDir = path.posix.dirname(manifest.repoRelativePath);
+  const fileDir = path.dirname(path.resolve(manifest.originalPath));
+  if (repoDir === "." || !repoDir) {
+    return fileDir;
+  }
+
+  const segments = repoDir.split("/").filter(Boolean);
+  return path.resolve(fileDir, ...segments.map(() => ".."));
 }
 
 function repoRelativePathFor(absolutePath: string, repoRoot?: string): string | undefined {
@@ -657,6 +680,133 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
   ]);
 
   return { manifest, isNew: !previous, wasUpdated: Boolean(previous) };
+}
+
+async function removeManifestArtifacts(rootDir: string, manifest: SourceManifest, paths: ResolvedPaths): Promise<void> {
+  await fs.rm(path.join(paths.manifestsDir, `${manifest.sourceId}.json`), { force: true });
+  await fs.rm(path.resolve(rootDir, manifest.storedPath), { force: true });
+  if (manifest.extractedTextPath) {
+    await fs.rm(path.resolve(rootDir, manifest.extractedTextPath), { force: true });
+  }
+  await fs.rm(path.join(paths.rawAssetsDir, manifest.sourceId), { recursive: true, force: true });
+  await fs.rm(path.join(paths.analysesDir, `${manifest.sourceId}.json`), { force: true });
+}
+
+function repoSyncWorkspaceIgnorePaths(rootDir: string, paths: ResolvedPaths, repoRoot: string): string[] {
+  const candidates = [
+    paths.rawDir,
+    paths.wikiDir,
+    paths.stateDir,
+    paths.agentDir,
+    paths.inboxDir,
+    path.join(rootDir, ".claude"),
+    path.join(rootDir, ".cursor"),
+    path.join(rootDir, ".obsidian")
+  ];
+
+  return candidates
+    .map((candidate) => path.resolve(candidate))
+    .filter((candidate, index, items) => items.indexOf(candidate) === index)
+    .filter((candidate) => withinRoot(repoRoot, candidate));
+}
+
+export async function listTrackedRepoRoots(rootDir: string): Promise<string[]> {
+  const manifests = await listManifests(rootDir);
+  return [...new Set(manifests.map((manifest) => repoRootFromManifest(manifest)).filter((item): item is string => Boolean(item)))].sort(
+    (left, right) => left.localeCompare(right)
+  );
+}
+
+export async function syncTrackedRepos(rootDir: string, options?: IngestOptions, repoRoots?: string[]): Promise<RepoSyncResult> {
+  const { paths } = await initWorkspace(rootDir);
+  const normalizedOptions = normalizeIngestOptions(options);
+  const manifests = await listManifests(rootDir);
+  const trackedRoots = (repoRoots && repoRoots.length > 0 ? repoRoots : await listTrackedRepoRoots(rootDir)).map((item) =>
+    path.resolve(item)
+  );
+  const uniqueRoots = [...new Set(trackedRoots)].sort((left, right) => left.localeCompare(right));
+  const manifestsByRepoRoot = new Map<string, SourceManifest[]>();
+
+  for (const manifest of manifests) {
+    const repoRoot = repoRootFromManifest(manifest);
+    if (!repoRoot || !uniqueRoots.includes(path.resolve(repoRoot))) {
+      continue;
+    }
+    const key = path.resolve(repoRoot);
+    const bucket = manifestsByRepoRoot.get(key) ?? [];
+    bucket.push(manifest);
+    manifestsByRepoRoot.set(key, bucket);
+  }
+
+  const imported: SourceManifest[] = [];
+  const updated: SourceManifest[] = [];
+  const removed: SourceManifest[] = [];
+  const skipped: DirectoryIngestResult["skipped"] = [];
+  let scannedCount = 0;
+
+  for (const repoRoot of uniqueRoots) {
+    const repoManifests = manifestsByRepoRoot.get(repoRoot) ?? [];
+    if (!(await fileExists(repoRoot))) {
+      for (const manifest of repoManifests) {
+        await removeManifestArtifacts(rootDir, manifest, paths);
+        removed.push(manifest);
+      }
+      continue;
+    }
+
+    const ignoreRoots = repoSyncWorkspaceIgnorePaths(rootDir, paths, repoRoot);
+    const collected = await collectDirectoryFiles(rootDir, repoRoot, repoRoot, normalizedOptions);
+    const files = collected.files.filter((absolutePath) => !ignoreRoots.some((ignoreRoot) => withinRoot(ignoreRoot, absolutePath)));
+    skipped.push(
+      ...collected.skipped,
+      ...collected.files
+        .filter((absolutePath) => ignoreRoots.some((ignoreRoot) => withinRoot(ignoreRoot, absolutePath)))
+        .map((absolutePath) => ({
+          path: toPosix(path.relative(rootDir, absolutePath)),
+          reason: "workspace_generated"
+        }))
+    );
+    scannedCount += files.length;
+
+    const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
+    for (const absolutePath of files) {
+      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot);
+      const result = await persistPreparedInput(rootDir, prepared, paths);
+      if (result.isNew) {
+        imported.push(result.manifest);
+      } else if (result.wasUpdated) {
+        updated.push(result.manifest);
+      }
+    }
+
+    for (const manifest of repoManifests) {
+      const originalPath = manifest.originalPath ? path.resolve(manifest.originalPath) : null;
+      if (originalPath && !currentPaths.has(originalPath)) {
+        await removeManifestArtifacts(rootDir, manifest, paths);
+        removed.push(manifest);
+      }
+    }
+  }
+
+  if (uniqueRoots.length > 0) {
+    await appendLogEntry(rootDir, "sync_repo", uniqueRoots.map((repoRoot) => toPosix(path.relative(rootDir, repoRoot)) || ".").join(","), [
+      `repo_roots=${uniqueRoots.length}`,
+      `scanned=${scannedCount}`,
+      `imported=${imported.length}`,
+      `updated=${updated.length}`,
+      `removed=${removed.length}`,
+      `skipped=${skipped.length}`
+    ]);
+  }
+
+  return {
+    repoRoots: uniqueRoots,
+    scannedCount,
+    imported,
+    updated,
+    removed,
+    skipped
+  };
 }
 
 async function prepareFileInput(_rootDir: string, absoluteInput: string, repoRoot?: string): Promise<PreparedInput> {

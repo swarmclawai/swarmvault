@@ -27,10 +27,12 @@ import {
   exploreVault,
   exportGraphHtml,
   explainGraphVault,
+  getGitHookStatus,
   importInbox,
   ingestInput,
   initVault,
   installAgent,
+  installGitHooks,
   getWebSearchAdapterForTask,
   lintVault,
   listGodNodes,
@@ -41,11 +43,14 @@ import {
   pathGraphVault,
   queryGraphVault,
   queryVault,
+  runWatchCycle,
   runSchedule,
   searchVault,
   serveSchedules,
   startGraphServer,
   startMcpServer,
+  syncTrackedRepos,
+  uninstallGitHooks,
   watchVault,
 } from "@swarmvaultai/engine";
 ```
@@ -55,7 +60,19 @@ The engine also exports the main runtime types for providers, graph artifacts, p
 ## Example
 
 ```ts
-import { compileVault, exploreVault, exportGraphHtml, importInbox, initVault, loadVaultSchemas, queryVault, watchVault } from "@swarmvaultai/engine";
+import {
+  compileVault,
+  exploreVault,
+  exportGraphHtml,
+  importInbox,
+  initVault,
+  installGitHooks,
+  loadVaultSchemas,
+  queryGraphVault,
+  queryVault,
+  runWatchCycle,
+  watchVault
+} from "@swarmvaultai/engine";
 
 const rootDir = process.cwd();
 
@@ -76,7 +93,10 @@ console.log(exploration.hubPath);
 
 await exportGraphHtml(rootDir, "./exports/graph.html");
 
-const watcher = await watchVault(rootDir, { lint: true });
+await runWatchCycle(rootDir, { repo: true });
+await installGitHooks(rootDir);
+
+const watcher = await watchVault(rootDir, { lint: true, repo: true });
 ```
 
 ## Schema Layer
@@ -132,7 +152,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local file path or URL
 - `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore })` recursively ingests a local directory as a repo-aware code/content source tree
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files and browser-clipper style bundles
-- JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, and PHP inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
+- JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
 - HTML and markdown URL ingests localize remote image references into `raw/assets/<sourceId>/` by default and rewrite the stored markdown to local relative paths
 
@@ -153,7 +173,10 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 ### Automation
 
-- `watchVault(rootDir, options)` watches the inbox and appends run records to `state/jobs.ndjson`
+- `watchVault(rootDir, options)` watches the inbox and optionally tracked repo roots, then appends run records to `state/jobs.ndjson`
+- `runWatchCycle(rootDir, options)` runs the same inbox/repo refresh logic once without starting a watcher
+- `syncTrackedRepos(rootDir)` refreshes previously ingested repo roots, updates changed manifests, and removes deleted repo manifests
+- `installGitHooks(rootDir)`, `uninstallGitHooks(rootDir)`, and `getGitHookStatus(rootDir)` manage local `post-commit` and `post-checkout` hook blocks for the nearest git repository
 - `lintVault(rootDir, options)` runs structural lint, optional deep lint, and optional web-augmented evidence gathering
 - `listSchedules(rootDir)`, `runSchedule(rootDir, jobId)`, and `serveSchedules(rootDir)` manage recurring local jobs from config
 - compile, query, explore, lint, and watch also write canonical markdown session artifacts to `state/sessions/`

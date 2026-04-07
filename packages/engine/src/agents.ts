@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { initWorkspace } from "./config.js";
-import type { AgentType } from "./types.js";
+import type { AgentType, InstallAgentOptions } from "./types.js";
 import { ensureDir, fileExists } from "./utils.js";
 
 const managedStart = "<!-- swarmvault:managed:start -->";
@@ -18,6 +18,7 @@ function buildManagedBlock(target: "agents" | "claude" | "gemini" | "cursor"): s
     "- Treat `raw/` as immutable source input.",
     "- Treat `wiki/` as generated markdown owned by the agent and compiler workflow.",
     "- Read `wiki/graph/report.md` before broad file searching when it exists; otherwise start with `wiki/index.md`.",
+    "- For graph questions, prefer `swarmvault graph query`, `swarmvault graph path`, and `swarmvault graph explain` before broad grep/glob searching.",
     "- Preserve frontmatter fields including `page_id`, `source_ids`, `node_ids`, `freshness`, and `source_hashes`.",
     "- Save high-value answers back into `wiki/outputs/` instead of leaving them only in chat.",
     "- Prefer `swarmvault ingest`, `swarmvault compile`, `swarmvault query`, and `swarmvault lint` for SwarmVault maintenance tasks.",
@@ -30,6 +31,47 @@ function buildManagedBlock(target: "agents" | "claude" | "gemini" | "cursor"): s
   }
 
   return body;
+}
+
+const claudeHookMatcher = "Glob|Grep";
+const claudeHookCommand =
+  "if [ -f wiki/graph/report.md ]; then echo 'swarmvault: Graph report exists. Read wiki/graph/report.md before broad raw-file searching.'; fi";
+
+type ClaudeSettings = {
+  hooks?: {
+    PreToolUse?: Array<{
+      matcher?: string;
+      hooks?: Array<{ type?: string; command?: string }>;
+    }>;
+  };
+};
+
+async function installClaudeHook(rootDir: string): Promise<string> {
+  const settingsPath = path.join(rootDir, ".claude", "settings.json");
+  await ensureDir(path.dirname(settingsPath));
+
+  let settings: ClaudeSettings = {};
+  if (await fileExists(settingsPath)) {
+    try {
+      settings = JSON.parse(await fs.readFile(settingsPath, "utf8")) as ClaudeSettings;
+    } catch {
+      settings = {};
+    }
+  }
+
+  const hooks = settings.hooks ?? {};
+  const preToolUse = hooks.PreToolUse ?? [];
+  const exists = preToolUse.some((entry) => entry.matcher === claudeHookMatcher && JSON.stringify(entry).includes("swarmvault:"));
+  if (!exists) {
+    preToolUse.push({
+      matcher: claudeHookMatcher,
+      hooks: [{ type: "command", command: claudeHookCommand }]
+    });
+  }
+
+  settings.hooks = { ...hooks, PreToolUse: preToolUse };
+  await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  return settingsPath;
 }
 
 function targetPathForAgent(rootDir: string, agent: AgentType): string {
@@ -69,7 +111,7 @@ async function upsertManagedBlock(filePath: string, block: string): Promise<void
   await fs.writeFile(filePath, `${existing.trimEnd()}\n\n${block}\n`, "utf8");
 }
 
-export async function installAgent(rootDir: string, agent: AgentType): Promise<string> {
+export async function installAgent(rootDir: string, agent: AgentType, options: InstallAgentOptions = {}): Promise<string> {
   await initWorkspace(rootDir);
   const target = targetPathForAgent(rootDir, agent);
 
@@ -82,6 +124,9 @@ export async function installAgent(rootDir: string, agent: AgentType): Promise<s
       return target;
     case "claude": {
       await upsertManagedBlock(target, buildManagedBlock("claude"));
+      if (options.claudeHook) {
+        await installClaudeHook(rootDir);
+      }
       return target;
     }
     case "gemini": {
@@ -108,5 +153,11 @@ export async function installConfiguredAgents(rootDir: string): Promise<string[]
       dedupedTargets.set(target, agent);
     }
   }
-  return Promise.all([...dedupedTargets.values()].map((agent) => installAgent(rootDir, agent)));
+  return Promise.all(
+    [...dedupedTargets.values()].map((agent) =>
+      installAgent(rootDir, agent, {
+        claudeHook: agent === "claude"
+      })
+    )
+  );
 }
