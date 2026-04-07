@@ -41,6 +41,7 @@ export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore";
 export type OutputFormat = "markdown" | "report" | "slides" | "chart" | "image";
 export type OutputAssetRole = "primary" | "preview" | "manifest" | "poster";
+export type GraphExportFormat = "html" | "svg" | "graphml" | "cypher";
 export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
@@ -215,9 +216,13 @@ export interface ResolvedPaths {
   searchDbPath: string;
   compileStatePath: string;
   codeIndexPath: string;
+  benchmarkPath: string;
   jobsLogPath: string;
   sessionsDir: string;
   approvalsDir: string;
+  watchDir: string;
+  watchStatusPath: string;
+  pendingSemanticRefreshPath: string;
   configPath: string;
 }
 
@@ -628,6 +633,16 @@ export interface WatchOptions {
   repo?: boolean;
 }
 
+export interface PendingSemanticRefreshEntry {
+  id: string;
+  repoRoot: string;
+  path: string;
+  changeType: "added" | "modified" | "removed";
+  detectedAt: string;
+  sourceId?: string;
+  sourceKind?: SourceKind;
+}
+
 export interface RepoSyncResult {
   repoRoots: string[];
   scannedCount: number;
@@ -635,6 +650,11 @@ export interface RepoSyncResult {
   updated: SourceManifest[];
   removed: SourceManifest[];
   skipped: DirectoryIngestSkip[];
+}
+
+export interface WatchRepoSyncResult extends RepoSyncResult {
+  pendingSemanticRefresh: PendingSemanticRefreshEntry[];
+  staleSourceIds: string[];
 }
 
 export interface WatchRunRecord {
@@ -647,9 +667,22 @@ export interface WatchRunRecord {
   scannedCount: number;
   attachmentCount: number;
   changedPages: string[];
+  repoImportedCount?: number;
+  repoUpdatedCount?: number;
+  repoRemovedCount?: number;
+  repoScannedCount?: number;
+  pendingSemanticRefreshCount?: number;
+  pendingSemanticRefreshPaths?: string[];
   lintFindingCount?: number;
   success: boolean;
   error?: string;
+}
+
+export interface WatchStatusResult {
+  generatedAt: string;
+  watchedRepoRoots: string[];
+  lastRun?: WatchRunRecord;
+  pendingSemanticRefresh: PendingSemanticRefreshEntry[];
 }
 
 export interface WatchController {
@@ -778,6 +811,48 @@ export interface SceneSpec {
   width?: number;
   height?: number;
   elements: SceneElement[];
+}
+
+export interface GraphExportResult {
+  format: GraphExportFormat;
+  outputPath: string;
+}
+
+export interface AddOptions extends IngestOptions {
+  author?: string;
+  contributor?: string;
+}
+
+export interface AddResult {
+  captureType: "arxiv" | "tweet" | "url";
+  manifest: SourceManifest;
+  normalizedUrl: string;
+  title: string;
+  fallback: boolean;
+}
+
+export interface BenchmarkQuestionResult {
+  question: string;
+  queryTokens: number;
+  reduction: number;
+  visitedNodeIds: string[];
+  pageIds: string[];
+}
+
+export interface BenchmarkArtifact {
+  generatedAt: string;
+  corpusWords: number;
+  corpusTokens: number;
+  nodes: number;
+  edges: number;
+  avgQueryTokens: number;
+  reductionRatio: number;
+  sampleQuestions: string[];
+  perQuestion: BenchmarkQuestionResult[];
+}
+
+export interface BenchmarkOptions {
+  questions?: string[];
 }
 
 export interface ScheduledCompileTask {

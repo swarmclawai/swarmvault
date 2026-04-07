@@ -4,6 +4,7 @@ import matter from "gray-matter";
 import { z } from "zod";
 import { installConfiguredAgents } from "./agents.js";
 import { analysisSignature, analyzeSource } from "./analysis.js";
+import { benchmarkQueryTokens, buildBenchmarkArtifact, DEFAULT_BENCHMARK_QUESTIONS, estimateCorpusWords } from "./benchmark.js";
 import { buildCodeIndex, enrichResolvedCodeImports, modulePageTitle } from "./code-analysis.js";
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
@@ -53,6 +54,8 @@ import type {
   ApprovalEntry,
   ApprovalManifest,
   ApprovalSummary,
+  BenchmarkArtifact,
+  BenchmarkOptions,
   CandidateRecord,
   CodeIndexArtifact,
   CompileOptions,
@@ -1364,6 +1367,7 @@ async function buildGraphOrientationPages(
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
   schemaHash: string
 ): Promise<ManagedPageRecord[]> {
+  const benchmark = await readJsonFile<BenchmarkArtifact>(paths.benchmarkPath);
   const communityRecords: ManagedPageRecord[] = [];
 
   for (const community of graph.communities ?? []) {
@@ -1402,7 +1406,8 @@ async function buildGraphOrientationPages(
         graph,
         schemaHash,
         metadata,
-        communityPages: communityRecords.map((record) => record.page)
+        communityPages: communityRecords.map((record) => record.page),
+        benchmark
       })
   );
 
@@ -1514,19 +1519,14 @@ async function requiredCompileArtifactsExist(paths: Awaited<ReturnType<typeof lo
   return checks.every(Boolean);
 }
 
-async function loadCachedAnalyses(
+async function loadAvailableCachedAnalyses(
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
   manifests: SourceManifest[]
 ): Promise<SourceAnalysis[]> {
-  return Promise.all(
-    manifests.map(async (manifest) => {
-      const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
-      if (!cached) {
-        throw new Error(`Missing cached analysis for ${manifest.sourceId}. Run \`swarmvault compile\` first.`);
-      }
-      return cached;
-    })
+  const analyses = await Promise.all(
+    manifests.map(async (manifest) => readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`)))
   );
+  return analyses.filter((analysis): analysis is SourceAnalysis => Boolean(analysis));
 }
 
 function approvalManifestPath(paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"], approvalId: string): string {
@@ -2551,7 +2551,7 @@ async function refreshVaultAfterOutputSave(rootDir: string): Promise<void> {
   const schemas = await loadVaultSchemas(rootDir);
   const manifests = await listManifests(rootDir);
   const sourceProjects = resolveSourceProjects(rootDir, manifests, config);
-  const cachedAnalyses = manifests.length ? await loadCachedAnalyses(paths, manifests) : [];
+  const cachedAnalyses = manifests.length ? await loadAvailableCachedAnalyses(paths, manifests) : [];
   const codeIndex = await buildCodeIndex(rootDir, manifests, cachedAnalyses);
   const analyses = cachedAnalyses.map((analysis) => {
     const manifest = manifests.find((item) => item.sourceId === analysis.sourceId);
@@ -3732,6 +3732,56 @@ export async function queryGraphVault(
   const graph = await ensureCompiledGraph(rootDir);
   const searchResults = searchPages(paths.searchDbPath, question, { limit: Math.max(5, options.budget ?? 10) });
   return queryGraph(graph, question, searchResults, options);
+}
+
+export async function benchmarkVault(rootDir: string, options: BenchmarkOptions = {}): Promise<BenchmarkArtifact> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const graph = await ensureCompiledGraph(rootDir);
+  const manifests = await listManifests(rootDir);
+  const pageContentsById = new Map<string, string>();
+  let corpusWords = 0;
+
+  for (const manifest of manifests) {
+    const extractedText = await readExtractedText(rootDir, manifest);
+    if (extractedText) {
+      corpusWords += estimateCorpusWords([extractedText]);
+    }
+  }
+
+  for (const page of graph.pages) {
+    const absolutePath = path.join(paths.wikiDir, page.path);
+    if (!(await fileExists(absolutePath))) {
+      continue;
+    }
+    const parsed = matter(await fs.readFile(absolutePath, "utf8"));
+    pageContentsById.set(page.id, parsed.content);
+  }
+
+  const questions = (options.questions ?? []).map((question) => normalizeWhitespace(question)).filter(Boolean);
+  const sampleQuestions = questions.length ? questions : [...DEFAULT_BENCHMARK_QUESTIONS];
+  const perQuestion = sampleQuestions.map((question) => {
+    const searchResults = searchPages(paths.searchDbPath, question, { limit: 12 });
+    const result = queryGraph(graph, question, searchResults, { budget: 12 });
+    const metrics = benchmarkQueryTokens(graph, result, pageContentsById);
+    return {
+      question,
+      queryTokens: metrics.queryTokens,
+      reduction: metrics.reduction,
+      visitedNodeIds: result.visitedNodeIds,
+      pageIds: result.pageIds
+    };
+  });
+
+  const artifact = buildBenchmarkArtifact({
+    graph,
+    corpusWords,
+    questions: sampleQuestions,
+    perQuestion
+  });
+
+  await writeJsonFile(paths.benchmarkPath, artifact);
+  await refreshIndexesAndSearch(rootDir, graph.pages);
+  return artifact;
 }
 
 export async function pathGraphVault(rootDir: string, from: string, to: string): Promise<GraphPathResult> {

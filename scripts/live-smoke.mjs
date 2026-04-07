@@ -214,6 +214,23 @@ try {
         await server.close();
       }
     });
+
+    await runStep("add-url-capture", async () => {
+      const server = await startFixtureServer({
+        "/capture.md": {
+          contentType: "text/plain; charset=utf-8",
+          body: ["# Captured Link", "", "SwarmVault add falls back to generic URL ingest for unsupported URLs."].join("\n")
+        }
+      });
+      try {
+        const result = await runCliJson(["add", `${server.baseUrl}/capture.md`, "--author", "Wayde"]);
+        assert.equal(result.captureType, "url", "add fallback did not report url capture");
+        assert.equal(result.fallback, true, "add fallback did not report fallback=true");
+        await assertExists(path.join(workspaceDir, result.manifest.storedPath));
+      } finally {
+        await server.close();
+      }
+    });
   }
 
   await runStep("query-save", async () => {
@@ -223,6 +240,14 @@ try {
     await assertExists(result.savedPath);
     const outputsIndex = await fs.readFile(path.join(workspaceDir, "wiki", "outputs", "index.md"), "utf8");
     assert.ok(outputsIndex.includes(path.basename(result.savedPath, ".md")), "outputs index did not include saved output");
+  });
+
+  await runStep("benchmark", async () => {
+    const result = await runCliJson(["benchmark", "--question", "How does this vault describe durable outputs?"]);
+    assert.ok(result.avgQueryTokens > 0, "benchmark did not compute avgQueryTokens");
+    await assertExists(path.join(workspaceDir, "state", "benchmark.json"));
+    const graphReport = await fs.readFile(path.join(workspaceDir, "wiki", "graph", "report.md"), "utf8");
+    assert.ok(graphReport.includes("## Benchmark"), "graph report did not include benchmark summary");
   });
 
   if (lane === "heuristic") {
@@ -519,12 +544,25 @@ try {
     await runStep("graph-export", async () => {
       const exportDir = path.join(workspaceDir, "exports");
       const outputPath = path.join(exportDir, "graph.html");
+      const svgPath = path.join(exportDir, "graph.svg");
+      const graphMlPath = path.join(exportDir, "graph.graphml");
+      const cypherPath = path.join(exportDir, "graph.cypher");
       await fs.mkdir(exportDir, { recursive: true });
       const result = await runCliJson(["graph", "export", "--html", outputPath]);
       assert.equal(result.outputPath, outputPath, "graph export returned an unexpected output path");
       await assertExists(outputPath);
       const html = await fs.readFile(outputPath, "utf8");
       assert.ok(html.includes("data:"), "graph export did not embed local asset data");
+
+      const svg = await runCliJson(["graph", "export", "--svg", svgPath]);
+      const graphml = await runCliJson(["graph", "export", "--graphml", graphMlPath]);
+      const cypher = await runCliJson(["graph", "export", "--cypher", cypherPath]);
+      assert.equal(svg.outputPath, svgPath, "svg export returned an unexpected output path");
+      assert.equal(graphml.outputPath, graphMlPath, "graphml export returned an unexpected output path");
+      assert.equal(cypher.outputPath, cypherPath, "cypher export returned an unexpected output path");
+      assert.ok((await fs.readFile(svgPath, "utf8")).includes("<svg"), "svg export did not contain svg markup");
+      assert.ok((await fs.readFile(graphMlPath, "utf8")).includes("<graphml"), "graphml export did not contain graphml markup");
+      assert.ok((await fs.readFile(cypherPath, "utf8")).includes("MERGE (n:SwarmNode"), "cypher export did not contain Cypher nodes");
     });
 
     await runStep("schedule-run", async () => {
@@ -601,6 +639,9 @@ try {
       const blockedAssetResponse = await fetch(`http://127.0.0.1:${port}/api/asset?path=${encodeURIComponent("../package.json")}`);
       assert.equal(blockedAssetResponse.status, 404, "asset API did not block path traversal");
 
+      const watchStatus = await fetchJson(`http://127.0.0.1:${port}/api/watch-status`);
+      assert.ok(Array.isArray(watchStatus.pendingSemanticRefresh), "watch-status API did not return pending semantic refresh entries");
+
       assert.ok(html.includes("<!doctype html") || html.includes("<html"), "graph viewer did not return HTML");
       assert.ok(Array.isArray(graph.nodes), "graph API did not return nodes");
       assert.ok(Array.isArray(graph.pages), "graph API did not return pages");
@@ -645,6 +686,25 @@ try {
       } finally {
         await stopProcess(watchServer.child, watchServer.label);
       }
+    });
+
+    await runStep("watch-status", async () => {
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "notes.md"),
+        ["# Alpha Notes", "", "Repo watch should flag this for semantic refresh instead of auto-ingesting it."].join("\n"),
+        "utf8"
+      );
+      const cycle = await runCliJson(["watch", "--repo", "--once"]);
+      assert.ok(
+        (cycle.pendingSemanticRefreshPaths ?? []).some((entry) => entry === "apps/alpha/notes.md"),
+        "watch --repo --once did not report the pending semantic refresh path"
+      );
+      const status = await runCliJson(["watch", "status"]);
+      assert.ok(Array.isArray(status.pendingSemanticRefresh), "watch status did not return pendingSemanticRefresh");
+      assert.ok(
+        status.pendingSemanticRefresh.some((entry) => entry.path === "apps/alpha/notes.md"),
+        "watch status did not include the pending semantic refresh entry"
+      );
     });
 
     await runStep("mcp", async () => {

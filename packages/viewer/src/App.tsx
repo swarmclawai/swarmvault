@@ -11,6 +11,7 @@ import {
   fetchGraphPath,
   fetchGraphQuery,
   fetchViewerPage,
+  fetchWatchStatus,
   searchViewerPages,
   type ViewerApprovalDetail,
   type ViewerApprovalSummary,
@@ -22,7 +23,8 @@ import {
   type ViewerGraphQueryResult,
   type ViewerOutputAsset,
   type ViewerPagePayload,
-  type ViewerSearchResult
+  type ViewerSearchResult,
+  type ViewerWatchStatus
 } from "./lib";
 
 const COLORS: Record<string, string> = {
@@ -77,7 +79,9 @@ export function App() {
   const [selectedApprovalId, setSelectedApprovalId] = useState<string>("");
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<ViewerCandidateRecord[]>([]);
+  const [watchStatus, setWatchStatus] = useState<ViewerWatchStatus | null>(null);
   const [candidateError, setCandidateError] = useState<string | null>(null);
+  const [watchError, setWatchError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string>("");
   const deferredQuery = useDeferredValue(query);
@@ -110,7 +114,8 @@ export function App() {
   const refreshWorkspace = useCallback(async () => {
     let nextApprovalError: string | null = null;
     let nextCandidateError: string | null = null;
-    const [nextGraph, nextApprovals, nextCandidates] = await Promise.all([
+    let nextWatchError: string | null = null;
+    const [nextGraph, nextApprovals, nextCandidates, nextWatchStatus] = await Promise.all([
       fetchGraphArtifact().catch(() => emptyGraph()),
       fetchApprovals().catch((error: unknown) => {
         nextApprovalError = error instanceof Error ? error.message : String(error);
@@ -119,6 +124,14 @@ export function App() {
       fetchCandidates().catch((error: unknown) => {
         nextCandidateError = error instanceof Error ? error.message : String(error);
         return [];
+      }),
+      fetchWatchStatus().catch((error: unknown) => {
+        nextWatchError = error instanceof Error ? error.message : String(error);
+        return {
+          generatedAt: "",
+          watchedRepoRoots: [],
+          pendingSemanticRefresh: []
+        } satisfies ViewerWatchStatus;
       })
     ]);
 
@@ -126,8 +139,10 @@ export function App() {
       setGraph(nextGraph);
       setApprovals(nextApprovals);
       setCandidates(nextCandidates);
+      setWatchStatus(nextWatchStatus);
       setApprovalError(nextApprovalError);
       setCandidateError(nextCandidateError);
+      setWatchError(nextWatchError);
     });
   }, []);
 
@@ -572,7 +587,35 @@ export function App() {
           <span>Candidates</span>
           <strong>{candidates.length}</strong>
         </article>
+        <article>
+          <span>Pending Refresh</span>
+          <strong>{watchStatus?.pendingSemanticRefresh.length ?? 0}</strong>
+        </article>
       </section>
+
+      {watchStatus?.pendingSemanticRefresh.length ? (
+        <section className="panel" style={{ marginBottom: "1rem" }}>
+          <h2>Pending Semantic Refresh</h2>
+          <p>
+            Repo watch detected non-code changes under watched repos. These files are flagged for manual ingest/compile instead of being
+            auto-semantic-refreshed.
+          </p>
+          <p>
+            Watched roots: {watchStatus.watchedRepoRoots.length ? watchStatus.watchedRepoRoots.join(", ") : "none"}
+            {watchStatus.lastRun?.finishedAt ? ` • Last run: ${new Date(watchStatus.lastRun.finishedAt).toLocaleString()}` : ""}
+          </p>
+          {watchError ? <p>{watchError}</p> : null}
+          <div className="review-list">
+            {watchStatus.pendingSemanticRefresh.slice(0, 8).map((entry) => (
+              <article key={entry.id} className="review-card">
+                <span className="panel-label">{entry.changeType}</span>
+                <strong>{entry.path}</strong>
+                <p>{entry.sourceKind ? `Kind: ${entry.sourceKind}` : "Awaiting semantic refresh."}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="workspace">
         <div className="canvas" ref={containerRef} />

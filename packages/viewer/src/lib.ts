@@ -183,6 +183,40 @@ export type ViewerCandidateRecord = {
   updatedAt: string;
 };
 
+export type ViewerWatchStatus = {
+  generatedAt: string;
+  watchedRepoRoots: string[];
+  lastRun?: {
+    startedAt: string;
+    finishedAt: string;
+    durationMs: number;
+    inputDir: string;
+    reasons: string[];
+    importedCount: number;
+    scannedCount: number;
+    attachmentCount: number;
+    changedPages: string[];
+    repoImportedCount?: number;
+    repoUpdatedCount?: number;
+    repoRemovedCount?: number;
+    repoScannedCount?: number;
+    pendingSemanticRefreshCount?: number;
+    pendingSemanticRefreshPaths?: string[];
+    lintFindingCount?: number;
+    success: boolean;
+    error?: string;
+  };
+  pendingSemanticRefresh: Array<{
+    id: string;
+    repoRoot: string;
+    path: string;
+    changeType: "added" | "modified" | "removed";
+    detectedAt: string;
+    sourceId?: string;
+    sourceKind?: string;
+  }>;
+};
+
 declare global {
   interface Window {
     __SWARMVAULT_EMBEDDED_DATA__?: {
@@ -413,4 +447,19 @@ export async function applyCandidateAction(target: string, action: "promote" | "
     throw new Error(`Failed to ${action} candidate: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<ViewerCandidateRecord>;
+}
+
+export async function fetchWatchStatus(): Promise<ViewerWatchStatus> {
+  if (embeddedData()) {
+    return {
+      generatedAt: "",
+      watchedRepoRoots: [],
+      pendingSemanticRefresh: []
+    };
+  }
+  const response = await fetch("/api/watch-status");
+  if (!response.ok) {
+    throw new Error(`Failed to load watch status: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<ViewerWatchStatus>;
 }

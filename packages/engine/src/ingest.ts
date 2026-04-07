@@ -9,15 +9,29 @@ import { inferCodeLanguage } from "./code-analysis.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { appendLogEntry } from "./logs.js";
 import type {
+  AddOptions,
+  AddResult,
   DirectoryIngestResult,
   InboxImportResult,
   IngestOptions,
   RepoSyncResult,
   ResolvedPaths,
   SourceAttachment,
-  SourceManifest
+  SourceManifest,
+  WatchRepoSyncResult
 } from "./types.js";
-import { ensureDir, fileExists, listFilesRecursive, readJsonFile, sha256, slugify, toPosix, writeJsonFile } from "./utils.js";
+import {
+  ensureDir,
+  fileExists,
+  listFilesRecursive,
+  normalizeWhitespace,
+  readJsonFile,
+  sha256,
+  slugify,
+  toPosix,
+  writeJsonFile
+} from "./utils.js";
+import { clearPendingSemanticRefreshEntries } from "./watch-state.js";
 
 const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
 const DEFAULT_MAX_DIRECTORY_FILES = 5000;
@@ -178,6 +192,173 @@ function normalizeOriginUrl(input: string): string {
   } catch {
     return input;
   }
+}
+
+function isHttpUrl(input: string): boolean {
+  return /^https?:\/\//i.test(input);
+}
+
+function stripLeadingLabel(value: string, label: string): string {
+  return value.startsWith(label) ? value.slice(label.length).trim() : value.trim();
+}
+
+function arxivIdFromInput(input: string): string | null {
+  const trimmed = input.trim();
+  if (/^\d{4}\.\d{4,5}(v\d+)?$/i.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    const match = url.pathname.match(/(\d{4}\.\d{4,5}(?:v\d+)?)/i);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isTweetUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return url.hostname.includes("x.com") || url.hostname.includes("twitter.com");
+  } catch {
+    return false;
+  }
+}
+
+function markdownFrontmatter(value: Record<string, string | undefined>): string[] {
+  const lines = ["---"];
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (!rawValue) {
+      continue;
+    }
+    lines.push(`${key}: "${rawValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
+  }
+  lines.push("---", "");
+  return lines;
+}
+
+function prepareCapturedMarkdownInput(input: { title: string; url: string; markdown: string; logDetails?: string[] }): PreparedInput {
+  return {
+    title: input.title,
+    originType: "url",
+    sourceKind: "markdown",
+    url: normalizeOriginUrl(input.url),
+    mimeType: "text/markdown",
+    storedExtension: ".md",
+    payloadBytes: Buffer.from(input.markdown, "utf8"),
+    extractedText: input.markdown,
+    logDetails: input.logDetails
+  };
+}
+
+async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+  }
+  return response.text();
+}
+
+function domTextFromHtml(html: string, baseUrl: string): string {
+  const dom = new JSDOM(`<body>${html}</body>`, { url: baseUrl });
+  return normalizeWhitespace(dom.window.document.body.textContent ?? "");
+}
+
+async function captureArxivMarkdown(
+  input: string,
+  options: Pick<AddOptions, "author" | "contributor">
+): Promise<{ title: string; normalizedUrl: string; markdown: string }> {
+  const arxivId = arxivIdFromInput(input);
+  if (!arxivId) {
+    throw new Error(`Could not determine an arXiv id from ${input}`);
+  }
+
+  const normalizedUrl = `https://arxiv.org/abs/${arxivId}`;
+  const html = await fetchText(normalizedUrl);
+  const dom = new JSDOM(html, { url: normalizedUrl });
+  const document = dom.window.document;
+  const metaTitle = document.querySelector('meta[name="citation_title"]')?.getAttribute("content")?.trim();
+  const headingTitle = document.querySelector("h1.title")?.textContent?.trim();
+  const title = stripLeadingLabel(metaTitle ?? headingTitle ?? arxivId, "Title:");
+  const authors = [...document.querySelectorAll('meta[name="citation_author"]')]
+    .map((node) => node.getAttribute("content")?.trim())
+    .filter((value): value is string => Boolean(value));
+  const authorsText = authors.join(", ") || stripLeadingLabel(document.querySelector(".authors")?.textContent?.trim() ?? "", "Authors:");
+  const abstract = stripLeadingLabel(document.querySelector("blockquote.abstract")?.textContent?.trim() ?? "", "Abstract:");
+  const capturedAt = new Date().toISOString();
+  const markdown = [
+    ...markdownFrontmatter({
+      capture_type: "arxiv",
+      source_url: normalizedUrl,
+      arxiv_id: arxivId,
+      author: options.author,
+      contributor: options.contributor,
+      captured_at: capturedAt
+    }),
+    `# ${title}`,
+    "",
+    `- arXiv: ${arxivId}`,
+    ...(authorsText ? [`- Authors: ${authorsText}`] : []),
+    ...(options.author ? [`- Added By: ${options.author}`] : []),
+    ...(options.contributor ? [`- Contributor: ${options.contributor}`] : []),
+    "",
+    "## Abstract",
+    "",
+    abstract || "Abstract not available from the fetched arXiv page.",
+    "",
+    "## Source",
+    "",
+    `- URL: ${normalizedUrl}`,
+    ""
+  ].join("\n");
+
+  return { title, normalizedUrl, markdown };
+}
+
+async function captureTweetMarkdown(
+  input: string,
+  options: Pick<AddOptions, "author" | "contributor">
+): Promise<{ title: string; normalizedUrl: string; markdown: string }> {
+  const normalizedUrl = normalizeOriginUrl(input);
+  const canonicalUrl = normalizedUrl.replace("x.com", "twitter.com");
+  const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(canonicalUrl)}&omit_script=true`;
+  const response = await fetch(oembedUrl);
+  let postText = "";
+  let postAuthor = "";
+
+  if (response.ok) {
+    const payload = (await response.json()) as { html?: string; author_name?: string };
+    postText = payload.html ? domTextFromHtml(payload.html, canonicalUrl) : "";
+    postAuthor = payload.author_name?.trim() ?? "";
+  }
+
+  const title = postAuthor ? `X Post by ${postAuthor}` : "X Post";
+  const capturedAt = new Date().toISOString();
+  const markdown = [
+    ...markdownFrontmatter({
+      capture_type: "tweet",
+      source_url: normalizedUrl,
+      author: options.author,
+      contributor: options.contributor,
+      captured_at: capturedAt
+    }),
+    `# ${title}`,
+    "",
+    ...(postAuthor ? [`- Post Author: ${postAuthor}`] : []),
+    ...(options.author ? [`- Added By: ${options.author}`] : []),
+    ...(options.contributor ? [`- Contributor: ${options.contributor}`] : []),
+    "",
+    "## Content",
+    "",
+    postText || `Captured the post link at ${normalizedUrl}. Rich text was unavailable from the public oEmbed response.`,
+    "",
+    "## Source",
+    "",
+    `- URL: ${normalizedUrl}`,
+    ""
+  ].join("\n");
+
+  return { title, normalizedUrl, markdown };
 }
 
 function manifestMatchesOrigin(manifest: SourceManifest, prepared: PreparedInput): boolean {
@@ -679,6 +860,14 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     ...(prepared.logDetails ?? [])
   ]);
 
+  if (manifest.originalPath || manifest.repoRelativePath || manifest.sourceId) {
+    await clearPendingSemanticRefreshEntries(rootDir, {
+      sourceId: manifest.sourceId,
+      originalPath: manifest.originalPath,
+      relativePath: manifest.repoRelativePath
+    });
+  }
+
   return { manifest, isNew: !previous, wasUpdated: Boolean(previous) };
 }
 
@@ -708,6 +897,25 @@ function repoSyncWorkspaceIgnorePaths(rootDir: string, paths: ResolvedPaths, rep
     .map((candidate) => path.resolve(candidate))
     .filter((candidate, index, items) => items.indexOf(candidate) === index)
     .filter((candidate) => withinRoot(repoRoot, candidate));
+}
+
+function preparedMatchesManifest(manifest: SourceManifest, prepared: PreparedInput, contentHash: string): boolean {
+  return (
+    manifest.contentHash === contentHash &&
+    manifest.title === prepared.title &&
+    manifest.sourceKind === prepared.sourceKind &&
+    manifest.language === prepared.language &&
+    manifest.mimeType === prepared.mimeType &&
+    manifest.repoRelativePath === prepared.repoRelativePath
+  );
+}
+
+function shouldDeferWatchSemanticRefresh(sourceKind: SourceManifest["sourceKind"]): boolean {
+  return sourceKind === "markdown" || sourceKind === "text" || sourceKind === "html" || sourceKind === "pdf" || sourceKind === "image";
+}
+
+function pendingSemanticRefreshId(changeType: "added" | "modified" | "removed", repoRoot: string, relativePath: string): string {
+  return `pending:${changeType}:${sha256(`${toPosix(repoRoot)}:${relativePath}`).slice(0, 12)}`;
 }
 
 export async function listTrackedRepoRoots(rootDir: string): Promise<string[]> {
@@ -806,6 +1014,171 @@ export async function syncTrackedRepos(rootDir: string, options?: IngestOptions,
     updated,
     removed,
     skipped
+  };
+}
+
+export async function syncTrackedReposForWatch(
+  rootDir: string,
+  options?: IngestOptions,
+  repoRoots?: string[]
+): Promise<WatchRepoSyncResult> {
+  const { paths } = await initWorkspace(rootDir);
+  const normalizedOptions = normalizeIngestOptions(options);
+  const manifests = await listManifests(rootDir);
+  const trackedRoots = (repoRoots && repoRoots.length > 0 ? repoRoots : await listTrackedRepoRoots(rootDir)).map((item) =>
+    path.resolve(item)
+  );
+  const uniqueRoots = [...new Set(trackedRoots)].sort((left, right) => left.localeCompare(right));
+  const manifestsByRepoRoot = new Map<string, SourceManifest[]>();
+
+  for (const manifest of manifests) {
+    const repoRoot = repoRootFromManifest(manifest);
+    if (!repoRoot || !uniqueRoots.includes(path.resolve(repoRoot))) {
+      continue;
+    }
+    const key = path.resolve(repoRoot);
+    const bucket = manifestsByRepoRoot.get(key) ?? [];
+    bucket.push(manifest);
+    manifestsByRepoRoot.set(key, bucket);
+  }
+
+  const imported: SourceManifest[] = [];
+  const updated: SourceManifest[] = [];
+  const removed: SourceManifest[] = [];
+  const skipped: DirectoryIngestResult["skipped"] = [];
+  const pendingSemanticRefresh: WatchRepoSyncResult["pendingSemanticRefresh"] = [];
+  const staleSourceIds = new Set<string>();
+  let scannedCount = 0;
+
+  for (const repoRoot of uniqueRoots) {
+    const repoManifests = manifestsByRepoRoot.get(repoRoot) ?? [];
+    const manifestsByOriginalPath = new Map(
+      repoManifests
+        .filter((manifest) => manifest.originalPath)
+        .map((manifest) => [path.resolve(manifest.originalPath as string), manifest] as const)
+    );
+
+    if (!(await fileExists(repoRoot))) {
+      for (const manifest of repoManifests) {
+        if (shouldDeferWatchSemanticRefresh(manifest.sourceKind)) {
+          pendingSemanticRefresh.push({
+            id: pendingSemanticRefreshId("removed", repoRoot, manifest.repoRelativePath ?? manifest.storedPath),
+            repoRoot,
+            path: toPosix(path.relative(rootDir, manifest.originalPath ?? manifest.storedPath)),
+            changeType: "removed",
+            detectedAt: new Date().toISOString(),
+            sourceId: manifest.sourceId,
+            sourceKind: manifest.sourceKind
+          });
+          staleSourceIds.add(manifest.sourceId);
+        } else {
+          await removeManifestArtifacts(rootDir, manifest, paths);
+          removed.push(manifest);
+        }
+      }
+      continue;
+    }
+
+    const ignoreRoots = repoSyncWorkspaceIgnorePaths(rootDir, paths, repoRoot);
+    const collected = await collectDirectoryFiles(rootDir, repoRoot, repoRoot, normalizedOptions);
+    const files = collected.files.filter((absolutePath) => !ignoreRoots.some((ignoreRoot) => withinRoot(ignoreRoot, absolutePath)));
+    skipped.push(
+      ...collected.skipped,
+      ...collected.files
+        .filter((absolutePath) => ignoreRoots.some((ignoreRoot) => withinRoot(ignoreRoot, absolutePath)))
+        .map((absolutePath) => ({
+          path: toPosix(path.relative(rootDir, absolutePath)),
+          reason: "workspace_generated"
+        }))
+    );
+    scannedCount += files.length;
+
+    const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
+    for (const absolutePath of files) {
+      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot);
+      if (shouldDeferWatchSemanticRefresh(prepared.sourceKind)) {
+        const existing = manifestsByOriginalPath.get(path.resolve(absolutePath));
+        const contentHash = buildCompositeHash(prepared.payloadBytes, prepared.attachments);
+        const changed = !existing || !preparedMatchesManifest(existing, prepared, contentHash);
+        if (changed) {
+          pendingSemanticRefresh.push({
+            id: pendingSemanticRefreshId(
+              existing ? "modified" : "added",
+              repoRoot,
+              prepared.repoRelativePath ?? toPosix(path.relative(repoRoot, absolutePath))
+            ),
+            repoRoot,
+            path: toPosix(path.relative(rootDir, absolutePath)),
+            changeType: existing ? "modified" : "added",
+            detectedAt: new Date().toISOString(),
+            sourceId: existing?.sourceId,
+            sourceKind: prepared.sourceKind
+          });
+          if (existing?.sourceId) {
+            staleSourceIds.add(existing.sourceId);
+          }
+        }
+        continue;
+      }
+
+      const result = await persistPreparedInput(rootDir, prepared, paths);
+      if (result.isNew) {
+        imported.push(result.manifest);
+      } else if (result.wasUpdated) {
+        updated.push(result.manifest);
+      }
+    }
+
+    for (const manifest of repoManifests) {
+      const originalPath = manifest.originalPath ? path.resolve(manifest.originalPath) : null;
+      if (originalPath && !currentPaths.has(originalPath)) {
+        if (shouldDeferWatchSemanticRefresh(manifest.sourceKind)) {
+          pendingSemanticRefresh.push({
+            id: pendingSemanticRefreshId("removed", repoRoot, manifest.repoRelativePath ?? toPosix(path.relative(repoRoot, originalPath))),
+            repoRoot,
+            path: toPosix(path.relative(rootDir, originalPath)),
+            changeType: "removed",
+            detectedAt: new Date().toISOString(),
+            sourceId: manifest.sourceId,
+            sourceKind: manifest.sourceKind
+          });
+          staleSourceIds.add(manifest.sourceId);
+        } else {
+          await removeManifestArtifacts(rootDir, manifest, paths);
+          removed.push(manifest);
+        }
+      }
+    }
+  }
+
+  if (uniqueRoots.length > 0) {
+    await appendLogEntry(
+      rootDir,
+      "sync_repo_watch",
+      uniqueRoots.map((repoRoot) => toPosix(path.relative(rootDir, repoRoot)) || ".").join(","),
+      [
+        `repo_roots=${uniqueRoots.length}`,
+        `scanned=${scannedCount}`,
+        `imported=${imported.length}`,
+        `updated=${updated.length}`,
+        `removed=${removed.length}`,
+        `pending_semantic_refresh=${pendingSemanticRefresh.length}`,
+        `skipped=${skipped.length}`
+      ]
+    );
+  }
+
+  return {
+    repoRoots: uniqueRoots,
+    scannedCount,
+    imported,
+    updated,
+    removed,
+    skipped,
+    pendingSemanticRefresh: pendingSemanticRefresh.filter(
+      (entry, index, items) => index === items.findIndex((candidate) => candidate.id === entry.id)
+    ),
+    staleSourceIds: [...staleSourceIds]
   };
 }
 
@@ -1053,15 +1426,73 @@ export async function ingestInput(rootDir: string, input: string, options?: Inge
   const normalizedOptions = normalizeIngestOptions(options);
   const absoluteInput = path.resolve(rootDir, input);
   const repoRoot =
-    /^https?:\/\//i.test(input) || normalizedOptions.repoRoot
+    isHttpUrl(input) || normalizedOptions.repoRoot
       ? normalizedOptions.repoRoot
       : await findNearestGitRoot(absoluteInput).then((value) => value ?? path.dirname(absoluteInput));
-  const prepared = /^https?:\/\//i.test(input)
+  const prepared = isHttpUrl(input)
     ? await prepareUrlInput(input, normalizedOptions)
     : await prepareFileInput(rootDir, absoluteInput, repoRoot);
 
   const result = await persistPreparedInput(rootDir, prepared, paths);
   return result.manifest;
+}
+
+export async function addInput(rootDir: string, input: string, options: AddOptions = {}): Promise<AddResult> {
+  const { paths } = await initWorkspace(rootDir);
+  if (!isHttpUrl(input) && !arxivIdFromInput(input)) {
+    throw new Error("`swarmvault add` only supports URLs and bare arXiv ids in the current release.");
+  }
+
+  let prepared: PreparedInput | null = null;
+  let captureType: AddResult["captureType"] = "url";
+  let normalizedUrl = input;
+  let fallback = false;
+
+  try {
+    if (arxivIdFromInput(input)) {
+      const captured = await captureArxivMarkdown(input, options);
+      prepared = prepareCapturedMarkdownInput({
+        title: captured.title,
+        url: captured.normalizedUrl,
+        markdown: captured.markdown,
+        logDetails: ["capture_type=arxiv"]
+      });
+      captureType = "arxiv";
+      normalizedUrl = captured.normalizedUrl;
+    } else if (isTweetUrl(input)) {
+      const captured = await captureTweetMarkdown(input, options);
+      prepared = prepareCapturedMarkdownInput({
+        title: captured.title,
+        url: captured.normalizedUrl,
+        markdown: captured.markdown,
+        logDetails: ["capture_type=tweet"]
+      });
+      captureType = "tweet";
+      normalizedUrl = captured.normalizedUrl;
+    }
+  } catch {
+    fallback = true;
+  }
+
+  if (!prepared) {
+    normalizedUrl = arxivIdFromInput(input) ? `https://arxiv.org/abs/${arxivIdFromInput(input)}` : normalizeOriginUrl(input);
+    return {
+      captureType: "url",
+      manifest: await ingestInput(rootDir, normalizedUrl, options),
+      normalizedUrl,
+      title: normalizedUrl,
+      fallback: true
+    };
+  }
+
+  const result = await persistPreparedInput(rootDir, prepared, paths);
+  return {
+    captureType,
+    manifest: result.manifest,
+    normalizedUrl,
+    title: prepared.title,
+    fallback
+  };
 }
 
 export async function ingestDirectory(rootDir: string, inputDir: string, options?: IngestOptions): Promise<DirectoryIngestResult> {

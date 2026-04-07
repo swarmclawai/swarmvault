@@ -22,6 +22,7 @@ import {
   readApproval,
   rejectApproval
 } from "./vault.js";
+import { getWatchStatus } from "./watch.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -164,6 +165,12 @@ export async function startGraphServer(rootDir: string, port?: number): Promise<
       });
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(results));
+      return;
+    }
+
+    if (url.pathname === "/api/watch-status") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(await getWatchStatus(rootDir)));
       return;
     }
 

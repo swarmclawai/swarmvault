@@ -4,6 +4,14 @@
 
 Nothing yet.
 
+## 0.1.21
+
+- Added `swarmvault add <url>` as an opinionated capture layer for arXiv IDs/URLs and X/Twitter URLs, with graceful fallback to generic URL ingest when a specialized capture is unavailable
+- Added `swarmvault benchmark` plus `state/benchmark.json`, and surfaced benchmark summaries in `wiki/graph/report.md` to make graph-guided context reduction measurable instead of implied
+- Added `swarmvault watch status` plus pending semantic refresh tracking under `state/watch/` so non-code repo changes are reported, logged, and marked stale instead of being silently skipped
+- Expanded `swarmvault graph export` with deterministic `--svg`, `--graphml`, and `--cypher` outputs in addition to the existing HTML export
+- Added worked example vault documentation, updated the OSS/site docs for the new capture, benchmark, watch, and graph-export surfaces, and fixed the repo-watch test race that flaked CI after `v0.1.20`
+
 ## 0.1.20
 
 - Added repo-aware watch automation with `swarmvault watch --repo` plus `swarmvault watch --repo --once` so tracked repo roots refresh through the same pipeline as inbox automation

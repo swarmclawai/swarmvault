@@ -7,9 +7,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  addInput,
+  benchmarkVault,
   compileVault,
   createMcpServer,
+  exportGraphFormat,
   getGitHookStatus,
+  getWatchStatus,
   importInbox,
   ingestDirectory,
   ingestInput,
@@ -18,6 +22,7 @@ import {
   installGitHooks,
   lintVault,
   queryVault,
+  runWatchCycle,
   uninstallGitHooks,
   watchVault
 } from "../src/index.js";
@@ -376,6 +381,134 @@ describe("swarmvault workflow", () => {
     }
   });
 
+  it("captures arXiv ids and tweet URLs through the add workflow", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://arxiv.org/abs/2401.12345") {
+        return new Response(
+          [
+            "<html><head>",
+            '<meta name="citation_title" content="Parser-First Vaults" />',
+            '<meta name="citation_author" content="Ada Lovelace" />',
+            '<meta name="citation_author" content="Grace Hopper" />',
+            "</head><body>",
+            '<blockquote class="abstract">Abstract: Parser-backed ingest keeps graphs grounded.</blockquote>',
+            "</body></html>"
+          ].join(""),
+          {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" }
+          }
+        );
+      }
+      if (url.startsWith("https://publish.twitter.com/oembed")) {
+        return new Response(
+          JSON.stringify({
+            author_name: "Graph Agent",
+            html: "<blockquote><p>Watch mode should flag semantic refresh instead of silently ingesting docs.</p></blockquote>"
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" }
+          }
+        );
+      }
+      return originalFetch(input as never);
+    }) as typeof globalThis.fetch;
+
+    try {
+      const arxiv = await addInput(rootDir, "2401.12345", { author: "Wayde" });
+      const tweet = await addInput(rootDir, "https://x.com/example/status/1234567890", { contributor: "SwarmVault" });
+
+      expect(arxiv.captureType).toBe("arxiv");
+      expect(arxiv.fallback).toBe(false);
+      expect(arxiv.normalizedUrl).toBe("https://arxiv.org/abs/2401.12345");
+      expect(await fs.readFile(path.join(rootDir, arxiv.manifest.storedPath), "utf8")).toContain("## Abstract");
+
+      expect(tweet.captureType).toBe("tweet");
+      expect(tweet.fallback).toBe(false);
+      expect(await fs.readFile(path.join(rootDir, tweet.manifest.storedPath), "utf8")).toContain("## Content");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("can save a query after add fallback without compiling the captured source first", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://example.test/capture.md") {
+        return new Response(["# Captured Link", "", "Durable outputs should stay on disk."].join("\n"), {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8" }
+        });
+      }
+      return originalFetch(input as never);
+    }) as typeof globalThis.fetch;
+
+    try {
+      await fs.writeFile(path.join(rootDir, "note.md"), "# Existing Note\n\nSwarmVault saves outputs into wiki/outputs.\n", "utf8");
+      await ingestInput(rootDir, "note.md");
+      await compileVault(rootDir);
+
+      const added = await addInput(rootDir, "https://example.test/capture.md");
+      expect(added.captureType).toBe("url");
+      expect(added.fallback).toBe(true);
+
+      const result = await queryVault(rootDir, {
+        question: "What does this vault say about durable outputs?"
+      });
+      expect(result.savedPath).toBeTruthy();
+      expect(await fs.readFile(result.savedPath ?? "", "utf8")).toContain("durable outputs");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("writes benchmark artifacts and exports svg, graphml, and cypher graph files", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "note.md"),
+      ["# Durable Graphs", "", "SwarmVault benchmarks graph-guided context against whole-corpus reads."].join("\n"),
+      "utf8"
+    );
+    await ingestInput(rootDir, "note.md");
+    await compileVault(rootDir);
+
+    const benchmark = await benchmarkVault(rootDir, {
+      questions: ["How does this vault describe graph-guided context reduction?"]
+    });
+    expect(benchmark.sampleQuestions).toHaveLength(1);
+    expect(benchmark.avgQueryTokens).toBeGreaterThan(0);
+
+    const benchmarkArtifact = JSON.parse(await fs.readFile(path.join(rootDir, "state", "benchmark.json"), "utf8")) as {
+      sampleQuestions: string[];
+    };
+    expect(benchmarkArtifact.sampleQuestions).toEqual(benchmark.sampleQuestions);
+
+    const graphReport = await fs.readFile(path.join(rootDir, "wiki", "graph", "report.md"), "utf8");
+    expect(graphReport).toContain("## Benchmark");
+    expect(graphReport).toContain("Reduction Ratio");
+
+    const exportsDir = path.join(rootDir, "exports");
+    const svg = await exportGraphFormat(rootDir, "svg", path.join(exportsDir, "graph.svg"));
+    const graphml = await exportGraphFormat(rootDir, "graphml", path.join(exportsDir, "graph.graphml"));
+    const cypher = await exportGraphFormat(rootDir, "cypher", path.join(exportsDir, "graph.cypher"));
+
+    expect(await fs.readFile(svg.outputPath, "utf8")).toContain("<svg");
+    expect(await fs.readFile(graphml.outputPath, "utf8")).toContain("<graphml");
+    expect(await fs.readFile(cypher.outputPath, "utf8")).toContain("MERGE (n:SwarmNode");
+  });
+
   it("threads the schema through compile and query and marks pages stale when the schema changes", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -698,4 +831,39 @@ describe("swarmvault workflow", () => {
       await controller.close();
     }
   }, 25_000);
+
+  it("flags pending semantic refresh for tracked non-code repo changes", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "repo", ".git"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "docs"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "repo", "docs", "guide.md"),
+      ["# Repo Guide", "", "Initial repo documentation."].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, "repo");
+    const guideManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("docs/guide.md"));
+    expect(guideManifest).toBeTruthy();
+    await compileVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "repo", "docs", "guide.md"),
+      ["# Repo Guide", "", "Updated repo documentation that needs semantic refresh."].join("\n"),
+      "utf8"
+    );
+
+    const cycle = await runWatchCycle(rootDir, { repo: true, debounceMs: 50 });
+    expect(cycle.pendingSemanticRefreshCount).toBe(1);
+    expect(cycle.pendingSemanticRefreshPaths.some((entry) => entry.endsWith("repo/docs/guide.md"))).toBe(true);
+
+    const watchStatus = await getWatchStatus(rootDir);
+    expect(watchStatus.pendingSemanticRefresh).toHaveLength(1);
+    expect(watchStatus.pendingSemanticRefresh[0]?.path).toBe("repo/docs/guide.md");
+
+    const sourcePage = matter(await fs.readFile(path.join(rootDir, "wiki", "sources", `${guideManifest?.sourceId}.md`), "utf8"));
+    expect(sourcePage.data.freshness).toBe("stale");
+  });
 });

@@ -16,10 +16,13 @@ Every vault carries a user-editable `swarmvault.schema.md` file, so the compiler
 
 ```bash
 swarmvault init --obsidian
+swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault ingest ./notes
 swarmvault compile
+swarmvault benchmark
 swarmvault query "What is the auth flow?"
 swarmvault graph query "How does auth connect to billing?"
+swarmvault watch status
 swarmvault watch --repo --once
 swarmvault hook install
 swarmvault graph serve
@@ -40,12 +43,14 @@ my-vault/
 - A markdown-first wiki that stays usable in Obsidian or plain Git
 - A structured graph artifact with provenance, freshness, projects, and saved outputs
 - Graph-first report pages plus deterministic local graph query, path, explain, and god-node tools
+- Benchmark artifacts plus worked examples for measuring graph-guided context reduction
 - Save-first `query` and `explore` workflows, including `report`, `slides`, `chart`, and `image` outputs
 - Reviewable approval and candidate queues instead of silent page mutation
 - Local full-text search and a graph workspace for graph, search, preview, and review
 - Project-aware schemas and rollups for larger multi-root vaults
 - Repo-aware code ingestion with parser-backed module analysis and local import resolution
 - Repo-aware watch mode and local git hooks for post-commit and post-checkout refreshes
+- Pending semantic refresh tracking for non-code repo changes, surfaced in `watch status` and the local graph workspace
 - Human-only `wiki/insights/` pages that SwarmVault can read but does not rewrite
 - Session artifacts for compile, query, explore, lint, watch, and schedule runs
 - CLI, MCP, and installable agent instructions for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, and OpenCode
@@ -87,7 +92,9 @@ swarmvault init --obsidian
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault ingest https://example.com/article
+swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
+swarmvault benchmark
 swarmvault query "What are the main ideas?"
 swarmvault query "Turn this into slides" --format slides
 swarmvault query "Show this as a chart" --format chart
@@ -102,12 +109,14 @@ swarmvault graph explain "concept:billing"
 swarmvault graph god-nodes
 swarmvault graph serve
 swarmvault graph export --html ./exports/graph.html
+swarmvault graph export --graphml ./exports/graph.graphml
 ```
 
 You can also use the capture and automation loop:
 
 ```bash
 swarmvault inbox import
+swarmvault watch status
 swarmvault watch --lint --repo
 swarmvault hook install
 ```
@@ -203,13 +212,16 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 
 - `swarmvault init [--obsidian]`: create a workspace, default config, default schema file, and optional `.obsidian/` config
 - `swarmvault ingest <input> [--repo-root <path>] [--include <glob...>] [--exclude <glob...>] [--max-files <n>] [--no-gitignore] [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path, directory path, or URL, and localize remote image references by default when the input is a URL
+- `swarmvault add <url> [--author <name>] [--contributor <name>]`: capture arXiv/X URLs into normalized markdown, or fall back to generic URL ingest
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
 - `swarmvault compile [--approve]`: build wiki pages, graph data, and the search index using the vault schema as guidance, or stage a review bundle before applying changes
+- `swarmvault benchmark [--question "<text>" ...]`: measure graph-guided context reduction and write `state/benchmark.json`
 - `swarmvault query "<question>" [--no-save] [--format markdown|report|slides|chart|image]`: answer questions against the compiled vault and save the result by default
 - `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides|chart|image]`: run a save-first multi-step research loop and write a hub page plus step outputs
 - `swarmvault lint [--deep] [--web]`: run structural lint, optional LLM-powered deep lint, and optional web-augmented evidence gathering
 - `swarmvault schedule list|run|serve`: run configured recurring jobs for compile, lint, query, and explore
 - `swarmvault watch [--lint] [--repo] [--once]`: watch the inbox, optionally refresh tracked repo roots, or run a one-shot refresh cycle
+- `swarmvault watch status`: show watched repo roots plus pending semantic refresh entries for tracked non-code changes
 - `swarmvault hook install|uninstall|status`: manage local git hooks that run repo-aware one-shot refreshes after checkout and commit
 - `swarmvault mcp`: start a local MCP server over stdio
 - `swarmvault review list|show|accept|reject`: inspect and resolve staged approval bundles
@@ -219,7 +231,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault graph explain <target>`: inspect graph metadata, community membership, neighbors, and provenance for a node or page
 - `swarmvault graph god-nodes [--limit <n>]`: list the most connected bridge-heavy nodes in the current graph
 - `swarmvault graph serve`: open the local graph workspace with graph, search, and page preview
-- `swarmvault graph export --html <output>`: export the graph workspace as a standalone HTML file
+- `swarmvault graph export --html|--svg|--graphml|--cypher <output>`: export the graph workspace as HTML, SVG, GraphML, or Cypher
 - `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode`: install agent-specific rules
 
 Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
@@ -358,9 +370,17 @@ pnpm live:smoke:ollama
 OPENAI_API_KEY=... pnpm live:smoke:openai
 ```
 
-The heuristic published-package smoke lane validates saved visual outputs, project-aware code ingestion, candidate and review workflows, graph report generation, standalone `graph export --html`, review-staged scheduled query runs, watch automation, richer graph workspace APIs, and MCP graph/query surfaces against the real npm install path.
+The heuristic published-package smoke lane validates saved visual outputs, project-aware code ingestion, `add` capture fallback, benchmark artifacts, graph report generation, standalone graph exports (`html`, `svg`, `graphml`, `cypher`), review-staged scheduled query runs, watch automation plus `watch status`, richer graph workspace APIs, and MCP graph/query surfaces against the real npm install path.
 
 See [docs/live-testing.md](./docs/live-testing.md) for the published-package smoke flow, CI workflow, and the manual live checklist.
+
+## Worked Examples
+
+Small example vaults live under `worked/` and mirror the trust and capture workflows used in docs and smoke tests:
+
+- `worked/code-repo/`
+- `worked/mixed-corpus/`
+- `worked/capture/`
 
 ## Links
 

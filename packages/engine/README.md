@@ -19,14 +19,18 @@ If you only want to use SwarmVault as a tool, install `@swarmvaultai/cli` instea
 
 ```ts
 import {
+  addInput,
+  benchmarkVault,
   compileVault,
   createMcpServer,
   createWebSearchAdapter,
   defaultVaultConfig,
   defaultVaultSchema,
   exploreVault,
+  exportGraphFormat,
   exportGraphHtml,
   explainGraphVault,
+  getWatchStatus,
   getGitHookStatus,
   importInbox,
   ingestInput,
@@ -79,8 +83,11 @@ const rootDir = process.cwd();
 await initVault(rootDir, { obsidian: true });
 const schemas = await loadVaultSchemas(rootDir);
 console.log(schemas.root.path);
+await addInput(rootDir, "https://arxiv.org/abs/2401.12345");
 await importInbox(rootDir);
 await compileVault(rootDir, {});
+const benchmark = await benchmarkVault(rootDir);
+console.log(benchmark.avgQueryTokens);
 
 const saved = await queryVault(rootDir, { question: "What changed most recently?" });
 console.log(saved.savedPath);
@@ -92,8 +99,10 @@ const exploration = await exploreVault(rootDir, { question: "What should I inves
 console.log(exploration.hubPath);
 
 await exportGraphHtml(rootDir, "./exports/graph.html");
+await exportGraphFormat(rootDir, "graphml", "./exports/graph.graphml");
 
 await runWatchCycle(rootDir, { repo: true });
+console.log(await getWatchStatus(rootDir));
 await installGitHooks(rootDir);
 
 const watcher = await watchVault(rootDir, { lint: true, repo: true });
@@ -150,6 +159,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 ### Ingest
 
 - `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local file path or URL
+- `addInput(rootDir, input, { author, contributor })` captures supported URLs into normalized markdown before ingesting them, or falls back to generic URL ingest
 - `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore })` recursively ingests a local directory as a repo-aware code/content source tree
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files and browser-clipper style bundles
 - JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
@@ -160,6 +170,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 - `compileVault(rootDir, { approve })` writes wiki pages, graph data, and search state using the vault schema as guidance, or stages a review bundle
 - compile also writes graph orientation pages such as `wiki/graph/report.md` and `wiki/graph/communities/<community>.md`
+- `benchmarkVault(rootDir, { questions })` writes `state/benchmark.json` and folds the latest benchmark summary into `wiki/graph/report.md`
 - `queryVault(rootDir, { question, save, format, review })` answers against the compiled vault using the same schema layer and saves by default
 - `exploreVault(rootDir, { question, steps, format, review })` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
@@ -175,7 +186,9 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 - `watchVault(rootDir, options)` watches the inbox and optionally tracked repo roots, then appends run records to `state/jobs.ndjson`
 - `runWatchCycle(rootDir, options)` runs the same inbox/repo refresh logic once without starting a watcher
+- `getWatchStatus(rootDir)` reads the latest watch-status artifact plus pending semantic refresh entries
 - `syncTrackedRepos(rootDir)` refreshes previously ingested repo roots, updates changed manifests, and removes deleted repo manifests
+- `syncTrackedReposForWatch(rootDir)` is the repo-watch sync path that defers non-code semantic refresh into `state/watch/`
 - `installGitHooks(rootDir)`, `uninstallGitHooks(rootDir)`, and `getGitHookStatus(rootDir)` manage local `post-commit` and `post-checkout` hook blocks for the nearest git repository
 - `lintVault(rootDir, options)` runs structural lint, optional deep lint, and optional web-augmented evidence gathering
 - `listSchedules(rootDir)`, `runSchedule(rootDir, jobId)`, and `serveSchedules(rootDir)` manage recurring local jobs from config
@@ -193,6 +206,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `createMcpServer(rootDir)` creates an MCP server instance
 - `startMcpServer(rootDir)` runs the MCP server over stdio
 - `exportGraphHtml(rootDir, outputPath)` exports the graph workspace as a standalone HTML file
+- `exportGraphFormat(rootDir, "svg" | "graphml" | "cypher", outputPath)` exports the graph into interoperable file formats
 
 The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, ingestion, compile, lint, and graph-native read operations such as graph query, node explain, neighbor lookup, shortest path, and god-node listing, along with resources for config, graph, manifests, schema, page content, and session artifacts.
 
@@ -214,11 +228,13 @@ Running the engine produces a local workspace with these main areas:
 - `state/extracts/`: extracted text
 - `state/analyses/`: model analysis output
 - `state/code-index.json`: repo-aware code module aliases and local resolution data
+- `state/benchmark.json`: latest benchmark/trust summary for the current vault
 - `state/graph.json`: compiled graph
 - `state/search.sqlite`: full-text index
 - `state/sessions/`: canonical session artifacts
 - `state/approvals/`: staged review bundles from `compileVault({ approve: true })`
 - `state/schedules/`: persisted schedule state and leases
+- `state/watch/`: watch-status and pending semantic refresh artifacts for repo automation
 - `state/jobs.ndjson`: watch-mode automation logs
 
 Saved outputs are indexed immediately into the graph page registry and search index, then linked back into compiled source, concept, and entity pages immediately through the lightweight artifact sync path. New concept and entity pages stage into `wiki/candidates/` first and promote to active pages on the next matching compile. Insight pages are indexed into search and page reads, but compile does not mutate them. Project-scoped pages receive `project_ids`, project tags, and layered root-plus-project schema hashes when all contributing sources resolve to the same configured project.

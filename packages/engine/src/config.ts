@@ -258,6 +258,7 @@ export function resolvePaths(
   const candidatesDir = path.join(wikiDir, "candidates");
   const stateDir = path.resolve(rootDir, effective.workspace.stateDir);
   const schedulesDir = path.join(stateDir, "schedules");
+  const watchDir = path.join(stateDir, "watch");
   const agentDir = path.resolve(rootDir, effective.workspace.agentDir);
   const inboxDir = path.resolve(rootDir, effective.workspace.inboxDir);
 
@@ -285,9 +286,13 @@ export function resolvePaths(
     searchDbPath: path.join(stateDir, "search.sqlite"),
     compileStatePath: path.join(stateDir, "compile-state.json"),
     codeIndexPath: path.join(stateDir, "code-index.json"),
+    benchmarkPath: path.join(stateDir, "benchmark.json"),
     jobsLogPath: path.join(stateDir, "jobs.ndjson"),
     sessionsDir: path.join(stateDir, "sessions"),
     approvalsDir: path.join(stateDir, "approvals"),
+    watchDir,
+    watchStatusPath: path.join(watchDir, "status.json"),
+    pendingSemanticRefreshPath: path.join(watchDir, "pending-semantic-refresh.json"),
     configPath
   };
 }
@@ -320,6 +325,7 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
     ensureDir(paths.candidateEntitiesDir),
     ensureDir(paths.stateDir),
     ensureDir(paths.schedulesDir),
+    ensureDir(paths.watchDir),
     ensureDir(paths.sessionsDir),
     ensureDir(paths.approvalsDir),
     ensureDir(paths.agentDir),

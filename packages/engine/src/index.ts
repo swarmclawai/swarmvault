@@ -1,14 +1,17 @@
 export { installAgent, installConfiguredAgents } from "./agents.js";
 export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
+export { exportGraphFormat } from "./graph-export.js";
 export { getGitHookStatus, installGitHooks, uninstallGitHooks } from "./hooks.js";
 export {
+  addInput,
   importInbox,
   ingestDirectory,
   ingestInput,
   listManifests,
   listTrackedRepoRoots,
   readExtractedText,
-  syncTrackedRepos
+  syncTrackedRepos,
+  syncTrackedReposForWatch
 } from "./ingest.js";
 export { createMcpServer, startMcpServer } from "./mcp.js";
 export { assertProviderCapability, createProvider, getProviderForTask } from "./providers/registry.js";
@@ -18,6 +21,7 @@ export type * from "./types.js";
 export {
   acceptApproval,
   archiveCandidate,
+  benchmarkVault,
   bootstrapDemo,
   compileVault,
   explainGraphVault,
@@ -39,5 +43,5 @@ export {
   searchVault
 } from "./vault.js";
 export { exportGraphHtml, startGraphServer } from "./viewer.js";
-export { runWatchCycle, watchVault } from "./watch.js";
+export { getWatchStatus, runWatchCycle, watchVault } from "./watch.js";
 export { createWebSearchAdapter, getWebSearchAdapterForTask } from "./web-search/registry.js";

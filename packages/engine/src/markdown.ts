@@ -1,6 +1,7 @@
 import matter from "gray-matter";
 import { modulePageTitle } from "./code-analysis.js";
 import type {
+  BenchmarkArtifact,
   Freshness,
   GraphArtifact,
   GraphEdge,
@@ -657,6 +658,7 @@ export function buildGraphReportPage(input: {
   schemaHash: string;
   metadata: ManagedGraphPageMetadata;
   communityPages: Pick<GraphPage, "id" | "path" | "title">[];
+  benchmark?: BenchmarkArtifact | null;
 }): GraphPageRecord {
   const pageId = "graph:report";
   const pathValue = pagePathFor("graph_report", "report");
@@ -713,6 +715,17 @@ export function buildGraphReportPage(input: {
     `- Pages: ${input.graph.pages.length}`,
     `- Communities: ${input.graph.communities?.length ?? 0}`,
     "",
+    ...(input.benchmark
+      ? [
+          "## Benchmark",
+          "",
+          `- Corpus Tokens: ${input.benchmark.corpusTokens}`,
+          `- Avg Query Tokens: ${input.benchmark.avgQueryTokens}`,
+          `- Reduction Ratio: ${(input.benchmark.reductionRatio * 100).toFixed(1)}%`,
+          `- Sample Questions: ${input.benchmark.sampleQuestions.length}`,
+          ""
+        ]
+      : []),
     "## God Nodes",
     "",
     ...(godNodes.length

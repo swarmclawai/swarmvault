@@ -3,12 +3,16 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 import {
   acceptApproval,
+  addInput,
   archiveCandidate,
+  benchmarkVault,
   compileVault,
   explainGraphVault,
   exploreVault,
+  exportGraphFormat,
   exportGraphHtml,
   getGitHookStatus,
+  getWatchStatus,
   importInbox,
   ingestDirectory,
   ingestInput,
@@ -49,9 +53,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.20";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.21";
   } catch {
-    return "0.1.20";
+    return "0.1.21";
   }
 }
 
@@ -148,6 +152,24 @@ program
     }
   );
 
+program
+  .command("add")
+  .description("Capture supported URLs into normalized markdown before ingesting them.")
+  .argument("<input>", "Supported URL or bare arXiv id")
+  .option("--author <name>", "Human author or curator for this capture")
+  .option("--contributor <name>", "Additional contributor metadata for this capture")
+  .action(async (input: string, options: { author?: string; contributor?: string }) => {
+    const result = await addInput(process.cwd(), input, {
+      author: options.author,
+      contributor: options.contributor
+    });
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`${result.captureType}${result.fallback ? " (fallback)" : ""}: ${result.manifest.sourceId}`);
+    }
+  });
+
 const inbox = program.command("inbox").description("Inbox and capture workflows.");
 inbox
   .command("import")
@@ -231,6 +253,23 @@ program
   });
 
 program
+  .command("benchmark")
+  .description("Measure graph-guided context reduction against a naive full-corpus read.")
+  .option("--question <text...>", "Optional custom benchmark question(s)")
+  .action(async (options: { question?: string[] }) => {
+    const result = await benchmarkVault(process.cwd(), {
+      questions: options.question
+    });
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Corpus tokens: ${result.corpusTokens}`);
+      log(`Average query tokens: ${result.avgQueryTokens}`);
+      log(`Reduction ratio: ${(result.reductionRatio * 100).toFixed(1)}%`);
+    }
+  });
+
+program
   .command("lint")
   .description("Run anti-drift and wiki-health checks.")
   .option("--deep", "Run LLM-powered advisory lint", false)
@@ -274,14 +313,32 @@ graph
 
 graph
   .command("export")
-  .description("Export the graph viewer as a single self-contained HTML file.")
-  .requiredOption("--html <output>", "Output HTML file path")
-  .action(async (options: { html: string }) => {
-    const outputPath = await exportGraphHtml(process.cwd(), options.html);
+  .description("Export the graph as HTML, SVG, GraphML, or Cypher.")
+  .option("--html <output>", "Output HTML file path")
+  .option("--svg <output>", "Output SVG file path")
+  .option("--graphml <output>", "Output GraphML file path")
+  .option("--cypher <output>", "Output Cypher file path")
+  .action(async (options: { html?: string; svg?: string; graphml?: string; cypher?: string }) => {
+    const targets = [
+      options.html ? ({ format: "html", outputPath: options.html } as const) : null,
+      options.svg ? ({ format: "svg", outputPath: options.svg } as const) : null,
+      options.graphml ? ({ format: "graphml", outputPath: options.graphml } as const) : null,
+      options.cypher ? ({ format: "cypher", outputPath: options.cypher } as const) : null
+    ].filter((target): target is NonNullable<typeof target> => Boolean(target));
+
+    if (targets.length !== 1) {
+      throw new Error("Pass exactly one of --html, --svg, --graphml, or --cypher.");
+    }
+
+    const target = targets[0];
+    const outputPath =
+      target.format === "html"
+        ? await exportGraphHtml(process.cwd(), target.outputPath)
+        : (await exportGraphFormat(process.cwd(), target.format, target.outputPath)).outputPath;
     if (isJson()) {
-      emitJson({ outputPath });
+      emitJson({ format: target.format, outputPath });
     } else {
-      log(`Exported graph HTML to ${outputPath}`);
+      log(`Exported graph ${target.format} to ${outputPath}`);
     }
   });
 
@@ -457,7 +514,7 @@ candidate
     }
   });
 
-program
+const watch = program
   .command("watch")
   .description("Watch the inbox directory and optionally tracked repos, or run one refresh cycle immediately.")
   .option("--lint", "Run lint after each compile cycle", false)
@@ -496,6 +553,38 @@ program
       await controller.close();
       process.exit(0);
     });
+  });
+
+watch
+  .command("status")
+  .description("Show the latest watch run plus pending semantic refresh entries.")
+  .action(async () => {
+    const result = await getWatchStatus(process.cwd());
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(`Watched repo roots: ${result.watchedRepoRoots.length}`);
+    log(`Pending semantic refresh: ${result.pendingSemanticRefresh.length}`);
+    for (const entry of result.pendingSemanticRefresh.slice(0, 8)) {
+      log(`- ${entry.changeType} ${entry.path}`);
+    }
+  });
+
+program
+  .command("watch-status")
+  .description("Show the latest watch run plus pending semantic refresh entries.")
+  .action(async () => {
+    const result = await getWatchStatus(process.cwd());
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(`Watched repo roots: ${result.watchedRepoRoots.length}`);
+    log(`Pending semantic refresh: ${result.pendingSemanticRefresh.length}`);
+    for (const entry of result.pendingSemanticRefresh.slice(0, 8)) {
+      log(`- ${entry.changeType} ${entry.path}`);
+    }
   });
 
 const hook = program.command("hook").description("Install local git hooks that keep tracked repos and the vault in sync.");

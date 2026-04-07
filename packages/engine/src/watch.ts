@@ -2,10 +2,17 @@ import path from "node:path";
 import process from "node:process";
 import chokidar from "chokidar";
 import { initWorkspace } from "./config.js";
-import { importInbox, listTrackedRepoRoots, syncTrackedRepos } from "./ingest.js";
+import { importInbox, listTrackedRepoRoots, syncTrackedReposForWatch } from "./ingest.js";
 import { appendWatchRun, recordSession } from "./logs.js";
-import type { WatchController, WatchOptions } from "./types.js";
+import type { WatchController, WatchOptions, WatchStatusResult } from "./types.js";
 import { compileVault, lintVault } from "./vault.js";
+import {
+  markPagesStaleForSources,
+  mergePendingSemanticRefresh,
+  readPendingSemanticRefresh,
+  readWatchStatusArtifact,
+  writeWatchStatusArtifact
+} from "./watch-state.js";
 
 const MAX_BACKOFF_MS = 30_000;
 const BACKOFF_THRESHOLD = 3;
@@ -13,6 +20,7 @@ const CRITICAL_THRESHOLD = 10;
 const REPO_WATCH_IGNORES = new Set([".git", "node_modules", "dist", "build", ".next", "coverage", ".venv", "vendor", "target"]);
 
 type WatchCycleResult = {
+  watchedRepoRoots: string[];
   importedCount: number;
   scannedCount: number;
   attachmentCount: number;
@@ -20,6 +28,8 @@ type WatchCycleResult = {
   repoUpdatedCount: number;
   repoRemovedCount: number;
   repoScannedCount: number;
+  pendingSemanticRefreshCount: number;
+  pendingSemanticRefreshPaths: string[];
   changedPages: string[];
   lintFindingCount?: number;
 };
@@ -70,11 +80,19 @@ async function performWatchCycle(
   options: WatchOptions
 ): Promise<WatchCycleResult> {
   const imported = await importInbox(rootDir, paths.inboxDir);
-  const repoSync = options.repo ? await syncTrackedRepos(rootDir) : null;
+  const repoSync = options.repo ? await syncTrackedReposForWatch(rootDir) : null;
   const compile = await compileVault(rootDir);
+  const pendingSemanticRefresh = repoSync
+    ? await mergePendingSemanticRefresh(rootDir, repoSync.pendingSemanticRefresh)
+    : await readPendingSemanticRefresh(rootDir);
+  const stalePagePaths = await markPagesStaleForSources(
+    rootDir,
+    pendingSemanticRefresh.map((entry) => entry.sourceId).filter((sourceId): sourceId is string => Boolean(sourceId))
+  );
   const lintFindingCount = options.lint ? (await lintVault(rootDir)).length : undefined;
 
   return {
+    watchedRepoRoots: repoSync?.repoRoots ?? [],
     importedCount: imported.imported.length,
     scannedCount: imported.scannedCount,
     attachmentCount: imported.attachmentCount,
@@ -82,14 +100,109 @@ async function performWatchCycle(
     repoUpdatedCount: repoSync?.updated.length ?? 0,
     repoRemovedCount: repoSync?.removed.length ?? 0,
     repoScannedCount: repoSync?.scannedCount ?? 0,
-    changedPages: compile.changedPages,
+    pendingSemanticRefreshCount: pendingSemanticRefresh.length,
+    pendingSemanticRefreshPaths: pendingSemanticRefresh.map((entry) => entry.path),
+    changedPages: [...new Set([...compile.changedPages, ...stalePagePaths])],
     lintFindingCount
   };
 }
 
 export async function runWatchCycle(rootDir: string, options: WatchOptions = {}): Promise<WatchCycleResult> {
   const { paths } = await initWorkspace(rootDir);
-  return performWatchCycle(rootDir, paths, options);
+  const startedAt = new Date();
+  let success = true;
+  let error: string | undefined;
+  let result: WatchCycleResult = {
+    watchedRepoRoots: [],
+    importedCount: 0,
+    scannedCount: 0,
+    attachmentCount: 0,
+    repoImportedCount: 0,
+    repoUpdatedCount: 0,
+    repoRemovedCount: 0,
+    repoScannedCount: 0,
+    pendingSemanticRefreshCount: 0,
+    pendingSemanticRefreshPaths: [],
+    changedPages: []
+  };
+
+  try {
+    result = await performWatchCycle(rootDir, paths, options);
+    return result;
+  } catch (caught) {
+    success = false;
+    error = caught instanceof Error ? caught.message : String(caught);
+    throw caught;
+  } finally {
+    const finishedAt = new Date();
+    await recordSession(rootDir, {
+      operation: "watch",
+      title: `Watch cycle for ${paths.inboxDir}${options.repo ? " and tracked repos" : ""}`,
+      startedAt: startedAt.toISOString(),
+      finishedAt: finishedAt.toISOString(),
+      success,
+      error,
+      changedPages: result.changedPages,
+      lintFindingCount: result.lintFindingCount,
+      lines: [
+        "reasons=once",
+        `imported=${result.importedCount}`,
+        `scanned=${result.scannedCount}`,
+        `attachments=${result.attachmentCount}`,
+        `repo_scanned=${result.repoScannedCount}`,
+        `repo_imported=${result.repoImportedCount}`,
+        `repo_updated=${result.repoUpdatedCount}`,
+        `repo_removed=${result.repoRemovedCount}`,
+        `pending_semantic_refresh=${result.pendingSemanticRefreshCount}`,
+        `lint=${result.lintFindingCount ?? 0}`
+      ]
+    });
+    await appendWatchRun(rootDir, {
+      startedAt: startedAt.toISOString(),
+      finishedAt: finishedAt.toISOString(),
+      durationMs: finishedAt.getTime() - startedAt.getTime(),
+      inputDir: paths.inboxDir,
+      reasons: ["once"],
+      importedCount: result.importedCount + result.repoImportedCount + result.repoUpdatedCount,
+      scannedCount: result.scannedCount + result.repoScannedCount,
+      attachmentCount: result.attachmentCount,
+      changedPages: result.changedPages,
+      repoImportedCount: result.repoImportedCount,
+      repoUpdatedCount: result.repoUpdatedCount,
+      repoRemovedCount: result.repoRemovedCount,
+      repoScannedCount: result.repoScannedCount,
+      pendingSemanticRefreshCount: result.pendingSemanticRefreshCount,
+      pendingSemanticRefreshPaths: result.pendingSemanticRefreshPaths,
+      lintFindingCount: result.lintFindingCount,
+      success,
+      error
+    });
+    await writeWatchStatusArtifact(rootDir, {
+      generatedAt: finishedAt.toISOString(),
+      watchedRepoRoots: result.watchedRepoRoots,
+      lastRun: {
+        startedAt: startedAt.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+        inputDir: paths.inboxDir,
+        reasons: ["once"],
+        importedCount: result.importedCount + result.repoImportedCount + result.repoUpdatedCount,
+        scannedCount: result.scannedCount + result.repoScannedCount,
+        attachmentCount: result.attachmentCount,
+        changedPages: result.changedPages,
+        repoImportedCount: result.repoImportedCount,
+        repoUpdatedCount: result.repoUpdatedCount,
+        repoRemovedCount: result.repoRemovedCount,
+        repoScannedCount: result.repoScannedCount,
+        pendingSemanticRefreshCount: result.pendingSemanticRefreshCount,
+        pendingSemanticRefreshPaths: result.pendingSemanticRefreshPaths,
+        lintFindingCount: result.lintFindingCount,
+        success,
+        error
+      },
+      pendingSemanticRefresh: await readPendingSemanticRefresh(rootDir)
+    });
+  }
 }
 
 export async function watchVault(rootDir: string, options: WatchOptions = {}): Promise<WatchController> {
@@ -181,6 +294,9 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
     let repoUpdatedCount = 0;
     let repoRemovedCount = 0;
     let repoScannedCount = 0;
+    let watchedRepoRoots: string[] = [];
+    let pendingSemanticRefreshCount = 0;
+    let pendingSemanticRefreshPaths: string[] = [];
     let changedPages: string[] = [];
     let lintFindingCount: number | undefined;
     let success = true;
@@ -195,6 +311,9 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
       repoUpdatedCount = result.repoUpdatedCount;
       repoRemovedCount = result.repoRemovedCount;
       repoScannedCount = result.repoScannedCount;
+      watchedRepoRoots = result.watchedRepoRoots;
+      pendingSemanticRefreshCount = result.pendingSemanticRefreshCount;
+      pendingSemanticRefreshPaths = result.pendingSemanticRefreshPaths;
       changedPages = result.changedPages;
       lintFindingCount = result.lintFindingCount;
 
@@ -250,9 +369,40 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
         scannedCount: scannedCount + repoScannedCount,
         attachmentCount,
         changedPages,
+        repoImportedCount,
+        repoUpdatedCount,
+        repoRemovedCount,
+        repoScannedCount,
+        pendingSemanticRefreshCount,
+        pendingSemanticRefreshPaths,
         lintFindingCount,
         success,
         error
+      });
+      await writeWatchStatusArtifact(rootDir, {
+        generatedAt: finishedAt.toISOString(),
+        watchedRepoRoots,
+        lastRun: {
+          startedAt: startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          inputDir: paths.inboxDir,
+          reasons: runReasons,
+          importedCount: importedCount + repoImportedCount + repoUpdatedCount,
+          scannedCount: scannedCount + repoScannedCount,
+          attachmentCount,
+          changedPages,
+          repoImportedCount,
+          repoUpdatedCount,
+          repoRemovedCount,
+          repoScannedCount,
+          pendingSemanticRefreshCount,
+          pendingSemanticRefreshPaths,
+          lintFindingCount,
+          success,
+          error
+        },
+        pendingSemanticRefresh: await readPendingSemanticRefresh(rootDir)
       });
 
       running = false;
@@ -300,5 +450,17 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
       }
       await watcher.close();
     }
+  };
+}
+
+export async function getWatchStatus(rootDir: string): Promise<WatchStatusResult> {
+  const persisted = await readWatchStatusArtifact(rootDir);
+  const watchedRepoRoots = await listTrackedRepoRoots(rootDir);
+  const pendingSemanticRefresh = await readPendingSemanticRefresh(rootDir);
+  return {
+    generatedAt: new Date().toISOString(),
+    watchedRepoRoots,
+    lastRun: persisted?.lastRun,
+    pendingSemanticRefresh
   };
 }

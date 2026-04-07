@@ -26,17 +26,21 @@ swarmvault init --obsidian
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault ingest ./repo
+swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
+swarmvault benchmark
 swarmvault query "What keeps recurring?"
 swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
+swarmvault watch status
 swarmvault watch --repo --once
 swarmvault hook install
 swarmvault graph serve
 swarmvault graph export --html ./exports/graph.html
+swarmvault graph export --cypher ./exports/graph.cypher
 ```
 
 ## Commands
@@ -78,6 +82,15 @@ Useful flags:
 - `--no-include-assets`
 - `--max-asset-size <bytes>`
 
+### `swarmvault add <url>`
+
+Capture supported URLs through a normalized markdown layer before ingesting them into the vault.
+
+- arXiv abstract URLs and bare arXiv ids become durable markdown captures
+- X/Twitter URLs use a graceful public capture path
+- unsupported URLs fall back to generic URL ingest instead of failing
+- optional metadata: `--author <name>` and `--contributor <name>`
+
 ### `swarmvault inbox import [dir]`
 
 Import supported files from the configured inbox directory. This is meant for browser-clipper style markdown bundles and other capture workflows. Local image and asset references are preserved and copied into canonical storage under `raw/assets/`.
@@ -97,6 +110,14 @@ For ingested code trees, compile also writes `state/code-index.json` so local im
 New concept and entity pages are staged into `wiki/candidates/` first. A later matching compile promotes them into `wiki/concepts/` or `wiki/entities/`.
 
 With `--approve`, compile writes a staged review bundle into `state/approvals/` without applying active wiki changes.
+
+### `swarmvault benchmark [--question "<text>" ...]`
+
+Measure graph-guided context reduction against a naive full-corpus read.
+
+- writes the latest result to `state/benchmark.json`
+- updates `wiki/graph/report.md` with the current benchmark summary
+- accepts repeatable `--question` inputs for vault-specific benchmarks
 
 ### `swarmvault review list|show|accept|reject`
 
@@ -165,6 +186,12 @@ Run anti-drift and vault health checks such as stale pages, missing graph artifa
 
 Watch the inbox directory and trigger import and compile cycles when files change. With `--repo`, each cycle also refreshes tracked repo roots that were previously ingested through directory ingest. With `--once`, SwarmVault runs one refresh cycle immediately instead of starting a long-running watcher. With `--lint`, each cycle also runs linting. Each cycle writes a canonical session artifact to `state/sessions/`, and compatibility run metadata is still appended to `state/jobs.ndjson`.
 
+When `--repo` sees non-code changes under tracked repo roots, SwarmVault records those files under `state/watch/pending-semantic-refresh.json`, marks affected compiled pages stale, and exposes the pending set through `watch status` and the local graph workspace instead of silently re-ingesting them.
+
+### `swarmvault watch status`
+
+Show watched repo roots, the latest watch run, and any pending semantic refresh entries for tracked non-code repo changes.
+
 ### `swarmvault hook install|uninstall|status`
 
 Manage SwarmVault's local git hook blocks for the nearest git repository.
@@ -210,9 +237,14 @@ Inspect graph metadata, community membership, neighbors, and provenance for a no
 
 List the most connected bridge-heavy nodes in the current graph.
 
-### `swarmvault graph export --html <output>`
+### `swarmvault graph export --html|--svg|--graphml|--cypher <output>`
 
-Export the graph workspace as a standalone HTML file with embedded graph and page data for offline sharing. The exported file keeps read-only graph browsing, search, and page preview. The live graph query/path/explain actions remain part of `graph serve` and the MCP surface.
+Export the current graph as one of four formats:
+
+- `--html` for the standalone read-only graph workspace
+- `--svg` for a static shareable diagram
+- `--graphml` for graph-tool interoperability
+- `--cypher` for Neo4j-style import scripts
 
 ### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode>`
 
