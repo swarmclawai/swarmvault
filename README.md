@@ -271,6 +271,8 @@ pnpm live:smoke:ollama
 OPENAI_API_KEY=... pnpm live:smoke:openai
 ```
 
+The heuristic published-package smoke lane now also validates saved `chart` and `image` outputs, standalone `graph export --html`, and review-staged scheduled query runs.
+
 See [docs/live-testing.md](./docs/live-testing.md) for the published-package smoke flow, CI workflow, and the manual live checklist.
 
 ## Links

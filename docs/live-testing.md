@@ -38,7 +38,7 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.7 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.8 --keep-artifacts
 ```
 
 ## What The Smoke Runner Covers
@@ -50,8 +50,11 @@ node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.7 --keep-artifacts
 - ingest and compile a markdown fixture
 - import an inbox markdown bundle with a linked local asset
 - run `query`
+- run saved `query --format chart` and `query --format image`
 - run `explore`
 - run `lint` and `lint --deep`
+- run `graph export --html` and verify the standalone HTML embeds local asset data
+- run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
 - start `graph serve` and verify HTML plus `/api/graph`
 - start `mcp` and call tools over stdio
 - run `install --agent codex`
