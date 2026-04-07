@@ -290,6 +290,13 @@ describe("swarmvault workflow", () => {
     expect(typeof parsedSearchResults[0]?.title).toBe("string");
     expect(typeof parsedSearchResults[0]?.path).toBe("string");
 
+    const chartQuery = await client.callTool({
+      name: "query_vault",
+      arguments: { question: "Show this note as a chart", save: false, format: "chart" }
+    });
+    const chartContent = chartQuery.content as ToolContent;
+    expect(JSON.parse(chartContent[0]?.text ?? "{}").outputFormat).toBe("chart");
+
     const configResource = await client.readResource({ uri: "swarmvault://config" });
     expect(configResource.contents[0]?.uri).toBe("swarmvault://config");
     expect((configResource.contents[0] as { text: string }).text).toContain('"inboxDir"');

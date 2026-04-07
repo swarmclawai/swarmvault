@@ -4,6 +4,12 @@
 
 Nothing yet.
 
+## 0.1.8
+
+- Fixed the MCP `query_vault` tool schema so it accepts the shipped `chart` and `image` output formats
+- Expanded the published-package live smoke coverage to validate saved visual outputs, standalone graph export, and approval-gated scheduled query runs from a real npm install
+- Updated the OSS release docs for the broader `0.1.8` live validation flow
+
 ## 0.1.7
 
 - Added `chart` and `image` output formats for `query` and `explore`, with local wrapper pages in `wiki/outputs/` plus asset bundles in `wiki/outputs/assets/`

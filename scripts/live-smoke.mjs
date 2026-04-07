@@ -134,6 +134,20 @@ try {
   });
 
   if (lane === "heuristic") {
+    await runStep("visual-outputs", async () => {
+      const chart = await runCliJson(["query", "Show this vault as a chart", "--format", "chart"]);
+      assert.equal(chart.outputFormat, "chart", "chart query did not report the chart format");
+      assert.ok(Array.isArray(chart.outputAssets) && chart.outputAssets.length > 0, "chart query did not return output assets");
+      await assertExists(chart.savedPath);
+      await assertExists(path.join(workspaceDir, "wiki", chart.outputAssets[0].path));
+
+      const image = await runCliJson(["query", "Show this vault as an image", "--format", "image"]);
+      assert.equal(image.outputFormat, "image", "image query did not report the image format");
+      assert.ok(Array.isArray(image.outputAssets) && image.outputAssets.length > 0, "image query did not return output assets");
+      await assertExists(image.savedPath);
+      await assertExists(path.join(workspaceDir, "wiki", image.outputAssets[0].path));
+    });
+
     await runStep("explore", async () => {
       const result = await runCliJson(["explore", "What should I investigate next?", "--steps", "2"]);
       assert.ok(result.stepCount >= 1, "explore did not produce any steps");
@@ -153,6 +167,42 @@ try {
   });
 
   if (lane === "heuristic") {
+    await runStep("graph-export", async () => {
+      const exportDir = path.join(workspaceDir, "exports");
+      const outputPath = path.join(exportDir, "graph.html");
+      await fs.mkdir(exportDir, { recursive: true });
+      const result = await runCliJson(["graph", "export", "--html", outputPath]);
+      assert.equal(result.outputPath, outputPath, "graph export returned an unexpected output path");
+      await assertExists(outputPath);
+      const html = await fs.readFile(outputPath, "utf8");
+      assert.ok(html.includes("data:"), "graph export did not embed local asset data");
+    });
+
+    await runStep("schedule-run", async () => {
+      const configPath = path.join(workspaceDir, "swarmvault.config.json");
+      const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+      config.schedules = {
+        "nightly-chart": {
+          enabled: true,
+          when: { every: "1h" },
+          task: {
+            type: "query",
+            question: "Show this vault as a chart on schedule",
+            format: "chart"
+          }
+        }
+      };
+      await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+      const schedules = await runCliJson(["schedule", "list"]);
+      assert.ok(Array.isArray(schedules) && schedules.length === 1, "schedule list did not include the configured job");
+
+      const run = await runCliJson(["schedule", "run", "nightly-chart"]);
+      assert.equal(run.success, true, "schedule run did not succeed");
+      assert.ok(typeof run.approvalId === "string" && run.approvalId.length > 0, "schedule run did not stage an approval");
+      await assertMissing(path.join(workspaceDir, "wiki", "outputs", "show-this-vault-as-a-chart-on-schedule.md"));
+    });
+
     await runStep("graph-serve", async () => {
       const port = await reservePort();
       graphServer = await startCliServer("graph-serve", ["graph", "serve", "--port", String(port)], workspaceDir);
@@ -385,6 +435,15 @@ async function copyInboxBundle() {
 
 async function assertExists(targetPath) {
   await fs.access(targetPath);
+}
+
+async function assertMissing(targetPath) {
+  await fs.access(targetPath).then(
+    () => {
+      throw new Error(`Expected path to be absent: ${targetPath}`);
+    },
+    () => undefined
+  );
 }
 
 async function reservePort() {
