@@ -4,6 +4,12 @@
 
 Nothing yet.
 
+## 0.1.13
+
+- Fixed the OpenAI provider structured-output path so `gpt-4o-mini` and other strict-schema models work for provider-backed `lint --deep`, including Responses API payload extraction, strict JSON-schema normalization, and null-placeholder cleanup before Zod parsing
+- Added provider regression coverage for OpenAI structured responses and optional-field normalization, plus a successful installed-path OpenAI smoke run with `gpt-4o-mini`
+- Updated the SwarmVault ClawHub/OpenClaw skill frontmatter to the parser-safe JSON metadata shape with explicit installer metadata so skill catalog/install metadata stays consistent with the documented OpenClaw format
+
 ## 0.1.12
 
 - Added remote image localization for HTML and markdown URL ingests, with local asset copies under `raw/assets/<sourceId>/`, rewritten local markdown links, and non-fatal size-limited fetch control through `swarmvault ingest --no-include-assets` plus `--max-asset-size`

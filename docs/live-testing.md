@@ -38,7 +38,7 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.12 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.13 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 ```
 
