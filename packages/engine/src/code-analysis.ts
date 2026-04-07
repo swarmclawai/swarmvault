@@ -1,9 +1,13 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
+import { analyzeTreeSitterCode } from "./code-tree-sitter.js";
 import type {
   CodeAnalysis,
   CodeDiagnostic,
   CodeImport,
+  CodeIndexArtifact,
+  CodeIndexEntry,
   CodeLanguage,
   CodeSymbol,
   CodeSymbolKind,
@@ -11,7 +15,7 @@ import type {
   SourceClaim,
   SourceManifest
 } from "./types.js";
-import { normalizeWhitespace, slugify, truncate, uniqueBy } from "./utils.js";
+import { normalizeWhitespace, slugify, toPosix, truncate, uniqueBy } from "./utils.js";
 
 type DraftCodeSymbol = {
   name: string;
@@ -39,6 +43,10 @@ function scriptKindFor(language: CodeLanguage): ts.ScriptKind {
 
 function isRelativeSpecifier(specifier: string): boolean {
   return specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith(".");
+}
+
+function isLocalIncludeSpecifier(specifier: string): boolean {
+  return specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes("/");
 }
 
 function formatDiagnosticCategory(category: ts.DiagnosticCategory): CodeDiagnostic["category"] {
@@ -290,13 +298,34 @@ function buildDiagnostic(
   return { code, category, message, line, column };
 }
 
+function stripCodeExtension(filePath: string): string {
+  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
+}
+
+function manifestModuleName(manifest: SourceManifest, language: CodeLanguage): string | undefined {
+  const repoPath = manifest.repoRelativePath ?? path.basename(manifest.originalPath ?? manifest.storedPath);
+  const normalized = toPosix(stripCodeExtension(repoPath)).replace(/^\.\/+/, "");
+  if (!normalized) {
+    return undefined;
+  }
+  if (language === "python") {
+    const dotted = normalized
+      .replace(/\/__init__$/i, "")
+      .replace(/\//g, ".")
+      .replace(/^src\./, "");
+    return dotted || path.posix.basename(normalized);
+  }
+  return normalized.endsWith("/index") ? normalized.slice(0, -"/index".length) || path.posix.basename(normalized) : normalized;
+}
+
 function finalizeCodeAnalysis(
   manifest: SourceManifest,
   language: CodeLanguage,
   imports: CodeImport[],
   draftSymbols: DraftCodeSymbol[],
   exportLabels: string[],
-  diagnostics: CodeDiagnostic[]
+  diagnostics: CodeDiagnostic[],
+  metadata?: { moduleName?: string; namespace?: string }
 ): CodeAnalysis {
   const topLevelNames = new Set(draftSymbols.map((symbol) => symbol.name));
   for (const symbol of draftSymbols) {
@@ -320,6 +349,8 @@ function finalizeCodeAnalysis(
   return {
     moduleId: `module:${manifest.sourceId}`,
     language,
+    moduleName: metadata?.moduleName ?? manifestModuleName(manifest, language),
+    namespace: metadata?.namespace,
     imports,
     dependencies: uniqueBy(
       imports.filter((item) => item.isExternal).map((item) => item.specifier),
@@ -377,7 +408,7 @@ function parsePythonAllExportList(value: string): string[] {
   );
 }
 
-function analyzePythonCode(manifest: SourceManifest, content: string): CodeAnalysis {
+function _analyzePythonCode(manifest: SourceManifest, content: string): CodeAnalysis {
   const lines = splitLines(content);
   const imports: CodeImport[] = [];
   const draftSymbols: DraftCodeSymbol[] = [];
@@ -552,12 +583,13 @@ function receiverTypeName(receiver: string): string {
   return normalizeSymbolReference(tokens.at(-1) ?? "");
 }
 
-function analyzeGoCode(manifest: SourceManifest, content: string): CodeAnalysis {
+function _analyzeGoCode(manifest: SourceManifest, content: string): CodeAnalysis {
   const lines = splitLines(content);
   const imports: CodeImport[] = [];
   const draftSymbols: DraftCodeSymbol[] = [];
   const exportLabels: string[] = [];
   const diagnostics: CodeDiagnostic[] = [];
+  let packageName: string | undefined;
 
   let inImportBlock = false;
 
@@ -565,6 +597,12 @@ function analyzeGoCode(manifest: SourceManifest, content: string): CodeAnalysis 
     const rawLine = lines[index] ?? "";
     const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith("//")) {
+      continue;
+    }
+
+    const packageMatch = trimmed.match(/^package\s+([A-Za-z_]\w*)$/);
+    if (packageMatch) {
+      packageName = packageMatch[1];
       continue;
     }
 
@@ -600,7 +638,7 @@ function analyzeGoCode(manifest: SourceManifest, content: string): CodeAnalysis 
       const exported = exportedByCapitalization(typeMatch[1]);
       draftSymbols.push({
         name: typeMatch[1],
-        kind: typeMatch[2] === "interface" ? "interface" : "class",
+        kind: typeMatch[2] === "interface" ? "interface" : "struct",
         signature: singleLineSignature(trimmed),
         exported,
         callNames: [],
@@ -675,7 +713,9 @@ function analyzeGoCode(manifest: SourceManifest, content: string): CodeAnalysis 
     }
   }
 
-  return finalizeCodeAnalysis(manifest, "go", imports, draftSymbols, exportLabels, diagnostics);
+  return finalizeCodeAnalysis(manifest, "go", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: packageName
+  });
 }
 
 function analyzeRustUseStatement(statement: string): CodeImport {
@@ -708,7 +748,7 @@ function rustVisibilityPrefix(trimmed: string): boolean {
   return /^(pub(?:\([^)]*\))?\s+)/.test(trimmed);
 }
 
-function analyzeRustCode(manifest: SourceManifest, content: string): CodeAnalysis {
+function _analyzeRustCode(manifest: SourceManifest, content: string): CodeAnalysis {
   const lines = splitLines(content);
   const imports: CodeImport[] = [];
   const draftSymbols: DraftCodeSymbol[] = [];
@@ -758,7 +798,7 @@ function analyzeRustCode(manifest: SourceManifest, content: string): CodeAnalysi
       const block = collectBracedBlock(lines, index);
       const symbol: DraftCodeSymbol = {
         name: structMatch[1],
-        kind: "class",
+        kind: "struct",
         signature: singleLineSignature(trimmed),
         exported,
         callNames: [],
@@ -804,7 +844,7 @@ function analyzeRustCode(manifest: SourceManifest, content: string): CodeAnalysi
       const block = collectBracedBlock(lines, index);
       const symbol: DraftCodeSymbol = {
         name: traitMatch[1],
-        kind: "interface",
+        kind: "trait",
         signature: singleLineSignature(trimmed),
         exported,
         callNames: [],
@@ -884,7 +924,7 @@ function analyzeRustCode(manifest: SourceManifest, content: string): CodeAnalysi
     const exported = rustVisibilityPrefix(trimmed);
     const symbol: DraftCodeSymbol = {
       name: traitMatch[1],
-      kind: "interface",
+      kind: "trait",
       signature: singleLineSignature(trimmed),
       exported,
       callNames: [],
@@ -924,18 +964,27 @@ function parseJavaImplements(value?: string): string[] {
     .filter(Boolean);
 }
 
-function analyzeJavaCode(manifest: SourceManifest, content: string): CodeAnalysis {
+function _analyzeJavaCode(manifest: SourceManifest, content: string): CodeAnalysis {
   const lines = splitLines(content);
   const imports: CodeImport[] = [];
   const draftSymbols: DraftCodeSymbol[] = [];
   const exportLabels: string[] = [];
   const diagnostics: CodeDiagnostic[] = [];
   let depth = 0;
+  let packageName: string | undefined;
 
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index] ?? "";
     const trimmed = rawLine.trim();
     const lineDepth = depth;
+
+    if (lineDepth === 0) {
+      const packageMatch = trimmed.match(/^package\s+([A-Za-z_][\w.]*)\s*;$/);
+      if (packageMatch) {
+        packageName = packageMatch[1];
+        continue;
+      }
+    }
 
     if (lineDepth === 0 && trimmed.startsWith("import ")) {
       imports.push(analyzeJavaImport(trimmed));
@@ -1046,7 +1095,392 @@ function analyzeJavaCode(manifest: SourceManifest, content: string): CodeAnalysi
     }
   }
 
-  return finalizeCodeAnalysis(manifest, "java", imports, draftSymbols, exportLabels, diagnostics);
+  return finalizeCodeAnalysis(manifest, "java", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: packageName
+  });
+}
+
+function parseCSharpImplements(value?: string): { extendsNames: string[]; implementsNames: string[] } {
+  const items = (value ?? "")
+    .split(",")
+    .map((item) => normalizeSymbolReference(item))
+    .filter(Boolean);
+  return {
+    extendsNames: items.slice(0, 1),
+    implementsNames: items.slice(1)
+  };
+}
+
+function analyzeCSharpUsing(statement: string): CodeImport {
+  const cleaned = statement
+    .replace(/^global\s+/, "")
+    .replace(/^using\s+/, "")
+    .replace(/^static\s+/, "")
+    .replace(/;$/, "")
+    .trim();
+  const aliasMatch = cleaned.match(/^([A-Za-z_]\w*)\s*=\s*(.+)$/);
+  const specifier = (aliasMatch ? aliasMatch[2] : cleaned).trim();
+  return {
+    specifier,
+    importedSymbols: aliasMatch ? [aliasMatch[1]] : [normalizeSymbolReference(specifier)].filter(Boolean),
+    namespaceImport: aliasMatch?.[1],
+    isExternal: true,
+    reExport: false
+  };
+}
+
+function _analyzeCSharpCode(manifest: SourceManifest, content: string): CodeAnalysis {
+  const lines = splitLines(content);
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const diagnostics: CodeDiagnostic[] = [];
+  let depth = 0;
+  let namespaceName: string | undefined;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index] ?? "";
+    const trimmed = rawLine.trim();
+    const lineDepth = depth;
+    if (!trimmed || trimmed.startsWith("//")) {
+      for (const character of rawLine) {
+        if (character === "{") {
+          depth += 1;
+        } else if (character === "}") {
+          depth -= 1;
+        }
+      }
+      continue;
+    }
+
+    if (lineDepth === 0) {
+      const namespaceMatch = trimmed.match(/^namespace\s+([A-Za-z_][\w.]*)\s*(?:;|\{)?$/);
+      if (namespaceMatch) {
+        namespaceName = namespaceMatch[1];
+      }
+
+      if (/^(?:global\s+)?using\s+/.test(trimmed)) {
+        imports.push(analyzeCSharpUsing(trimmed));
+      } else {
+        const typeMatch = trimmed.match(
+          /^(?:\[.+?\]\s*)*(?:(?:public|internal|private|protected|file|abstract|sealed|static|partial|readonly|unsafe|new)\s+)*(class|interface|enum|struct|record)\s+([A-Za-z_]\w*)\b(?:\s*:\s*([^/{]+))?/
+        );
+        if (typeMatch) {
+          const kindMap: Record<string, CodeSymbolKind> = {
+            class: "class",
+            interface: "interface",
+            enum: "enum",
+            struct: "struct",
+            record: "class"
+          };
+          const exported = /\bpublic\b/.test(trimmed);
+          const inheritance =
+            typeMatch[1] === "interface"
+              ? {
+                  extendsNames: (typeMatch[3] ?? "")
+                    .split(",")
+                    .map((item) => normalizeSymbolReference(item))
+                    .filter(Boolean),
+                  implementsNames: []
+                }
+              : parseCSharpImplements(typeMatch[3]);
+          const block = collectBracedBlock(lines, index);
+          draftSymbols.push({
+            name: typeMatch[2],
+            kind: kindMap[typeMatch[1]],
+            signature: singleLineSignature(trimmed),
+            exported,
+            callNames: [],
+            extendsNames: inheritance.extendsNames,
+            implementsNames: inheritance.implementsNames,
+            bodyText: block.text
+          });
+          if (exported) {
+            exportLabels.push(typeMatch[2]);
+          }
+          index = block.endIndex;
+          depth = 0;
+          continue;
+        }
+
+        const functionMatch = trimmed.match(
+          /^(?:(?:public|internal|private|protected|static|async|virtual|override|sealed|partial|unsafe|extern)\s+)+[A-Za-z_][\w<>,?.[\]\s]*\s+([A-Za-z_]\w*)\s*\([^;{)]*\)\s*(?:\{|=>)/
+        );
+        if (functionMatch) {
+          const exported = /\bpublic\b/.test(trimmed);
+          const block = trimmed.includes("{") ? collectBracedBlock(lines, index) : { text: trimmed, endIndex: index };
+          draftSymbols.push({
+            name: functionMatch[1],
+            kind: "function",
+            signature: singleLineSignature(trimmed),
+            exported,
+            callNames: [],
+            extendsNames: [],
+            implementsNames: [],
+            bodyText: block.text
+          });
+          if (exported) {
+            exportLabels.push(functionMatch[1]);
+          }
+          index = block.endIndex;
+          depth = 0;
+          continue;
+        }
+      }
+    }
+
+    for (const character of rawLine) {
+      if (character === "{") {
+        depth += 1;
+      } else if (character === "}") {
+        depth -= 1;
+      }
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "csharp", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: namespaceName
+  });
+}
+
+function analyzePhpUse(statement: string): CodeImport {
+  const cleaned = statement
+    .replace(/^use\s+/, "")
+    .replace(/;$/, "")
+    .trim();
+  const aliasMatch = cleaned.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/i);
+  const specifier = (aliasMatch ? aliasMatch[1] : cleaned).trim();
+  return {
+    specifier,
+    importedSymbols: [normalizeSymbolReference(specifier)].filter(Boolean),
+    namespaceImport: aliasMatch?.[2],
+    isExternal: true,
+    reExport: false
+  };
+}
+
+function _analyzePhpCode(manifest: SourceManifest, content: string): CodeAnalysis {
+  const lines = splitLines(content);
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const diagnostics: CodeDiagnostic[] = [];
+  let depth = 0;
+  let namespaceName: string | undefined;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index] ?? "";
+    const trimmed = rawLine.trim();
+    const lineDepth = depth;
+    if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("#")) {
+      for (const character of rawLine) {
+        if (character === "{") {
+          depth += 1;
+        } else if (character === "}") {
+          depth -= 1;
+        }
+      }
+      continue;
+    }
+
+    if (lineDepth === 0) {
+      const namespaceMatch = trimmed.match(/^namespace\s+([^;]+);$/);
+      if (namespaceMatch) {
+        namespaceName = namespaceMatch[1].trim();
+        continue;
+      }
+      if (trimmed.startsWith("use ")) {
+        imports.push(analyzePhpUse(trimmed));
+        continue;
+      }
+
+      const includeMatch = trimmed.match(/^(?:require|require_once|include|include_once)\s*(?:\(|)\s*['"]([^'"]+)['"]/);
+      if (includeMatch) {
+        imports.push({
+          specifier: includeMatch[1],
+          importedSymbols: [],
+          isExternal: !isLocalIncludeSpecifier(includeMatch[1]),
+          reExport: false
+        });
+        continue;
+      }
+
+      const classMatch = trimmed.match(
+        /^(?:(?:abstract|final|readonly)\s+)*(class|interface|trait|enum)\s+([A-Za-z_]\w*)\b(?:\s+extends\s+([A-Za-z_\\][\w\\]*))?(?:\s+implements\s+([A-Za-z_\\][\w\\,\s]*))?/
+      );
+      if (classMatch) {
+        const block = collectBracedBlock(lines, index);
+        draftSymbols.push({
+          name: classMatch[2],
+          kind:
+            classMatch[1] === "interface" ? "interface" : classMatch[1] === "trait" ? "trait" : classMatch[1] === "enum" ? "enum" : "class",
+          signature: singleLineSignature(trimmed),
+          exported: true,
+          callNames: [],
+          extendsNames: classMatch[3] ? [classMatch[3]] : [],
+          implementsNames: classMatch[4]
+            ? classMatch[4]
+                .split(",")
+                .map((item) => normalizeSymbolReference(item))
+                .filter(Boolean)
+            : [],
+          bodyText: block.text
+        });
+        exportLabels.push(classMatch[2]);
+        index = block.endIndex;
+        depth = 0;
+        continue;
+      }
+
+      const functionMatch = trimmed.match(/^function\s+([A-Za-z_]\w*)\s*\(/);
+      if (functionMatch) {
+        const block = collectBracedBlock(lines, index);
+        draftSymbols.push({
+          name: functionMatch[1],
+          kind: "function",
+          signature: singleLineSignature(trimmed),
+          exported: true,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: block.text
+        });
+        exportLabels.push(functionMatch[1]);
+        index = block.endIndex;
+        depth = 0;
+        continue;
+      }
+
+      const constMatch = trimmed.match(/^const\s+([A-Za-z_]\w*)\b/);
+      if (constMatch) {
+        draftSymbols.push({
+          name: constMatch[1],
+          kind: "variable",
+          signature: singleLineSignature(trimmed),
+          exported: true,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: trimmed
+        });
+        exportLabels.push(constMatch[1]);
+      }
+    }
+
+    for (const character of rawLine) {
+      if (character === "{") {
+        depth += 1;
+      } else if (character === "}") {
+        depth -= 1;
+      }
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "php", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: namespaceName
+  });
+}
+
+function analyzeCFamilyInclude(statement: string): CodeImport | undefined {
+  const match = statement.match(/^#include\s*([<"])([^>"]+)[>"]$/);
+  if (!match) {
+    return undefined;
+  }
+  return {
+    specifier: match[2].trim(),
+    importedSymbols: [],
+    isExternal: match[1] === "<",
+    reExport: false
+  };
+}
+
+function _analyzeCFamilyCode(manifest: SourceManifest, content: string): CodeAnalysis {
+  const language = manifest.language === "c" ? "c" : "cpp";
+  const lines = splitLines(content);
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const diagnostics: CodeDiagnostic[] = [];
+  let depth = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index] ?? "";
+    const trimmed = rawLine.trim();
+    const lineDepth = depth;
+    if (!trimmed || trimmed.startsWith("//")) {
+      for (const character of rawLine) {
+        if (character === "{") {
+          depth += 1;
+        } else if (character === "}") {
+          depth -= 1;
+        }
+      }
+      continue;
+    }
+
+    if (lineDepth === 0) {
+      const parsedInclude = analyzeCFamilyInclude(trimmed);
+      if (parsedInclude) {
+        imports.push(parsedInclude);
+        continue;
+      }
+
+      const typeMatch = trimmed.match(/^(struct|class|enum)\s+([A-Za-z_]\w*)\b(?:\s*:\s*([^/{]+))?/);
+      if (typeMatch) {
+        const block = collectBracedBlock(lines, index);
+        draftSymbols.push({
+          name: typeMatch[2],
+          kind: typeMatch[1] === "enum" ? "enum" : typeMatch[1] === "struct" ? "struct" : "class",
+          signature: singleLineSignature(trimmed),
+          exported: true,
+          callNames: [],
+          extendsNames: typeMatch[3]
+            ? typeMatch[3]
+                .split(",")
+                .map((item) => normalizeSymbolReference(item))
+                .filter(Boolean)
+            : [],
+          implementsNames: [],
+          bodyText: block.text
+        });
+        exportLabels.push(typeMatch[2]);
+        index = block.endIndex;
+        depth = 0;
+        continue;
+      }
+
+      const functionMatch = trimmed.match(
+        /^(?!if\b|for\b|while\b|switch\b|return\b)(?:[A-Za-z_~][\w:<>,*&\s]*\s+)+([A-Za-z_~]\w*)\s*\([^;{)]*\)\s*(?:\{|;)$/
+      );
+      if (functionMatch) {
+        const block = trimmed.endsWith("{") ? collectBracedBlock(lines, index) : { text: trimmed, endIndex: index };
+        draftSymbols.push({
+          name: functionMatch[1],
+          kind: "function",
+          signature: singleLineSignature(trimmed),
+          exported: true,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: block.text
+        });
+        exportLabels.push(functionMatch[1]);
+        index = block.endIndex;
+        depth = 0;
+        continue;
+      }
+    }
+
+    for (const character of rawLine) {
+      if (character === "{") {
+        depth += 1;
+      } else if (character === "}") {
+        depth -= 1;
+      }
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, language, imports, draftSymbols, exportLabels, diagnostics);
 }
 
 function analyzeTypeScriptLikeCode(manifest: SourceManifest, content: string): CodeAnalysis {
@@ -1316,6 +1750,18 @@ export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage
   if (extension === ".java") {
     return "java";
   }
+  if (extension === ".cs") {
+    return "csharp";
+  }
+  if (extension === ".php") {
+    return "php";
+  }
+  if (extension === ".c") {
+    return "c";
+  }
+  if ([".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"].includes(extension)) {
+    return "cpp";
+  }
   return undefined;
 }
 
@@ -1324,91 +1770,389 @@ export function modulePageTitle(manifest: SourceManifest): string {
 }
 
 function importResolutionCandidates(basePath: string, specifier: string, extensions: string[]): string[] {
-  const resolved = path.resolve(path.dirname(basePath), specifier);
-  if (path.extname(resolved)) {
-    return [path.normalize(resolved)];
+  const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(basePath), specifier));
+  if (path.posix.extname(resolved)) {
+    return [resolved];
   }
 
-  const direct = extensions.map((extension) => path.normalize(`${resolved}${extension}`));
-  const indexFiles = extensions.map((extension) => path.normalize(path.join(resolved, `index${extension}`)));
-  return uniqueBy([path.normalize(resolved), ...direct, ...indexFiles], (candidate) => candidate);
+  const direct = extensions.map((extension) => path.posix.normalize(`${resolved}${extension}`));
+  const indexFiles = extensions.map((extension) => path.posix.normalize(path.posix.join(resolved, `index${extension}`)));
+  return uniqueBy([resolved, ...direct, ...indexFiles], (candidate) => candidate);
 }
 
-function resolveJsLikeImportSourceId(manifest: SourceManifest, specifier: string, manifests: SourceManifest[]): string | undefined {
-  if (manifest.originType !== "file" || !manifest.originalPath || !isRelativeSpecifier(specifier)) {
-    return undefined;
-  }
-
-  const candidates = new Set(
-    importResolutionCandidates(manifest.originalPath, specifier, [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"])
-  );
-  return manifests.find(
-    (candidate) => candidate.sourceKind === "code" && candidate.originalPath && candidates.has(path.normalize(candidate.originalPath))
-  )?.sourceId;
+function normalizeAlias(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+/g, "/").trim();
 }
 
-function resolvePythonImportSourceId(manifest: SourceManifest, specifier: string, manifests: SourceManifest[]): string | undefined {
-  if (manifest.originType !== "file" || !manifest.originalPath) {
-    return undefined;
+function recordAlias(target: Set<string>, value?: string): void {
+  const normalized = normalizeAlias(value ?? "");
+  if (!normalized) {
+    return;
   }
-
-  if (specifier.startsWith(".")) {
-    const dotMatch = specifier.match(/^\.+/);
-    const depth = dotMatch ? dotMatch[0].length : 0;
-    const relativeModule = specifier.slice(depth).replace(/\./g, "/");
-    const baseDir = path.dirname(manifest.originalPath);
-    const parentDir = path.resolve(baseDir, ...Array(Math.max(depth - 1, 0)).fill(".."));
-    const moduleBase = relativeModule ? path.join(parentDir, relativeModule) : parentDir;
-    const candidates = new Set([path.normalize(`${moduleBase}.py`), path.normalize(path.join(moduleBase, "__init__.py"))]);
-    return manifests.find(
-      (candidate) => candidate.sourceKind === "code" && candidate.originalPath && candidates.has(path.normalize(candidate.originalPath))
-    )?.sourceId;
+  target.add(normalized);
+  const lowered = normalized.toLowerCase();
+  if (lowered !== normalized) {
+    target.add(lowered);
   }
+}
 
-  const modulePath = specifier.replace(/\./g, "/");
-  const suffixes = [`/${modulePath}.py`, `/${modulePath}/__init__.py`];
-  return manifests.find((candidate) => {
-    if (candidate.sourceKind !== "code" || !candidate.originalPath) {
-      return false;
+function manifestBasenameWithoutExtension(manifest: SourceManifest): string {
+  const target = manifest.repoRelativePath ?? manifest.originalPath ?? manifest.storedPath;
+  return path.posix.basename(stripCodeExtension(normalizeAlias(target)));
+}
+
+async function readNearestGoModulePath(startPath: string, cache: Map<string, string | null>): Promise<string | undefined> {
+  let current = path.resolve(startPath);
+  try {
+    const stat = await fs.stat(current);
+    if (!stat.isDirectory()) {
+      current = path.dirname(current);
     }
-    const normalizedOriginalPath = path.normalize(candidate.originalPath);
-    return suffixes.some((suffix) => normalizedOriginalPath.endsWith(path.normalize(suffix)));
-  })?.sourceId;
+  } catch {
+    current = path.dirname(current);
+  }
+
+  while (true) {
+    if (cache.has(current)) {
+      const cached = cache.get(current);
+      return cached === null ? undefined : cached;
+    }
+    const goModPath = path.join(current, "go.mod");
+    if (
+      await fs
+        .access(goModPath)
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      const content = await fs.readFile(goModPath, "utf8");
+      const match = content.match(/^\s*module\s+(\S+)/m);
+      const modulePath = match?.[1]?.trim() ?? null;
+      cache.set(current, modulePath);
+      return modulePath ?? undefined;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      cache.set(current, null);
+      return undefined;
+    }
+    current = parent;
+  }
 }
 
-export function resolveCodeImportSourceId(manifest: SourceManifest, specifier: string, manifests: SourceManifest[]): string | undefined {
+function rustModuleAlias(repoRelativePath: string): string | undefined {
+  const withoutExt = stripCodeExtension(normalizeAlias(repoRelativePath));
+  const trimmed = withoutExt.replace(/^src\//, "").replace(/\/mod$/i, "");
+  if (!trimmed || trimmed === "lib" || trimmed === "main") {
+    return "crate";
+  }
+  return `crate::${trimmed.replace(/\//g, "::")}`;
+}
+
+function candidateExtensionsFor(language: CodeLanguage): string[] {
+  switch (language) {
+    case "javascript":
+    case "jsx":
+    case "typescript":
+    case "tsx":
+      return [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
+    case "python":
+      return [".py"];
+    case "go":
+      return [".go"];
+    case "rust":
+      return [".rs"];
+    case "java":
+      return [".java"];
+    case "csharp":
+      return [".cs"];
+    case "php":
+      return [".php"];
+    case "c":
+      return [".c", ".h"];
+    case "cpp":
+      return [".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"];
+  }
+}
+
+export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[], analyses: SourceAnalysis[]): Promise<CodeIndexArtifact> {
+  const analysesBySourceId = new Map(analyses.map((analysis) => [analysis.sourceId, analysis]));
+  const goModuleCache = new Map<string, string | null>();
+  const entries: CodeIndexEntry[] = [];
+
+  for (const manifest of manifests) {
+    const analysis = analysesBySourceId.get(manifest.sourceId);
+    if (!analysis?.code) {
+      continue;
+    }
+
+    const aliases = new Set<string>();
+    const repoRelativePath = manifest.repoRelativePath ? normalizeAlias(manifest.repoRelativePath) : undefined;
+    const normalizedModuleName = analysis.code.moduleName ? normalizeAlias(analysis.code.moduleName) : undefined;
+    const normalizedNamespace = analysis.code.namespace ? normalizeAlias(analysis.code.namespace) : undefined;
+    const basename = manifestBasenameWithoutExtension(manifest);
+
+    if (repoRelativePath) {
+      recordAlias(aliases, repoRelativePath);
+      recordAlias(aliases, stripCodeExtension(repoRelativePath));
+      if (stripCodeExtension(repoRelativePath).endsWith("/index")) {
+        recordAlias(aliases, stripCodeExtension(repoRelativePath).slice(0, -"/index".length));
+      }
+    }
+    recordAlias(aliases, normalizedModuleName);
+    recordAlias(aliases, normalizedNamespace);
+
+    switch (analysis.code.language) {
+      case "python":
+        recordAlias(aliases, normalizedModuleName?.replace(/\//g, "."));
+        break;
+      case "rust":
+        if (repoRelativePath) {
+          recordAlias(aliases, rustModuleAlias(repoRelativePath));
+        }
+        break;
+      case "go": {
+        if (normalizedNamespace) {
+          recordAlias(aliases, normalizedNamespace);
+        }
+        const originalPath = manifest.originalPath ? path.resolve(manifest.originalPath) : path.resolve(rootDir, manifest.storedPath);
+        const goModulePath = await readNearestGoModulePath(originalPath, goModuleCache);
+        if (goModulePath && repoRelativePath) {
+          const dir = path.posix.dirname(repoRelativePath);
+          const packageAlias = dir === "." ? goModulePath : `${goModulePath}/${dir}`;
+          recordAlias(aliases, packageAlias);
+        }
+        break;
+      }
+      case "java":
+      case "csharp":
+        if (normalizedNamespace) {
+          recordAlias(aliases, `${normalizedNamespace}.${basename}`);
+        }
+        break;
+      case "php":
+        if (normalizedNamespace) {
+          recordAlias(aliases, `${normalizedNamespace}\\${basename}`);
+        }
+        break;
+      default:
+        break;
+    }
+
+    entries.push({
+      sourceId: manifest.sourceId,
+      moduleId: analysis.code.moduleId,
+      language: analysis.code.language,
+      repoRelativePath,
+      originalPath: manifest.originalPath,
+      moduleName: analysis.code.moduleName,
+      namespace: analysis.code.namespace,
+      aliases: [...aliases].sort((left, right) => left.localeCompare(right))
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    entries
+  };
+}
+
+type CodeIndexLookup = {
+  artifact: CodeIndexArtifact;
+  bySourceId: Map<string, CodeIndexEntry>;
+  byRepoPath: Map<string, CodeIndexEntry>;
+  byAlias: Map<string, CodeIndexEntry[]>;
+};
+
+function createCodeIndexLookup(artifact: CodeIndexArtifact): CodeIndexLookup {
+  const bySourceId = new Map<string, CodeIndexEntry>();
+  const byRepoPath = new Map<string, CodeIndexEntry>();
+  const byAlias = new Map<string, CodeIndexEntry[]>();
+
+  for (const entry of artifact.entries) {
+    bySourceId.set(entry.sourceId, entry);
+    if (entry.repoRelativePath) {
+      byRepoPath.set(normalizeAlias(entry.repoRelativePath), entry);
+    }
+    for (const alias of entry.aliases) {
+      const key = normalizeAlias(alias);
+      const bucket = byAlias.get(key) ?? [];
+      bucket.push(entry);
+      byAlias.set(key, bucket);
+    }
+  }
+
+  return { artifact, bySourceId, byRepoPath, byAlias };
+}
+
+function aliasMatches(lookup: CodeIndexLookup, ...aliases: Array<string | undefined>): CodeIndexEntry[] {
+  return uniqueBy(
+    aliases.flatMap((alias) =>
+      alias ? (lookup.byAlias.get(normalizeAlias(alias)) ?? lookup.byAlias.get(normalizeAlias(alias).toLowerCase()) ?? []) : []
+    ),
+    (entry) => entry.sourceId
+  );
+}
+
+function repoPathMatches(lookup: CodeIndexLookup, ...repoPaths: string[]): CodeIndexEntry[] {
+  return uniqueBy(
+    repoPaths.map((repoPath) => lookup.byRepoPath.get(normalizeAlias(repoPath))).filter((entry): entry is CodeIndexEntry => Boolean(entry)),
+    (entry) => entry.sourceId
+  );
+}
+
+function resolvePythonRelativeAliases(repoRelativePath: string, specifier: string): string[] {
+  const dotMatch = specifier.match(/^\.+/);
+  const depth = dotMatch ? dotMatch[0].length : 0;
+  const relativeModule = specifier.slice(depth).replace(/\./g, "/");
+  const baseDir = path.posix.dirname(repoRelativePath);
+  const parentDir = path.posix.normalize(path.posix.join(baseDir, ...Array(Math.max(depth - 1, 0)).fill("..")));
+  const moduleBase = relativeModule ? path.posix.join(parentDir, relativeModule) : parentDir;
+  return uniqueBy([`${moduleBase}.py`, path.posix.join(moduleBase, "__init__.py")], (item) => item);
+}
+
+function resolveRustAliases(manifest: SourceManifest, specifier: string): string[] {
+  const repoRelativePath = manifest.repoRelativePath ? normalizeAlias(manifest.repoRelativePath) : "";
+  const currentAlias = repoRelativePath ? rustModuleAlias(repoRelativePath) : undefined;
+  if (!specifier.startsWith("self::") && !specifier.startsWith("super::")) {
+    return [specifier];
+  }
+  if (!currentAlias) {
+    return [];
+  }
+  const currentParts = currentAlias
+    .replace(/^crate::?/, "")
+    .split("::")
+    .filter(Boolean);
+  if (specifier.startsWith("self::")) {
+    return [`crate${currentParts.length ? `::${currentParts.join("::")}` : ""}::${specifier.slice("self::".length)}`];
+  }
+  return [
+    `crate${currentParts.length > 1 ? `::${currentParts.slice(0, -1).join("::")}` : ""}::${specifier.slice("super::".length)}`
+      .replace(/::+/g, "::")
+      .replace(/::$/, "")
+  ];
+}
+
+function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, lookup: CodeIndexLookup): CodeIndexEntry[] {
+  const language = manifest.language ?? inferCodeLanguage(manifest.originalPath ?? manifest.storedPath, manifest.mimeType);
+  const repoRelativePath = manifest.repoRelativePath ? normalizeAlias(manifest.repoRelativePath) : undefined;
+  if (!language) {
+    return [];
+  }
+
+  switch (language) {
+    case "javascript":
+    case "jsx":
+    case "typescript":
+    case "tsx":
+      return repoRelativePath && isRelativeSpecifier(codeImport.specifier)
+        ? repoPathMatches(lookup, ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language)))
+        : aliasMatches(lookup, codeImport.specifier);
+    case "python":
+      if (repoRelativePath && codeImport.specifier.startsWith(".")) {
+        return repoPathMatches(lookup, ...resolvePythonRelativeAliases(repoRelativePath, codeImport.specifier));
+      }
+      return aliasMatches(lookup, codeImport.specifier);
+    case "go":
+    case "java":
+    case "csharp":
+      return aliasMatches(lookup, codeImport.specifier);
+    case "php":
+      if (repoRelativePath && isLocalIncludeSpecifier(codeImport.specifier)) {
+        return repoPathMatches(
+          lookup,
+          ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language))
+        );
+      }
+      return aliasMatches(lookup, codeImport.specifier, codeImport.specifier.replace(/\\/g, "/"));
+    case "rust":
+      return aliasMatches(lookup, codeImport.specifier, ...resolveRustAliases(manifest, codeImport.specifier));
+    case "c":
+    case "cpp":
+      return repoRelativePath && !codeImport.isExternal
+        ? repoPathMatches(lookup, ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language)))
+        : aliasMatches(lookup, codeImport.specifier);
+    default:
+      return [];
+  }
+}
+
+function importLooksLocal(manifest: SourceManifest, codeImport: CodeImport, candidates: CodeIndexEntry[]): boolean {
+  if (candidates.length > 0) {
+    return true;
+  }
   const language = manifest.language ?? inferCodeLanguage(manifest.originalPath ?? manifest.storedPath, manifest.mimeType);
   switch (language) {
     case "javascript":
     case "jsx":
     case "typescript":
     case "tsx":
-      return resolveJsLikeImportSourceId(manifest, specifier, manifests);
+      return isRelativeSpecifier(codeImport.specifier);
     case "python":
-      return resolvePythonImportSourceId(manifest, specifier, manifests);
+      return codeImport.specifier.startsWith(".");
+    case "rust":
+      return /^(crate|self|super)::/.test(codeImport.specifier);
+    case "php":
+    case "c":
+    case "cpp":
+      return !codeImport.isExternal;
     default:
-      return undefined;
+      return false;
   }
+}
+
+function resolveCodeImport(manifest: SourceManifest, codeImport: CodeImport, lookup: CodeIndexLookup): CodeImport {
+  const candidates = findImportCandidates(manifest, codeImport, lookup);
+  const resolved = candidates.length === 1 ? candidates[0] : undefined;
+  return {
+    ...codeImport,
+    isExternal: importLooksLocal(manifest, codeImport, candidates) ? false : codeImport.isExternal,
+    resolvedSourceId: resolved?.sourceId,
+    resolvedRepoPath: resolved?.repoRelativePath
+  };
+}
+
+export function enrichResolvedCodeImports(manifest: SourceManifest, analysis: SourceAnalysis, artifact: CodeIndexArtifact): SourceAnalysis {
+  if (!analysis.code) {
+    return analysis;
+  }
+  const lookup = createCodeIndexLookup(artifact);
+  const imports = analysis.code.imports.map((codeImport) => resolveCodeImport(manifest, codeImport, lookup));
+  return {
+    ...analysis,
+    code: {
+      ...analysis.code,
+      imports,
+      dependencies: uniqueBy(
+        imports.filter((item) => item.isExternal).map((item) => item.specifier),
+        (specifier) => specifier
+      )
+    }
+  };
+}
+
+export function resolveCodeImportSourceId(
+  manifest: SourceManifest,
+  codeImport: Pick<CodeImport, "specifier" | "isExternal" | "reExport"> & Partial<CodeImport>,
+  artifact: CodeIndexArtifact
+): string | undefined {
+  const lookup = createCodeIndexLookup(artifact);
+  return resolveCodeImport(manifest, codeImport as CodeImport, lookup).resolvedSourceId;
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function analyzeCodeSource(manifest: SourceManifest, extractedText: string, schemaHash: string): SourceAnalysis {
+export async function analyzeCodeSource(manifest: SourceManifest, extractedText: string, schemaHash: string): Promise<SourceAnalysis> {
   const language = manifest.language ?? inferCodeLanguage(manifest.originalPath ?? manifest.storedPath, manifest.mimeType) ?? "typescript";
   const code =
-    language === "python"
-      ? analyzePythonCode(manifest, extractedText)
-      : language === "go"
-        ? analyzeGoCode(manifest, extractedText)
-        : language === "rust"
-          ? analyzeRustCode(manifest, extractedText)
-          : language === "java"
-            ? analyzeJavaCode(manifest, extractedText)
-            : analyzeTypeScriptLikeCode(manifest, extractedText);
+    language === "javascript" || language === "jsx" || language === "typescript" || language === "tsx"
+      ? analyzeTypeScriptLikeCode(manifest, extractedText)
+      : await analyzeTreeSitterCode(manifest, extractedText, language);
 
   return {
+    analysisVersion: 3,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
     schemaHash,

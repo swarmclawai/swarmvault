@@ -5,6 +5,8 @@ import type { VaultSchema } from "./schema.js";
 import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
+const ANALYSIS_FORMAT_VERSION = 3;
+
 const sourceAnalysisSchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
@@ -128,6 +130,7 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
     .slice(0, 4);
 
   return {
+    analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
     schemaHash,
@@ -172,6 +175,7 @@ async function providerAnalysis(
   );
 
   return {
+    analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
     schemaHash: schema.hash,
@@ -209,7 +213,12 @@ export async function analyzeSource(
 ): Promise<SourceAnalysis> {
   const cachePath = path.join(paths.analysesDir, `${manifest.sourceId}.json`);
   const cached = await readJsonFile<SourceAnalysis>(cachePath);
-  if (cached && cached.sourceHash === manifest.contentHash && cached.schemaHash === schema.hash) {
+  if (
+    cached &&
+    cached.analysisVersion === ANALYSIS_FORMAT_VERSION &&
+    cached.sourceHash === manifest.contentHash &&
+    cached.schemaHash === schema.hash
+  ) {
     return cached;
   }
 
@@ -217,9 +226,10 @@ export async function analyzeSource(
   let analysis: SourceAnalysis;
 
   if (manifest.sourceKind === "code" && content) {
-    analysis = analyzeCodeSource(manifest, extractedText ?? "", schema.hash);
+    analysis = await analyzeCodeSource(manifest, extractedText ?? "", schema.hash);
   } else if (!content) {
     analysis = {
+      analysisVersion: ANALYSIS_FORMAT_VERSION,
       sourceId: manifest.sourceId,
       sourceHash: manifest.contentHash,
       schemaHash: schema.hash,

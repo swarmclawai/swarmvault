@@ -25,6 +25,7 @@ cd my-vault
 swarmvault init --obsidian
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
+swarmvault ingest ./repo
 swarmvault compile
 swarmvault query "What keeps recurring?"
 swarmvault query "Turn this into slides" --format slides
@@ -55,7 +56,22 @@ The schema file is the vault-specific instruction layer. Edit it to define namin
 
 ### `swarmvault ingest <path-or-url>`
 
-Ingest a local file path or URL into immutable source storage and write a manifest to `state/manifests/`.
+Ingest a local file path, directory path, or URL into immutable source storage and write manifests to `state/manifests/`.
+
+- local directories recurse by default
+- directory ingest respects `.gitignore` unless you pass `--no-gitignore`
+- repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
+- URL ingest still localizes remote image references by default
+
+Useful flags:
+
+- `--repo-root <path>`
+- `--include <glob...>`
+- `--exclude <glob...>`
+- `--max-files <n>`
+- `--no-gitignore`
+- `--no-include-assets`
+- `--max-asset-size <bytes>`
 
 ### `swarmvault inbox import [dir]`
 
@@ -70,6 +86,8 @@ Compile the current manifests into:
 - local search data in `state/search.sqlite`
 
 The compiler also reads `swarmvault.schema.md` and records a `schema_hash` plus lifecycle metadata such as `status`, `created_at`, `updated_at`, `compiled_from`, and `managed_by` in generated pages so schema edits can mark pages stale without losing lifecycle state.
+
+For ingested code trees, compile also writes `state/code-index.json` so local imports and module aliases can resolve across the repo-aware code graph.
 
 New concept and entity pages are staged into `wiki/candidates/` first. A later matching compile promotes them into `wiki/concepts/` or `wiki/entities/`.
 
@@ -96,7 +114,7 @@ Inspect and resolve staged concept and entity candidates.
 
 Targets can be page ids or relative paths under `wiki/candidates/`.
 
-### `swarmvault query "<question>" [--no-save] [--format markdown|report|slides]`
+### `swarmvault query "<question>" [--no-save] [--format markdown|report|slides|chart|image]`
 
 Query the compiled vault. The query layer also reads `swarmvault.schema.md`, so answers follow the vault’s own structure and grounding rules.
 
@@ -111,7 +129,7 @@ Saved outputs also carry related page, node, and source metadata so SwarmVault c
 
 Human-authored pages in `wiki/insights/` are also indexed into search and query context, but SwarmVault does not rewrite them after initialization.
 
-### `swarmvault explore "<question>" [--steps <n>]`
+### `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides|chart|image]`
 
 Run a save-first multi-step research loop.
 

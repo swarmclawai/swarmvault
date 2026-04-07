@@ -251,7 +251,10 @@ try {
       });
       await runCliJson(["init", "--obsidian"]);
 
+      await fs.mkdir(path.join(workspaceDir, ".git"), { recursive: true });
+      await fs.writeFile(path.join(workspaceDir, ".gitignore"), "apps/alpha/vendor/\n", "utf8");
       await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "src"), { recursive: true });
+      await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "vendor"), { recursive: true });
       await fs.writeFile(
         path.join(workspaceDir, "apps", "alpha", "src", "util.ts"),
         [
@@ -288,9 +291,113 @@ try {
         ].join("\n"),
         "utf8"
       );
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "helpers.py"),
+        [
+          "from util import format_label",
+          "",
+          "def render(name: str) -> str:",
+          "    return format_label(name)"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "Widget.cs"),
+        [
+          "namespace Alpha.App;",
+          "",
+          "public interface IRenderable",
+          "{",
+          "    string Render();",
+          "}",
+          "",
+          "public class Widget : IRenderable",
+          "{",
+          "    public string Render() => \"alpha\";",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "widget.php"),
+        [
+          "<?php",
+          "namespace Alpha\\\\App;",
+          "",
+          "interface Renderable {",
+          "    public function render(): string;",
+          "}",
+          "",
+          "class Widget implements Renderable {",
+          "    public function render(): string {",
+          "        return 'alpha';",
+          "    }",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "util.h"),
+        [
+          "#ifndef ALPHA_UTIL_H",
+          "#define ALPHA_UTIL_H",
+          "",
+          "struct Renderable {",
+          "  virtual const char* render() = 0;",
+          "};",
+          "",
+          "#endif"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "main.c"),
+        [
+          '#include "util.h"',
+          "",
+          "int main(void) {",
+          "  return 0;",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "main.cpp"),
+        [
+          '#include "util.h"',
+          "",
+          "class Widget : public Renderable {",
+          "public:",
+          "  const char* render() override {",
+          '    return "alpha";',
+          "  }",
+          "};"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(path.join(workspaceDir, "apps", "alpha", "vendor", "ignored.py"), "print('ignored')\n", "utf8");
 
-      const util = await runCliJson(["ingest", "apps/alpha/src/util.ts"]);
-      const widget = await runCliJson(["ingest", "apps/alpha/src/widget.ts"]);
+      const directoryIngest = await runCliJson(["ingest", "apps/alpha", "--repo-root", "."]);
+      assert.ok(Array.isArray(directoryIngest.imported) && directoryIngest.imported.length >= 7, "directory ingest did not import the repo tree");
+      assert.ok(
+        Array.isArray(directoryIngest.skipped) &&
+          directoryIngest.skipped.some(
+            (entry) =>
+              (entry.path.endsWith("apps/alpha/vendor") || entry.path.endsWith("apps/alpha/vendor/ignored.py")) &&
+              (entry.reason === "gitignore" || entry.reason === "built_in_ignore:vendor")
+          ),
+        "directory ingest did not respect ignore rules"
+      );
+
+      const manifestByRepoPath = new Map(directoryIngest.imported.map((manifest) => [manifest.repoRelativePath, manifest]));
+      const util = manifestByRepoPath.get("apps/alpha/src/util.ts");
+      const widget = manifestByRepoPath.get("apps/alpha/src/widget.ts");
+      const python = manifestByRepoPath.get("apps/alpha/src/helpers.py");
+      const csharp = manifestByRepoPath.get("apps/alpha/src/Widget.cs");
+      const php = manifestByRepoPath.get("apps/alpha/src/widget.php");
+      const cSource = manifestByRepoPath.get("apps/alpha/src/main.c");
+      const cppSource = manifestByRepoPath.get("apps/alpha/src/main.cpp");
+      assert.ok(util && widget && python && csharp && php && cSource && cppSource, "directory ingest missed one or more expected code files");
       assert.equal(util.sourceKind, "code", "util ingest did not classify as code");
       assert.equal(util.language, "typescript", "util ingest did not classify as typescript");
       assert.equal(widget.sourceKind, "code", "widget ingest did not classify as code");
@@ -299,11 +406,30 @@ try {
 
       widgetModulePath = `code/${widget.sourceId}.md`;
       await assertExists(path.join(workspaceDir, "wiki", widgetModulePath));
+      await assertExists(path.join(workspaceDir, "state", "code-index.json"));
       await assertExists(path.join(workspaceDir, "wiki", "projects", "index.md"));
       await assertExists(path.join(workspaceDir, "wiki", "projects", "alpha", "index.md"));
       const modulePage = await fs.readFile(path.join(workspaceDir, "wiki", widgetModulePath), "utf8");
+      assert.ok(modulePage.includes("Repo Path: `apps/alpha/src/widget.ts`"), "module page did not include repo-relative path metadata");
       assert.ok(modulePage.includes("## Imports"), "module page did not include imports");
       assert.ok(modulePage.includes("formatLabel"), "module page did not include imported symbol");
+      assert.ok(modulePage.includes(`[[code/${util.sourceId}|`), "module page did not link the resolved local import");
+
+      for (const manifest of [python, csharp, php, cSource, cppSource]) {
+        await assertExists(path.join(workspaceDir, "wiki", "code", `${manifest.sourceId}.md`));
+      }
+
+      const codeIndex = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "code-index.json"), "utf8"));
+      assert.ok(Array.isArray(codeIndex.entries), "code-index did not contain entries");
+      assert.ok(
+        codeIndex.entries.some((entry) => entry.repoRelativePath === "apps/alpha/src/widget.ts" && entry.language === "typescript"),
+        "code-index did not record the TypeScript widget module"
+      );
+      assert.ok(codeIndex.entries.some((entry) => entry.language === "python"), "code-index did not record the Python module");
+      assert.ok(codeIndex.entries.some((entry) => entry.language === "csharp"), "code-index did not record the C# module");
+      assert.ok(codeIndex.entries.some((entry) => entry.language === "php"), "code-index did not record the PHP module");
+      assert.ok(codeIndex.entries.some((entry) => entry.language === "c"), "code-index did not record the C module");
+      assert.ok(codeIndex.entries.some((entry) => entry.language === "cpp"), "code-index did not record the C++ module");
 
       const graphConfig = JSON.parse(await fs.readFile(path.join(workspaceDir, ".obsidian", "graph.json"), "utf8"));
       assert.ok(

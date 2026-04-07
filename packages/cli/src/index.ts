@@ -8,6 +8,7 @@ import {
   exploreVault,
   exportGraphHtml,
   importInbox,
+  ingestDirectory,
   ingestInput,
   initVault,
   installAgent,
@@ -40,9 +41,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.16";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.18";
   } catch {
-    return "0.1.16";
+    return "0.1.18";
   }
 }
 
@@ -77,24 +78,67 @@ program
 
 program
   .command("ingest")
-  .description("Ingest a local file path or URL into the raw SwarmVault workspace.")
-  .argument("<input>", "Local file path or URL")
+  .description("Ingest a local file path, directory path, or URL into the raw SwarmVault workspace.")
+  .argument("<input>", "Local file path, directory path, or URL")
   .option("--include-assets", "Download remote image assets when ingesting URLs", true)
   .option("--no-include-assets", "Skip downloading remote image assets when ingesting URLs")
   .option("--max-asset-size <bytes>", "Maximum number of bytes to fetch for a single remote image asset")
-  .action(async (input: string, options: { includeAssets?: boolean; maxAssetSize?: string }) => {
-    const maxAssetSize =
-      typeof options.maxAssetSize === "string" && options.maxAssetSize.trim() ? Number.parseInt(options.maxAssetSize, 10) : undefined;
-    const manifest = await ingestInput(process.cwd(), input, {
-      includeAssets: options.includeAssets,
-      maxAssetSize: Number.isFinite(maxAssetSize) ? maxAssetSize : undefined
-    });
-    if (isJson()) {
-      emitJson(manifest);
-    } else {
-      log(manifest.sourceId);
+  .option("--repo-root <path>", "Override the detected repo root when ingesting a directory")
+  .option("--include <glob...>", "Only ingest files matching one or more glob patterns")
+  .option("--exclude <glob...>", "Skip files matching one or more glob patterns")
+  .option("--max-files <n>", "Maximum number of files to ingest from a directory")
+  .option("--no-gitignore", "Ignore .gitignore rules when ingesting a directory")
+  .action(
+    async (
+      input: string,
+      options: {
+        includeAssets?: boolean;
+        maxAssetSize?: string;
+        repoRoot?: string;
+        include?: string[];
+        exclude?: string[];
+        maxFiles?: string;
+        gitignore?: boolean;
+      }
+    ) => {
+      const maxAssetSize =
+        typeof options.maxAssetSize === "string" && options.maxAssetSize.trim() ? Number.parseInt(options.maxAssetSize, 10) : undefined;
+      const maxFiles = typeof options.maxFiles === "string" && options.maxFiles.trim() ? Number.parseInt(options.maxFiles, 10) : undefined;
+      const commonOptions = {
+        includeAssets: options.includeAssets,
+        maxAssetSize: Number.isFinite(maxAssetSize) ? maxAssetSize : undefined,
+        repoRoot: options.repoRoot,
+        include: options.include,
+        exclude: options.exclude,
+        maxFiles: Number.isFinite(maxFiles) ? maxFiles : undefined,
+        gitignore: options.gitignore
+      };
+      const directoryResult = !/^https?:\/\//i.test(input)
+        ? await import("node:fs/promises").then((fs) =>
+            fs
+              .stat(input)
+              .then((stat) => (stat.isDirectory() ? ingestDirectory(process.cwd(), input, commonOptions) : null))
+              .catch(() => null)
+          )
+        : null;
+      if (directoryResult) {
+        if (isJson()) {
+          emitJson(directoryResult);
+        } else {
+          log(
+            `Imported ${directoryResult.imported.length} file(s), updated ${directoryResult.updated.length}, skipped ${directoryResult.skipped.length}.`
+          );
+        }
+        return;
+      }
+      const manifest = await ingestInput(process.cwd(), input, commonOptions);
+      if (isJson()) {
+        emitJson(manifest);
+      } else {
+        log(manifest.sourceId);
+      }
     }
-  });
+  );
 
 const inbox = program.command("inbox").description("Inbox and capture workflows.");
 inbox

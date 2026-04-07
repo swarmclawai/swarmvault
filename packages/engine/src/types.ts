@@ -45,8 +45,8 @@ export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "binary" | "code";
-export type CodeLanguage = "javascript" | "jsx" | "typescript" | "tsx" | "python" | "go" | "rust" | "java";
-export type CodeSymbolKind = "function" | "class" | "interface" | "type_alias" | "enum" | "variable";
+export type CodeLanguage = "javascript" | "jsx" | "typescript" | "tsx" | "python" | "go" | "rust" | "java" | "csharp" | "c" | "cpp" | "php";
+export type CodeSymbolKind = "function" | "class" | "interface" | "type_alias" | "enum" | "variable" | "struct" | "trait";
 export type OrchestrationRole = "research" | "audit" | "context" | "safety";
 
 export const webSearchProviderTypeSchema = z.enum(["http-json", "custom"]);
@@ -199,6 +199,7 @@ export interface ResolvedPaths {
   graphPath: string;
   searchDbPath: string;
   compileStatePath: string;
+  codeIndexPath: string;
   jobsLogPath: string;
   sessionsDir: string;
   approvalsDir: string;
@@ -214,6 +215,25 @@ export interface SourceAttachment {
 export interface IngestOptions {
   includeAssets?: boolean;
   maxAssetSize?: number;
+  repoRoot?: string;
+  include?: string[];
+  exclude?: string[];
+  maxFiles?: number;
+  gitignore?: boolean;
+}
+
+export interface DirectoryIngestSkip {
+  path: string;
+  reason: string;
+}
+
+export interface DirectoryIngestResult {
+  inputDir: string;
+  repoRoot: string;
+  scannedCount: number;
+  imported: SourceManifest[];
+  updated: SourceManifest[];
+  skipped: DirectoryIngestSkip[];
 }
 
 export interface SourceManifest {
@@ -223,6 +243,7 @@ export interface SourceManifest {
   sourceKind: SourceKind;
   language?: CodeLanguage;
   originalPath?: string;
+  repoRelativePath?: string;
   url?: string;
   storedPath: string;
   extractedTextPath?: string;
@@ -256,6 +277,8 @@ export interface CodeImport {
   isTypeOnly?: boolean;
   isExternal: boolean;
   reExport: boolean;
+  resolvedSourceId?: string;
+  resolvedRepoPath?: string;
 }
 
 export interface CodeDiagnostic {
@@ -280,6 +303,8 @@ export interface CodeSymbol {
 export interface CodeAnalysis {
   moduleId: string;
   language: CodeLanguage;
+  moduleName?: string;
+  namespace?: string;
   imports: CodeImport[];
   dependencies: string[];
   symbols: CodeSymbol[];
@@ -287,7 +312,24 @@ export interface CodeAnalysis {
   diagnostics: CodeDiagnostic[];
 }
 
+export interface CodeIndexEntry {
+  sourceId: string;
+  moduleId: string;
+  language: CodeLanguage;
+  repoRelativePath?: string;
+  originalPath?: string;
+  moduleName?: string;
+  namespace?: string;
+  aliases: string[];
+}
+
+export interface CodeIndexArtifact {
+  generatedAt: string;
+  entries: CodeIndexEntry[];
+}
+
 export interface SourceAnalysis {
+  analysisVersion: number;
   sourceId: string;
   sourceHash: string;
   schemaHash: string;

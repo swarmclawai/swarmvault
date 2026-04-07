@@ -1,16 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readability } from "@mozilla/readability";
+import ignore from "ignore";
 import { JSDOM } from "jsdom";
 import mime from "mime-types";
 import TurndownService from "turndown";
 import { inferCodeLanguage } from "./code-analysis.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { appendLogEntry } from "./logs.js";
-import type { InboxImportResult, IngestOptions, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
+import type { DirectoryIngestResult, InboxImportResult, IngestOptions, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
 import { ensureDir, fileExists, listFilesRecursive, readJsonFile, sha256, slugify, toPosix, writeJsonFile } from "./utils.js";
 
 const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
+const DEFAULT_MAX_DIRECTORY_FILES = 5000;
+const BUILT_IN_REPO_IGNORES = new Set([".git", "node_modules", "dist", "build", ".next", "coverage", ".venv", "vendor", "target"]);
 
 type PreparedAttachment = {
   relativePath: string;
@@ -25,6 +28,7 @@ type PreparedInput = {
   sourceKind: SourceManifest["sourceKind"];
   language?: SourceManifest["language"];
   originalPath?: string;
+  repoRelativePath?: string;
   url?: string;
   mimeType: string;
   storedExtension: string;
@@ -38,6 +42,7 @@ type PreparedInput = {
 type IngestPersistResult = {
   manifest: SourceManifest;
   isNew: boolean;
+  wasUpdated: boolean;
 };
 
 type InboxAttachmentRef = {
@@ -48,6 +53,11 @@ type InboxAttachmentRef = {
 type NormalizedIngestOptions = {
   includeAssets: boolean;
   maxAssetSize: number;
+  repoRoot?: string;
+  include: string[];
+  exclude: string[];
+  maxFiles: number;
+  gitignore: boolean;
 };
 
 function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKind"] {
@@ -84,8 +94,74 @@ function guessMimeType(target: string): string {
 function normalizeIngestOptions(options?: IngestOptions): NormalizedIngestOptions {
   return {
     includeAssets: options?.includeAssets ?? true,
-    maxAssetSize: Math.max(0, Math.floor(options?.maxAssetSize ?? DEFAULT_MAX_ASSET_SIZE))
+    maxAssetSize: Math.max(0, Math.floor(options?.maxAssetSize ?? DEFAULT_MAX_ASSET_SIZE)),
+    repoRoot: options?.repoRoot ? path.resolve(options.repoRoot) : undefined,
+    include: (options?.include ?? []).map((pattern) => pattern.trim()).filter(Boolean),
+    exclude: (options?.exclude ?? []).map((pattern) => pattern.trim()).filter(Boolean),
+    maxFiles: Math.max(1, Math.floor(options?.maxFiles ?? DEFAULT_MAX_DIRECTORY_FILES)),
+    gitignore: options?.gitignore ?? true
   };
+}
+
+function matchesAnyGlob(relativePath: string, patterns: string[]): boolean {
+  return patterns.some(
+    (pattern) => path.matchesGlob(relativePath, pattern) || path.matchesGlob(path.posix.basename(relativePath), pattern)
+  );
+}
+
+function supportedDirectoryKind(sourceKind: SourceManifest["sourceKind"]): boolean {
+  return sourceKind !== "binary";
+}
+
+async function findNearestGitRoot(startPath: string): Promise<string | null> {
+  let current = path.resolve(startPath);
+  try {
+    const stat = await fs.stat(current);
+    if (!stat.isDirectory()) {
+      current = path.dirname(current);
+    }
+  } catch {
+    current = path.dirname(current);
+  }
+
+  while (true) {
+    if (await fileExists(path.join(current, ".git"))) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+function withinRoot(rootPath: string, targetPath: string): boolean {
+  const relative = path.relative(rootPath, targetPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function repoRelativePathFor(absolutePath: string, repoRoot?: string): string | undefined {
+  if (!repoRoot || !withinRoot(repoRoot, absolutePath)) {
+    return undefined;
+  }
+  const relative = toPosix(path.relative(repoRoot, absolutePath));
+  return relative && !relative.startsWith("..") ? relative : undefined;
+}
+
+function normalizeOriginUrl(input: string): string {
+  try {
+    return new URL(input).toString();
+  } catch {
+    return input;
+  }
+}
+
+function manifestMatchesOrigin(manifest: SourceManifest, prepared: PreparedInput): boolean {
+  if (prepared.originType === "url") {
+    return Boolean(prepared.url && manifest.url && normalizeOriginUrl(manifest.url) === normalizeOriginUrl(prepared.url));
+  }
+  return Boolean(prepared.originalPath && manifest.originalPath && toPosix(manifest.originalPath) === toPosix(prepared.originalPath));
 }
 
 function buildCompositeHash(payloadBytes: Buffer, attachments: PreparedAttachment[] = []): string {
@@ -223,6 +299,109 @@ async function readManifestByHash(manifestsDir: string, contentHash: string): Pr
     }
   }
   return null;
+}
+
+async function readManifestByOrigin(manifestsDir: string, prepared: PreparedInput): Promise<SourceManifest | null> {
+  const entries = await fs.readdir(manifestsDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+    const manifest = await readJsonFile<SourceManifest>(path.join(manifestsDir, entry.name));
+    if (manifest && manifestMatchesOrigin(manifest, prepared)) {
+      return manifest;
+    }
+  }
+  return null;
+}
+
+async function loadGitignoreMatcher(repoRoot: string, enabled: boolean) {
+  if (!enabled) {
+    return null;
+  }
+  const gitignorePath = path.join(repoRoot, ".gitignore");
+  if (!(await fileExists(gitignorePath))) {
+    return null;
+  }
+  const matcher = ignore();
+  matcher.add(await fs.readFile(gitignorePath, "utf8"));
+  return matcher;
+}
+
+function builtInIgnoreReason(relativePath: string): string | null {
+  for (const segment of relativePath.split("/")) {
+    if (BUILT_IN_REPO_IGNORES.has(segment)) {
+      return `built_in_ignore:${segment}`;
+    }
+  }
+  return null;
+}
+
+async function collectDirectoryFiles(
+  rootDir: string,
+  inputDir: string,
+  repoRoot: string,
+  options: NormalizedIngestOptions
+): Promise<{ files: string[]; skipped: DirectoryIngestResult["skipped"] }> {
+  const matcher = await loadGitignoreMatcher(repoRoot, options.gitignore);
+  const skipped: DirectoryIngestResult["skipped"] = [];
+  const files: string[] = [];
+  const stack = [inputDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    if (!currentDir) {
+      continue;
+    }
+    const entries = await fs.readdir(currentDir, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const absolutePath = path.join(currentDir, entry.name);
+      const relativeToRepo = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(inputDir, absolutePath));
+      const relativePath = relativeToRepo || entry.name;
+      const builtInReason = builtInIgnoreReason(relativePath);
+      if (builtInReason) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: builtInReason });
+        continue;
+      }
+      if (matcher?.ignores(relativePath)) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "gitignore" });
+        continue;
+      }
+      if (matchesAnyGlob(relativePath, options.exclude)) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "exclude_glob" });
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        stack.push(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "unsupported_entry" });
+        continue;
+      }
+      if (options.include.length > 0 && !matchesAnyGlob(relativePath, options.include)) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "include_glob" });
+        continue;
+      }
+
+      const mimeType = guessMimeType(absolutePath);
+      const sourceKind = inferKind(mimeType, absolutePath);
+      if (!supportedDirectoryKind(sourceKind)) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: `unsupported_kind:${sourceKind}` });
+        continue;
+      }
+      if (files.length >= options.maxFiles) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "max_files" });
+        continue;
+      }
+      files.push(absolutePath);
+    }
+  }
+
+  return { files: files.sort((left, right) => left.localeCompare(right)), skipped };
 }
 
 function resolveUrlMimeType(input: string, response: Response): string {
@@ -401,25 +580,46 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
 
   const attachments = prepared.attachments ?? [];
   const contentHash = prepared.contentHash ?? buildCompositeHash(prepared.payloadBytes, attachments);
-  const existing = await readManifestByHash(paths.manifestsDir, contentHash);
-  if (existing) {
-    return { manifest: existing, isNew: false };
+  const existingByOrigin = await readManifestByOrigin(paths.manifestsDir, prepared);
+  const existingByHash = existingByOrigin ? null : await readManifestByHash(paths.manifestsDir, contentHash);
+  if (
+    existingByOrigin &&
+    existingByOrigin.contentHash === contentHash &&
+    existingByOrigin.title === prepared.title &&
+    existingByOrigin.sourceKind === prepared.sourceKind &&
+    existingByOrigin.language === prepared.language &&
+    existingByOrigin.mimeType === prepared.mimeType &&
+    existingByOrigin.repoRelativePath === prepared.repoRelativePath
+  ) {
+    return { manifest: existingByOrigin, isNew: false, wasUpdated: false };
+  }
+  if (existingByHash) {
+    return { manifest: existingByHash, isNew: false, wasUpdated: false };
   }
 
+  const previous = existingByOrigin ?? undefined;
+  const sourceId = previous?.sourceId ?? `${slugify(prepared.title)}-${contentHash.slice(0, 8)}`;
   const now = new Date().toISOString();
-  const sourceId = `${slugify(prepared.title)}-${contentHash.slice(0, 8)}`;
   const storedPath = path.join(paths.rawSourcesDir, `${sourceId}${prepared.storedExtension}`);
-  await fs.writeFile(storedPath, prepared.payloadBytes);
+  const extractedTextPath = prepared.extractedText ? path.join(paths.extractsDir, `${sourceId}.md`) : undefined;
+  const attachmentsDir = path.join(paths.rawAssetsDir, sourceId);
 
-  let extractedTextPath: string | undefined;
-  if (prepared.extractedText) {
-    extractedTextPath = path.join(paths.extractsDir, `${sourceId}.md`);
+  if (previous?.storedPath) {
+    await fs.rm(path.resolve(rootDir, previous.storedPath), { force: true });
+  }
+  if (previous?.extractedTextPath) {
+    await fs.rm(path.resolve(rootDir, previous.extractedTextPath), { force: true });
+  }
+  await fs.rm(attachmentsDir, { recursive: true, force: true });
+
+  await fs.writeFile(storedPath, prepared.payloadBytes);
+  if (prepared.extractedText && extractedTextPath) {
     await fs.writeFile(extractedTextPath, prepared.extractedText, "utf8");
   }
 
   const manifestAttachments: SourceAttachment[] = [];
   for (const attachment of attachments) {
-    const absoluteAttachmentPath = path.join(paths.rawAssetsDir, sourceId, attachment.relativePath);
+    const absoluteAttachmentPath = path.join(attachmentsDir, attachment.relativePath);
     await ensureDir(path.dirname(absoluteAttachmentPath));
     await fs.writeFile(absoluteAttachmentPath, attachment.bytes);
     manifestAttachments.push({
@@ -436,12 +636,13 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     sourceKind: prepared.sourceKind,
     language: prepared.language,
     originalPath: prepared.originalPath,
+    repoRelativePath: prepared.repoRelativePath,
     url: prepared.url,
     storedPath: toPosix(path.relative(rootDir, storedPath)),
     extractedTextPath: extractedTextPath ? toPosix(path.relative(rootDir, extractedTextPath)) : undefined,
     mimeType: prepared.mimeType,
     contentHash,
-    createdAt: now,
+    createdAt: previous?.createdAt ?? now,
     updatedAt: now,
     attachments: manifestAttachments.length ? manifestAttachments : undefined
   };
@@ -451,13 +652,14 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     `source_id=${sourceId}`,
     `kind=${prepared.sourceKind}`,
     `attachments=${manifestAttachments.length}`,
+    `updated=${previous ? "true" : "false"}`,
     ...(prepared.logDetails ?? [])
   ]);
 
-  return { manifest, isNew: true };
+  return { manifest, isNew: !previous, wasUpdated: Boolean(previous) };
 }
 
-async function prepareFileInput(_rootDir: string, absoluteInput: string): Promise<PreparedInput> {
+async function prepareFileInput(_rootDir: string, absoluteInput: string, repoRoot?: string): Promise<PreparedInput> {
   const payloadBytes = await fs.readFile(absoluteInput);
   const mimeType = guessMimeType(absoluteInput);
   const sourceKind = inferKind(mimeType, absoluteInput);
@@ -479,6 +681,7 @@ async function prepareFileInput(_rootDir: string, absoluteInput: string): Promis
     sourceKind,
     language,
     originalPath: toPosix(absoluteInput),
+    repoRelativePath: repoRelativePathFor(absoluteInput, repoRoot),
     mimeType,
     storedExtension,
     payloadBytes,
@@ -698,12 +901,60 @@ function isSupportedInboxKind(sourceKind: SourceManifest["sourceKind"]): boolean
 export async function ingestInput(rootDir: string, input: string, options?: IngestOptions): Promise<SourceManifest> {
   const { paths } = await initWorkspace(rootDir);
   const normalizedOptions = normalizeIngestOptions(options);
+  const absoluteInput = path.resolve(rootDir, input);
+  const repoRoot =
+    /^https?:\/\//i.test(input) || normalizedOptions.repoRoot
+      ? normalizedOptions.repoRoot
+      : await findNearestGitRoot(absoluteInput).then((value) => value ?? path.dirname(absoluteInput));
   const prepared = /^https?:\/\//i.test(input)
     ? await prepareUrlInput(input, normalizedOptions)
-    : await prepareFileInput(rootDir, path.resolve(rootDir, input));
+    : await prepareFileInput(rootDir, absoluteInput, repoRoot);
 
   const result = await persistPreparedInput(rootDir, prepared, paths);
   return result.manifest;
+}
+
+export async function ingestDirectory(rootDir: string, inputDir: string, options?: IngestOptions): Promise<DirectoryIngestResult> {
+  const { paths } = await initWorkspace(rootDir);
+  const normalizedOptions = normalizeIngestOptions(options);
+  const absoluteInputDir = path.resolve(rootDir, inputDir);
+  const repoRoot = normalizedOptions.repoRoot ?? (await findNearestGitRoot(absoluteInputDir)) ?? absoluteInputDir;
+  if (!(await fileExists(absoluteInputDir))) {
+    throw new Error(`Directory not found: ${absoluteInputDir}`);
+  }
+
+  const { files, skipped } = await collectDirectoryFiles(rootDir, absoluteInputDir, repoRoot, normalizedOptions);
+  const imported: SourceManifest[] = [];
+  const updated: SourceManifest[] = [];
+
+  for (const absolutePath of files) {
+    const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot);
+    const result = await persistPreparedInput(rootDir, prepared, paths);
+    if (result.isNew) {
+      imported.push(result.manifest);
+    } else if (result.wasUpdated) {
+      updated.push(result.manifest);
+    } else {
+      skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "duplicate_content" });
+    }
+  }
+
+  await appendLogEntry(rootDir, "ingest_directory", toPosix(path.relative(rootDir, absoluteInputDir)) || ".", [
+    `repo_root=${toPosix(path.relative(rootDir, repoRoot)) || "."}`,
+    `scanned=${files.length}`,
+    `imported=${imported.length}`,
+    `updated=${updated.length}`,
+    `skipped=${skipped.length}`
+  ]);
+
+  return {
+    inputDir: absoluteInputDir,
+    repoRoot,
+    scannedCount: files.length,
+    imported,
+    updated,
+    skipped
+  };
 }
 
 export async function importInbox(rootDir: string, inputDir?: string): Promise<InboxImportResult> {

@@ -122,9 +122,11 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 ### Ingest
 
-- `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local path or URL
+- `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local file path or URL
+- `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore })` recursively ingests a local directory as a repo-aware code/content source tree
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files and browser-clipper style bundles
-- JavaScript, TypeScript, Python, Go, Rust, and Java inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
+- JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, and PHP inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
+- code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
 - HTML and markdown URL ingests localize remote image references into `raw/assets/<sourceId>/` by default and rewrite the stored markdown to local relative paths
 
 ### Compile + Query
@@ -175,6 +177,7 @@ Running the engine produces a local workspace with these main areas:
 - `state/manifests/`: source manifests
 - `state/extracts/`: extracted text
 - `state/analyses/`: model analysis output
+- `state/code-index.json`: repo-aware code module aliases and local resolution data
 - `state/graph.json`: compiled graph
 - `state/search.sqlite`: full-text index
 - `state/sessions/`: canonical session artifacts

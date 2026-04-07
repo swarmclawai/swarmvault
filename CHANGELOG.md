@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.18
+
+- Replaced the regex-style non-JS/TS code path with parser-backed local analyzers for Python, Go, Rust, Java, C#, C, C++, and PHP, while keeping the TypeScript compiler path for JavaScript and TypeScript
+- Added repo-aware directory ingest, `repoRelativePath` manifests, and `state/code-index.json` so local imports can resolve across an ingested repo tree
+- Expanded module pages, graph edges, engine tests, and the installed-package smoke runner to cover repo-directory ingest plus the new code-language set
+- Updated the OSS docs, package READMEs, skill metadata, site docs, and root spec for the parser-backed code-analysis and repo-ingest workflow
+
 ## 0.1.17
 
 - Added `opencode` as an `install --agent` target, sharing the managed `AGENTS.md` rules path with Codex, Goose, and Pi

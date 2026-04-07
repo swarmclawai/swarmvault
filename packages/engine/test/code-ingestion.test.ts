@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileVault, ingestInput, initVault, searchVault } from "../src/index.js";
-import type { GraphArtifact, SourceAnalysis } from "../src/types.js";
+import { compileVault, ingestDirectory, ingestInput, initVault, searchVault } from "../src/index.js";
+import type { CodeIndexArtifact, GraphArtifact, SourceAnalysis } from "../src/types.js";
 
 const tempDirs: string[] = [];
 
@@ -217,5 +217,154 @@ describe("code-aware ingestion", () => {
     const searchResults = await searchVault(rootDir, "Widget", 20);
     expect(searchResults.some((result) => result.path === `code/${javaManifest.sourceId}.md`)).toBe(true);
     expect(searchResults.some((result) => result.path === `code/${goManifest.sourceId}.md`)).toBe(true);
+  });
+
+  it("builds parser-backed module pages for C#, PHP, C, and C++ sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "native"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "native", "widget.cs"),
+      [
+        "namespace Sample.App;",
+        "using System.Text;",
+        "",
+        "public interface Renderable {}",
+        "",
+        "public class Widget : BaseWidget, Renderable {",
+        "  public void Run() {",
+        "    Helper();",
+        "  }",
+        "}",
+        "",
+        "public class BaseWidget {}",
+        "public static class Helpers {",
+        "  public static void Helper() {}",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "native", "widget.php"),
+      [
+        "<?php",
+        "namespace App\\Core;",
+        "use Foo\\Bar as Baz;",
+        "",
+        "trait Renderable {}",
+        "",
+        "class Widget extends BaseWidget implements Renderable {",
+        "  public function run() {",
+        "    helper();",
+        "  }",
+        "}",
+        "",
+        "class BaseWidget {}",
+        "function helper() {}"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(path.join(rootDir, "native", "util.h"), ["int helper(void);", "struct BaseWidget {};"].join("\n"), "utf8");
+    await fs.writeFile(
+      path.join(rootDir, "native", "main.c"),
+      [
+        '#include "util.h"',
+        "",
+        "struct Widget : BaseWidget { int run(void) { return helper(); } };",
+        "int helper(void) { return 1; }"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "native", "main.cpp"),
+      ['#include "util.h"', "", "class WidgetCpp : public BaseWidget { int run() { return helper(); } };"].join("\n"),
+      "utf8"
+    );
+
+    const csharpManifest = await ingestInput(rootDir, "native/widget.cs");
+    const phpManifest = await ingestInput(rootDir, "native/widget.php");
+    const cHeaderManifest = await ingestInput(rootDir, "native/util.h");
+    const cManifest = await ingestInput(rootDir, "native/main.c");
+    const cppManifest = await ingestInput(rootDir, "native/main.cpp");
+
+    expect(csharpManifest.language).toBe("csharp");
+    expect(phpManifest.language).toBe("php");
+    expect(cManifest.language).toBe("c");
+    expect(cppManifest.language).toBe("cpp");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "csharp")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "php")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "c")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "cpp")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "extends")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "implements")).toBe(true);
+
+    const csharpModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${csharpManifest.sourceId}.md`), "utf8");
+    const phpModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${phpManifest.sourceId}.md`), "utf8");
+    const cModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${cManifest.sourceId}.md`), "utf8");
+    const cppModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${cppManifest.sourceId}.md`), "utf8");
+
+    expect(csharpModulePage).toContain("Language: `csharp`");
+    expect(csharpModulePage).toContain("Namespace/Package: `Sample.App`");
+    expect(phpModulePage).toContain("Language: `php`");
+    expect(phpModulePage).toContain("Renderable");
+    expect(cModulePage).toContain("Language: `c`");
+    expect(cModulePage).toContain(`code/${cHeaderManifest.sourceId}`);
+    expect(cppModulePage).toContain("Language: `cpp`");
+
+    const searchResults = await searchVault(rootDir, "Widget", 20);
+    expect(searchResults.some((result) => result.path === `code/${csharpManifest.sourceId}.md`)).toBe(true);
+    expect(searchResults.some((result) => result.path === `code/${phpManifest.sourceId}.md`)).toBe(true);
+  });
+
+  it("ingests repo directories, writes code-index.json, and updates existing manifests by path", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "repo", ".git"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "repo", ".gitignore"), ["vendor/", "ignored.py"].join("\n"), "utf8");
+    await fs.mkdir(path.join(rootDir, "repo", "src"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "vendor"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "repo", "ignored.py"), "def skip():\n    return 'ignored'\n", "utf8");
+    await fs.writeFile(path.join(rootDir, "repo", "vendor", "skip.py"), "def skip_vendor():\n    return 'ignored'\n", "utf8");
+    await fs.writeFile(path.join(rootDir, "repo", "src", "util.py"), "def helper(name):\n    return name.upper()\n", "utf8");
+    await fs.writeFile(
+      path.join(rootDir, "repo", "src", "app.py"),
+      ["from .util import helper", "", "def run(name):", "    return helper(name)"].join("\n"),
+      "utf8"
+    );
+
+    const initial = await ingestDirectory(rootDir, "repo");
+    expect(initial.imported).toHaveLength(2);
+    expect(initial.updated).toHaveLength(0);
+    expect(initial.skipped.some((entry) => entry.reason === "gitignore")).toBe(true);
+    expect(initial.skipped.some((entry) => entry.reason.startsWith("built_in_ignore"))).toBe(true);
+
+    await compileVault(rootDir);
+
+    const codeIndex = JSON.parse(await fs.readFile(path.join(rootDir, "state", "code-index.json"), "utf8")) as CodeIndexArtifact;
+    expect(codeIndex.entries).toHaveLength(2);
+    expect(codeIndex.entries.some((entry) => entry.repoRelativePath === "src/app.py")).toBe(true);
+    expect(codeIndex.entries.some((entry) => entry.repoRelativePath === "src/util.py")).toBe(true);
+
+    const appManifest = initial.imported.find((manifest) => manifest.originalPath?.endsWith("src/app.py"));
+    const utilManifest = initial.imported.find((manifest) => manifest.originalPath?.endsWith("src/util.py"));
+    expect(appManifest?.repoRelativePath).toBe("src/app.py");
+    expect(utilManifest?.repoRelativePath).toBe("src/util.py");
+
+    const modulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${appManifest?.sourceId}.md`), "utf8");
+    expect(modulePage).toContain("Repo Path: `src/app.py`");
+    expect(modulePage).toContain(`code/${utilManifest?.sourceId}`);
+
+    await fs.writeFile(path.join(rootDir, "repo", "src", "util.py"), "def helper(name):\n    return f'updated:{name}'\n", "utf8");
+    const second = await ingestDirectory(rootDir, "repo");
+    expect(second.updated).toHaveLength(1);
+    expect(second.updated[0]?.sourceId).toBe(utilManifest?.sourceId);
+    expect(second.imported).toHaveLength(0);
   });
 });

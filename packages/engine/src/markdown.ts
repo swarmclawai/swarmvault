@@ -248,9 +248,9 @@ export function buildModulePage(input: {
 
   const importsSection = code.imports.length
     ? code.imports.map((item) => {
-        const localModule = input.localModules.find(
-          (moduleRef) => moduleRef.specifier === item.specifier && moduleRef.reExport === item.reExport
-        );
+        const localModule = item.resolvedSourceId
+          ? input.localModules.find((moduleRef) => moduleRef.sourceId === item.resolvedSourceId && moduleRef.reExport === item.reExport)
+          : undefined;
         const importedBits = [
           item.defaultImport ? `default \`${item.defaultImport}\`` : "",
           item.namespaceImport ? `namespace \`${item.namespaceImport}\`` : "",
@@ -264,6 +264,9 @@ export function buildModulePage(input: {
         return `- ${mode} ${importTarget}${suffix}`;
       })
     : ["- No imports detected."];
+  const unresolvedLocalImports = code.imports
+    .filter((item) => !item.isExternal && !item.resolvedSourceId)
+    .map((item) => `- \`${item.specifier}\`${item.resolvedRepoPath ? ` (expected near \`${item.resolvedRepoPath}\`)` : ""}`);
 
   const exportsSection = code.exports.length ? code.exports.map((item) => `- \`${item}\``) : ["- No exports detected."];
   const symbolsSection = code.symbols.length
@@ -319,7 +322,10 @@ export function buildModulePage(input: {
     "",
     `Source ID: \`${manifest.sourceId}\``,
     `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
+    ...(manifest.repoRelativePath ? [`Repo Path: \`${manifest.repoRelativePath}\``] : []),
     `Language: \`${code.language}\``,
+    ...(code.moduleName ? [`Module Name: \`${code.moduleName}\``] : []),
+    ...(code.namespace ? [`Namespace/Package: \`${code.namespace}\``] : []),
     `Source Page: [[${sourcePage.path.replace(/\.md$/, "")}|${sourcePage.title}]]`,
     "",
     "## Summary",
@@ -341,6 +347,10 @@ export function buildModulePage(input: {
     "## External Dependencies",
     "",
     ...(code.dependencies.length ? code.dependencies.map((dependency) => `- \`${dependency}\``) : ["- No external dependencies detected."]),
+    "",
+    "## Unresolved Local References",
+    "",
+    ...(unresolvedLocalImports.length ? unresolvedLocalImports : ["- No unresolved local references detected."]),
     "",
     "## Inheritance",
     "",

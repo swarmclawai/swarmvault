@@ -284,6 +284,7 @@ export function resolvePaths(
     graphPath: path.join(stateDir, "graph.json"),
     searchDbPath: path.join(stateDir, "search.sqlite"),
     compileStatePath: path.join(stateDir, "compile-state.json"),
+    codeIndexPath: path.join(stateDir, "code-index.json"),
     jobsLogPath: path.join(stateDir, "jobs.ndjson"),
     sessionsDir: path.join(stateDir, "sessions"),
     approvalsDir: path.join(stateDir, "approvals"),

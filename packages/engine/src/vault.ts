@@ -4,7 +4,7 @@ import matter from "gray-matter";
 import { z } from "zod";
 import { installConfiguredAgents } from "./agents.js";
 import { analysisSignature, analyzeSource } from "./analysis.js";
-import { modulePageTitle, resolveCodeImportSourceId } from "./code-analysis.js";
+import { buildCodeIndex, enrichResolvedCodeImports, modulePageTitle } from "./code-analysis.js";
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { runDeepLint } from "./deep-lint.js";
@@ -51,6 +51,7 @@ import type {
   ApprovalManifest,
   ApprovalSummary,
   CandidateRecord,
+  CodeIndexArtifact,
   CompileOptions,
   CompileResult,
   CompileState,
@@ -1003,7 +1004,8 @@ function buildGraph(
   manifests: SourceManifest[],
   analyses: SourceAnalysis[],
   pages: GraphPage[],
-  sourceProjects: Record<string, string | null>
+  sourceProjects: Record<string, string | null>,
+  _codeIndex: CodeIndexArtifact
 ): GraphArtifact {
   const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
     id: `source:${manifest.sourceId}`,
@@ -1155,10 +1157,16 @@ function buildGraph(
       const symbolIdsByName = new Map(analysis.code.symbols.map((symbol) => [symbol.name, symbol.id]));
       const importedSymbolIdsByName = new Map<string, string>();
       for (const codeImport of analysis.code.imports.filter((item) => !item.isExternal)) {
-        const targetSourceId = resolveCodeImportSourceId(manifest, codeImport.specifier, manifests);
+        const targetSourceId = codeImport.resolvedSourceId;
         const targetAnalysis = targetSourceId ? analysesBySourceId.get(targetSourceId) : undefined;
         if (!targetSourceId || !targetAnalysis?.code) {
           continue;
+        }
+
+        if (codeImport.importedSymbols.length === 0) {
+          for (const targetSymbol of targetAnalysis.code.symbols.filter((symbol) => symbol.exported)) {
+            importedSymbolIdsByName.set(targetSymbol.name, targetSymbol.id);
+          }
         }
 
         for (const importedSymbol of codeImport.importedSymbols) {
@@ -1226,7 +1234,7 @@ function buildGraph(
       }
 
       for (const codeImport of analysis.code.imports) {
-        const targetSourceId = resolveCodeImportSourceId(manifest, codeImport.specifier, manifests);
+        const targetSourceId = codeImport.resolvedSourceId;
         if (!targetSourceId) {
           continue;
         }
@@ -1388,6 +1396,7 @@ function recordsEqual(left: Record<string, string>, right: Record<string, string
 async function requiredCompileArtifactsExist(paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"]): Promise<boolean> {
   const requiredPaths = [
     paths.graphPath,
+    paths.codeIndexPath,
     paths.searchDbPath,
     path.join(paths.wikiDir, "index.md"),
     path.join(paths.wikiDir, "sources", "index.md"),
@@ -1545,6 +1554,7 @@ async function syncVaultArtifacts(
     schemas: LoadedVaultSchemas;
     manifests: SourceManifest[];
     analyses: SourceAnalysis[];
+    codeIndex: CodeIndexArtifact;
     sourceProjects: Record<string, string | null>;
     outputPages: GraphPage[];
     insightPages: GraphPage[];
@@ -1644,7 +1654,7 @@ async function syncVaultArtifacts(
     if (modulePreview && analysis.code) {
       const localModules = analysis.code.imports
         .map((codeImport) => {
-          const resolvedSourceId = resolveCodeImportSourceId(manifest, codeImport.specifier, input.manifests);
+          const resolvedSourceId = codeImport.resolvedSourceId;
           if (!resolvedSourceId) {
             return null;
           }
@@ -1765,7 +1775,7 @@ async function syncVaultArtifacts(
 
   const compiledPages = records.map((record) => record.page);
   const allPages = [...compiledPages, ...input.outputPages, ...input.insightPages];
-  const graph = buildGraph(input.manifests, input.analyses, allPages, input.sourceProjects);
+  const graph = buildGraph(input.manifests, input.analyses, allPages, input.sourceProjects, input.codeIndex);
   const activeConceptPages = allPages.filter((page) => page.kind === "concept" && page.status !== "candidate");
   const activeEntityPages = allPages.filter((page) => page.kind === "entity" && page.status !== "candidate");
   const modulePages = allPages.filter((page) => page.kind === "module");
@@ -1941,6 +1951,7 @@ async function syncVaultArtifacts(
   }
 
   await writeJsonFile(paths.graphPath, graph);
+  await writeJsonFile(paths.codeIndexPath, input.codeIndex);
   await writeJsonFile(paths.compileStatePath, {
     generatedAt: graph.generatedAt,
     rootSchemaHash: input.schemas.root.hash,
@@ -2394,13 +2405,19 @@ async function refreshVaultAfterOutputSave(rootDir: string): Promise<void> {
   const schemas = await loadVaultSchemas(rootDir);
   const manifests = await listManifests(rootDir);
   const sourceProjects = resolveSourceProjects(rootDir, manifests, config);
-  const analyses = manifests.length ? await loadCachedAnalyses(paths, manifests) : [];
+  const cachedAnalyses = manifests.length ? await loadCachedAnalyses(paths, manifests) : [];
+  const codeIndex = await buildCodeIndex(rootDir, manifests, cachedAnalyses);
+  const analyses = cachedAnalyses.map((analysis) => {
+    const manifest = manifests.find((item) => item.sourceId === analysis.sourceId);
+    return manifest ? enrichResolvedCodeImports(manifest, analysis, codeIndex) : analysis;
+  });
   const storedOutputs = await loadSavedOutputPages(paths.wikiDir);
   const storedInsights = await loadInsightPages(paths.wikiDir);
   await syncVaultArtifacts(rootDir, {
     schemas,
     manifests,
     analyses,
+    codeIndex,
     sourceProjects,
     outputPages: storedOutputs.map((page) => page.page),
     insightPages: storedInsights.map((page) => page.page),
@@ -3037,7 +3054,21 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     )
   ]);
 
-  const analyses = [...dirtyAnalyses, ...cleanAnalyses];
+  const initialAnalyses = [...dirtyAnalyses, ...cleanAnalyses];
+  const codeIndex = await buildCodeIndex(rootDir, manifests, initialAnalyses);
+  const analyses = await Promise.all(
+    initialAnalyses.map(async (analysis) => {
+      const manifest = manifests.find((item) => item.sourceId === analysis.sourceId);
+      if (!manifest || !analysis.code) {
+        return analysis;
+      }
+      const enriched = enrichResolvedCodeImports(manifest, analysis, codeIndex);
+      if (analysisSignature(enriched) !== analysisSignature(analysis)) {
+        await writeJsonFile(path.join(paths.analysesDir, `${analysis.sourceId}.json`), enriched);
+      }
+      return enriched;
+    })
+  );
 
   await Promise.all([
     ensureDir(path.join(paths.wikiDir, "sources")),
@@ -3055,6 +3086,7 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     schemas,
     manifests,
     analyses,
+    codeIndex,
     sourceProjects,
     outputPages,
     insightPages,

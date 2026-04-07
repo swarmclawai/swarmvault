@@ -1,34 +1,67 @@
 # SwarmVault
 
-SwarmVault is a local-first LLM knowledge compiler.
+**A local-first knowledge compiler for AI agents.**
 
-It takes raw research inputs such as markdown, PDFs, images, and URLs, stores them immutably, and compiles them into a persistent markdown wiki, a structured graph, and a local search index. Instead of losing work inside chat history, your summaries, query outputs, exploration runs, and graph structure stay on disk as reviewable artifacts.
+SwarmVault turns raw files, URLs, screenshots, PDFs, saved answers, and code into a durable working vault. Instead of losing useful work inside chat history, you get a reviewable markdown wiki, a structured graph, a local search index, session logs, and saved outputs that stay on disk.
 
-Each vault also carries a user-editable schema file, `swarmvault.schema.md`, which teaches the compiler and query layer how that vault should be organized.
+It is built for the compounding loop most coding agents still miss:
 
-## What It Does
+1. ingest source material into a local workspace
+2. compile it into a schema-shaped wiki and graph
+3. query or explore the vault
+4. save the useful results back into the vault
+5. review changes instead of trusting silent rewrites
 
-SwarmVault is designed around a simple loop:
+Every vault carries a user-editable `swarmvault.schema.md` file, so the compiler and query layer can learn how that specific vault should be organized.
 
-1. Ingest source material into a local workspace
-2. Edit the vault schema to define naming rules, categories, and grounding expectations
-3. Compile those sources into `wiki/` and `state/graph.json`
-4. Query or explore the compiled vault and save useful answers back into the wiki
-5. Keep the vault healthy with linting, inbox automation, and MCP access
+```bash
+swarmvault init --obsidian
+swarmvault ingest ./notes
+swarmvault compile
+swarmvault query "What is the auth flow?"
+swarmvault graph serve
+```
 
-The open source runtime gives you:
+```text
+my-vault/
+├── swarmvault.schema.md
+├── raw/                   immutable source files and localized assets
+├── wiki/                  compiled source, concept, entity, code, and output pages
+├── state/                 graph.json, search.sqlite, sessions, approvals, schedules
+├── .obsidian/             optional local workspace config
+└── agent/                 generated agent-facing helpers
+```
 
-- Markdown-first outputs that stay usable in Obsidian or plain Git
-- A structured graph artifact for relationships, provenance, and freshness
-- A vault-specific schema file that guides compile and query behavior
-- Human-only insight pages in `wiki/insights/` that SwarmVault can read but does not rewrite
-- Visual output artifacts that save wrapper markdown pages plus local chart/image assets
-- Local full-text search over compiled pages
-- Canonical session artifacts in `state/sessions/` for compile, query, explore, lint, and watch runs
-- CLI workflows for ingest, inbox import, compile, query, explore, lint, scheduling, watch, MCP, and graph serving
-- Pluggable model providers, including OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible APIs, and custom adapters
-- Optional role orchestration for research, audit, context, and safety work
-- Optional web-search augmentation for deep lint findings
+## What You Get
+
+- A markdown-first wiki that stays usable in Obsidian or plain Git
+- A structured graph artifact with provenance, freshness, projects, and saved outputs
+- Save-first `query` and `explore` workflows, including `report`, `slides`, `chart`, and `image` outputs
+- Reviewable approval and candidate queues instead of silent page mutation
+- Local full-text search and a graph workspace for graph, search, preview, and review
+- Project-aware schemas and rollups for larger multi-root vaults
+- Repo-aware code ingestion with parser-backed module analysis and local import resolution
+- Human-only `wiki/insights/` pages that SwarmVault can read but does not rewrite
+- Session artifacts for compile, query, explore, lint, watch, and schedule runs
+- CLI, MCP, and installable agent instructions for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, and OpenCode
+- Pluggable providers including OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible APIs, and custom adapters
+
+## How It Works
+
+SwarmVault is not a “chat with your docs” wrapper. The vault itself is the product.
+
+- Ingest stores raw inputs immutably and localizes remote assets when needed.
+- Compile turns those inputs into durable source, concept, entity, code, and output pages.
+- Query and explore write useful results back into `wiki/outputs/` by default.
+- Review and candidate queues keep generated changes inspectable before promotion.
+- Search, graph serving, scheduling, watch mode, and MCP expose the same local artifacts instead of creating a second hidden system.
+
+The extraction layer is intentionally split:
+
+- deterministic parsing and source analysis where the runtime can do it locally
+- provider-backed synthesis where a vault-specific schema, cross-source reasoning, or advisory linting actually benefits from a model
+
+That keeps the durable artifacts inspectable and lets the vault improve over time instead of resetting every session.
 
 ## Install
 
@@ -75,6 +108,20 @@ And you can expose the vault to compatible agents over MCP:
 swarmvault mcp
 ```
 
+## Platform Support
+
+| Agent | Install target |
+|-------|----------------|
+| Codex | `swarmvault install --agent codex` |
+| Claude Code | `swarmvault install --agent claude` |
+| Cursor | `swarmvault install --agent cursor` |
+| Goose | `swarmvault install --agent goose` |
+| Pi | `swarmvault install --agent pi` |
+| Gemini CLI | `swarmvault install --agent gemini` |
+| OpenCode | `swarmvault install --agent opencode` |
+
+Codex, Goose, Pi, and OpenCode share the same canonical `AGENTS.md` managed block. Claude Code uses `CLAUDE.md`, Gemini CLI uses `GEMINI.md`, and Cursor writes `.cursor/rules/swarmvault.mdc`.
+
 ## Workspace Layout
 
 After `swarmvault init`, the workspace looks like this:
@@ -104,6 +151,7 @@ my-vault/
 |   |-- manifests/
 |   |-- extracts/
 |   |-- analyses/
+|   |-- code-index.json
 |   |-- graph.json
 |   |-- search.sqlite
 |   |-- sessions/
@@ -137,7 +185,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 ## Core Commands
 
 - `swarmvault init [--obsidian]`: create a workspace, default config, default schema file, and optional `.obsidian/` config
-- `swarmvault ingest <input> [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path or URL, and localize remote image references by default when the input is a URL
+- `swarmvault ingest <input> [--repo-root <path>] [--include <glob...>] [--exclude <glob...>] [--max-files <n>] [--no-gitignore] [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path, directory path, or URL, and localize remote image references by default when the input is a URL
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
 - `swarmvault compile [--approve]`: build wiki pages, graph data, and the search index using the vault schema as guidance, or stage a review bundle before applying changes
 - `swarmvault query "<question>" [--no-save] [--format markdown|report|slides|chart|image]`: answer questions against the compiled vault and save the result by default
@@ -155,6 +203,10 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
 
 When `ingest` targets a remote HTML or markdown URL, SwarmVault downloads referenced remote images into `raw/assets/<sourceId>/`, rewrites the stored markdown to local relative links, and records those files as manifest attachments. Use `--no-include-assets` to keep remote image references untouched, or `--max-asset-size` to cap the bytes fetched for a single remote asset.
+
+When `ingest` targets a local directory, SwarmVault walks the tree recursively, respects `.gitignore` by default, records `repoRelativePath` on matching manifests, and later writes `state/code-index.json` during compile so local imports can resolve across the code graph.
+
+Code-aware ingestion currently ships for JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, and PHP. JavaScript and TypeScript use the TypeScript compiler API; the other shipped languages use parser-backed local analyzers that emit the same module-page and graph model.
 
 ## Compounding Loop
 
