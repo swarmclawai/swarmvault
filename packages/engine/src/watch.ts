@@ -1,4 +1,5 @@
 import path from "node:path";
+import process from "node:process";
 import chokidar from "chokidar";
 import { initWorkspace } from "./config.js";
 import { importInbox } from "./ingest.js";
@@ -6,20 +7,26 @@ import { appendWatchRun } from "./logs.js";
 import type { WatchController, WatchOptions } from "./types.js";
 import { compileVault, lintVault } from "./vault.js";
 
+const MAX_BACKOFF_MS = 30_000;
+const BACKOFF_THRESHOLD = 3;
+const CRITICAL_THRESHOLD = 10;
+
 export async function watchVault(rootDir: string, options: WatchOptions = {}): Promise<WatchController> {
   const { paths } = await initWorkspace(rootDir);
-  const debounceMs = options.debounceMs ?? 900;
+  const baseDebounceMs = options.debounceMs ?? 900;
 
   let timer: NodeJS.Timeout | undefined;
   let running = false;
   let pending = false;
   let closed = false;
+  let consecutiveFailures = 0;
+  let currentDebounceMs = baseDebounceMs;
   const reasons = new Set<string>();
 
   const watcher = chokidar.watch(paths.inboxDir, {
     ignoreInitial: true,
     awaitWriteFinish: {
-      stabilityThreshold: Math.max(250, Math.floor(debounceMs / 2)),
+      stabilityThreshold: Math.max(250, Math.floor(baseDebounceMs / 2)),
       pollInterval: 100
     }
   });
@@ -37,7 +44,7 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
 
     timer = setTimeout(() => {
       void runCycle();
-    }, debounceMs);
+    }, currentDebounceMs);
   };
 
   const runCycle = async () => {
@@ -72,9 +79,24 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
         const findings = await lintVault(rootDir);
         lintFindingCount = findings.length;
       }
+
+      consecutiveFailures = 0;
+      currentDebounceMs = baseDebounceMs;
     } catch (caught) {
       success = false;
       error = caught instanceof Error ? caught.message : String(caught);
+      consecutiveFailures++;
+
+      if (consecutiveFailures >= CRITICAL_THRESHOLD) {
+        process.stderr.write(
+          `[swarmvault watch] ${consecutiveFailures} consecutive failures. Check vault state. Continuing at max backoff.\n`
+        );
+      }
+
+      if (consecutiveFailures >= BACKOFF_THRESHOLD) {
+        const multiplier = 2 ** (consecutiveFailures - BACKOFF_THRESHOLD);
+        currentDebounceMs = Math.min(baseDebounceMs * multiplier, MAX_BACKOFF_MS);
+      }
     } finally {
       const finishedAt = new Date();
       await appendWatchRun(rootDir, {

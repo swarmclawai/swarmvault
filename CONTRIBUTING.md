@@ -39,6 +39,18 @@ If you are filing a bug, include:
 - Expected behavior
 - Actual behavior
 
+## Documentation Site
+
+The documentation website lives in a **separate repository**: `swarmclawai/swarmvault-site`.
+
+When you change CLI commands, add new features, or modify behavior:
+
+- Update the corresponding MDX file in `web/src/content/docs/`
+- If you add a new command or page, also update the navigation in `web/src/lib/docs-nav.ts`
+- The docs site uses Next.js 16 with static export — run `npm run build` in `web/` to verify
+
+This sync is currently manual. Documentation PRs should be opened against the `swarmvault-site` repository.
+
 ## Design Notes
 
 SwarmVault is not trying to be a generic chat wrapper around a file upload. The intended contribution direction is toward a compounding vault workflow where outputs become reusable artifacts.
