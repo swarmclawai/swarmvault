@@ -31,6 +31,7 @@ export type ViewerGraphEdge = {
   target: string;
   relation: string;
   status: string;
+  evidenceClass?: string;
   confidence?: number;
 };
 
@@ -84,6 +85,61 @@ export type ViewerPagePayload = {
   frontmatter: Record<string, unknown>;
   content: string;
   assets: ViewerOutputAsset[];
+};
+
+export type ViewerGraphQueryResult = {
+  question: string;
+  traversal: "bfs" | "dfs";
+  seedNodeIds: string[];
+  seedPageIds: string[];
+  visitedNodeIds: string[];
+  visitedEdgeIds: string[];
+  pageIds: string[];
+  communities: string[];
+  summary: string;
+  matches: Array<{
+    type: "node" | "page";
+    id: string;
+    label: string;
+    score: number;
+  }>;
+};
+
+export type ViewerGraphPathResult = {
+  from: string;
+  to: string;
+  resolvedFromNodeId?: string;
+  resolvedToNodeId?: string;
+  found: boolean;
+  nodeIds: string[];
+  edgeIds: string[];
+  pageIds: string[];
+  summary: string;
+};
+
+export type ViewerGraphExplainResult = {
+  target: string;
+  node: ViewerGraphNode;
+  page?: {
+    id: string;
+    path: string;
+    title: string;
+  };
+  community?: {
+    id: string;
+    label: string;
+  };
+  neighbors: Array<{
+    nodeId: string;
+    label: string;
+    type: string;
+    pageId?: string;
+    relation: string;
+    direction: "incoming" | "outgoing";
+    confidence: number;
+    evidenceClass: string;
+  }>;
+  summary: string;
 };
 
 export type ViewerApprovalSummary = {
@@ -251,6 +307,45 @@ export async function fetchViewerPage(path: string): Promise<ViewerPagePayload> 
     throw new Error(`Failed to load page: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<ViewerPagePayload>;
+}
+
+export async function fetchGraphQuery(
+  question: string,
+  options: {
+    traversal?: "bfs" | "dfs";
+    budget?: number;
+  } = {}
+): Promise<ViewerGraphQueryResult> {
+  const params = new URLSearchParams({
+    q: question,
+    traversal: options.traversal ?? "bfs",
+    budget: String(options.budget ?? 12)
+  });
+  const response = await fetch(`/api/graph/query?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Failed to query graph: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<ViewerGraphQueryResult>;
+}
+
+export async function fetchGraphPath(from: string, to: string): Promise<ViewerGraphPathResult> {
+  const params = new URLSearchParams({
+    from,
+    to
+  });
+  const response = await fetch(`/api/graph/path?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Failed to find graph path: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<ViewerGraphPathResult>;
+}
+
+export async function fetchGraphExplain(target: string): Promise<ViewerGraphExplainResult> {
+  const response = await fetch(`/api/graph/explain?target=${encodeURIComponent(target)}`);
+  if (!response.ok) {
+    throw new Error(`Failed to explain graph target: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<ViewerGraphExplainResult>;
 }
 
 export async function fetchApprovals(): Promise<ViewerApprovalSummary[]> {

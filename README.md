@@ -19,6 +19,7 @@ swarmvault init --obsidian
 swarmvault ingest ./notes
 swarmvault compile
 swarmvault query "What is the auth flow?"
+swarmvault graph query "How does auth connect to billing?"
 swarmvault graph serve
 ```
 
@@ -26,7 +27,7 @@ swarmvault graph serve
 my-vault/
 ├── swarmvault.schema.md
 ├── raw/                   immutable source files and localized assets
-├── wiki/                  compiled source, concept, entity, code, and output pages
+├── wiki/                  compiled source, concept, entity, code, output, and graph pages
 ├── state/                 graph.json, search.sqlite, sessions, approvals, schedules
 ├── .obsidian/             optional local workspace config
 └── agent/                 generated agent-facing helpers
@@ -36,6 +37,7 @@ my-vault/
 
 - A markdown-first wiki that stays usable in Obsidian or plain Git
 - A structured graph artifact with provenance, freshness, projects, and saved outputs
+- Graph-first report pages plus deterministic local graph query, path, explain, and god-node tools
 - Save-first `query` and `explore` workflows, including `report`, `slides`, `chart`, and `image` outputs
 - Reviewable approval and candidate queues instead of silent page mutation
 - Local full-text search and a graph workspace for graph, search, preview, and review
@@ -91,6 +93,10 @@ swarmvault lint --deep
 swarmvault schedule list
 swarmvault review list
 swarmvault candidate list
+swarmvault graph query "Which nodes bridge the largest communities?"
+swarmvault graph path "module:src/auth.ts" "concept:billing"
+swarmvault graph explain "concept:billing"
+swarmvault graph god-nodes
 swarmvault graph serve
 swarmvault graph export --html ./exports/graph.html
 ```
@@ -136,6 +142,7 @@ my-vault/
 |   `-- assets/
 |-- wiki/
 |   |-- index.md
+|   |-- graph/
 |   |-- log.md
 |   |-- candidates/
 |   |-- code/
@@ -196,6 +203,10 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault mcp`: start a local MCP server over stdio
 - `swarmvault review list|show|accept|reject`: inspect and resolve staged approval bundles
 - `swarmvault candidate list|promote|archive`: inspect and resolve staged concept and entity candidates
+- `swarmvault graph query "<question>" [--dfs] [--budget <n>]`: run a deterministic local graph traversal seeded from local search
+- `swarmvault graph path <from> <to>`: return the shortest high-confidence path between two graph targets
+- `swarmvault graph explain <target>`: inspect graph metadata, community membership, neighbors, and provenance for a node or page
+- `swarmvault graph god-nodes [--limit <n>]`: list the most connected bridge-heavy nodes in the current graph
 - `swarmvault graph serve`: open the local graph workspace with graph, search, and page preview
 - `swarmvault graph export --html <output>`: export the graph workspace as a standalone HTML file
 - `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode`: install agent-specific rules
@@ -217,6 +228,7 @@ SwarmVault is designed so useful work compounds:
 - saved outputs are indexed immediately into search and the graph page registry
 - saved outputs immediately refresh related source, concept, and entity pages
 - `chart` and `image` saves also write local assets into `wiki/outputs/assets/<slug>/`
+- compile also writes `wiki/graph/report.md`, `wiki/graph/index.md`, and per-community graph summary pages
 - new concept and entity pages land in `wiki/candidates/` first, then promote on the next matching compile
 - `review` turns `compile --approve` bundles into a local accept/reject workflow instead of a dead-end staging directory
 - `candidate` lets you promote or archive staged concept and entity pages without waiting for another compile
@@ -335,7 +347,7 @@ pnpm live:smoke:ollama
 OPENAI_API_KEY=... pnpm live:smoke:openai
 ```
 
-The heuristic published-package smoke lane validates saved visual outputs, project-aware code ingestion, candidate and review workflows, standalone `graph export --html`, review-staged scheduled query runs, watch automation, richer graph workspace APIs, and MCP search/chart queries against the real npm install path.
+The heuristic published-package smoke lane validates saved visual outputs, project-aware code ingestion, candidate and review workflows, graph report generation, standalone `graph export --html`, review-staged scheduled query runs, watch automation, richer graph workspace APIs, and MCP graph/query surfaces against the real npm install path.
 
 See [docs/live-testing.md](./docs/live-testing.md) for the published-package smoke flow, CI workflow, and the manual live checklist.
 

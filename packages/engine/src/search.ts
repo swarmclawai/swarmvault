@@ -40,7 +40,9 @@ function normalizeKind(value: unknown): PageKind | undefined {
     value === "concept" ||
     value === "entity" ||
     value === "output" ||
-    value === "insight"
+    value === "insight" ||
+    value === "graph_report" ||
+    value === "community_summary"
     ? value
     : undefined;
 }

@@ -5,7 +5,7 @@ import type { VaultSchema } from "./schema.js";
 import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
-const ANALYSIS_FORMAT_VERSION = 3;
+const ANALYSIS_FORMAT_VERSION = 4;
 
 const sourceAnalysisSchema = z.object({
   title: z.string().min(1),
@@ -147,6 +147,7 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
       citation: manifest.sourceId
     })),
     questions: concepts.slice(0, 3).map((term) => `How does ${term.name} relate to ${manifest.title}?`),
+    rationales: [],
     producedAt: new Date().toISOString()
   };
 }
@@ -200,6 +201,7 @@ async function providerAnalysis(
       citation: claim.citation
     })),
     questions: parsed.questions,
+    rationales: [],
     producedAt: new Date().toISOString()
   };
 }
@@ -239,6 +241,7 @@ export async function analyzeSource(
       entities: [],
       claims: [],
       questions: [],
+      rationales: [],
       producedAt: new Date().toISOString()
     };
   } else if (provider.type === "heuristic") {

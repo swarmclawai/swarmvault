@@ -1,7 +1,16 @@
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import type { CodeAnalysis, CodeDiagnostic, CodeImport, CodeLanguage, CodeSymbol, CodeSymbolKind, SourceManifest } from "./types.js";
+import type {
+  CodeAnalysis,
+  CodeDiagnostic,
+  CodeImport,
+  CodeLanguage,
+  CodeSymbol,
+  CodeSymbolKind,
+  SourceManifest,
+  SourceRationale
+} from "./types.js";
 import { normalizeWhitespace, slugify, toPosix, truncate, uniqueBy } from "./utils.js";
 
 const require = createRequire(import.meta.url);
@@ -49,6 +58,18 @@ type TreeParser = {
   setLanguage(language: TreeLanguage | null): void;
   parse(source: string): Tree | null;
 };
+
+const RATIONALE_MARKERS = ["NOTE:", "IMPORTANT:", "HACK:", "WHY:", "RATIONALE:"];
+
+function stripKnownCommentPrefix(line: string): string {
+  let next = line.trim();
+  for (const prefix of ["/**", "/*", "*/", "//", "#", "--", "*"]) {
+    if (next.startsWith(prefix)) {
+      next = next.slice(prefix.length).trimStart();
+    }
+  }
+  return next;
+}
 
 type TreeSitterModule = {
   Parser: {
@@ -227,8 +248,138 @@ function finalizeCodeAnalysis(
   };
 }
 
+function cleanCommentText(value: string): string {
+  return normalizeWhitespace(
+    value
+      .split(/\r?\n/)
+      .map((line) => stripKnownCommentPrefix(line))
+      .join("\n")
+      .trim()
+  );
+}
+
+function normalizeRationaleText(value: string): string {
+  let next = normalizeWhitespace(value.trim());
+  const upper = next.toUpperCase();
+  for (const marker of RATIONALE_MARKERS) {
+    if (upper.startsWith(marker)) {
+      next = next.slice(marker.length).trimStart();
+      break;
+    }
+  }
+  return next;
+}
+
+function rationaleKindFromText(text: string): SourceRationale["kind"] {
+  const upper = text.toUpperCase();
+  return RATIONALE_MARKERS.some((marker) => upper.startsWith(marker)) ? "marker" : "comment";
+}
+
+function isLikelyRationaleText(value: string): boolean {
+  if (value.length < 20) {
+    return false;
+  }
+  const upper = value.toUpperCase();
+  if (RATIONALE_MARKERS.some((marker) => upper.startsWith(marker))) {
+    return true;
+  }
+  const lower = value.toLowerCase();
+  return ["why", "because", "tradeoff", "important", "avoid", "workaround", "reason", "so that", "in order to"].some((needle) =>
+    lower.includes(needle)
+  );
+}
+
+function makeRationale(
+  manifest: SourceManifest,
+  index: number,
+  text: string,
+  kind: SourceRationale["kind"],
+  symbolName?: string
+): SourceRationale | null {
+  const normalized = normalizeRationaleText(cleanCommentText(text));
+  if (!isLikelyRationaleText(normalized)) {
+    return null;
+  }
+  return {
+    id: `rationale:${manifest.sourceId}:${index}`,
+    text: truncate(normalized, 280),
+    citation: manifest.sourceId,
+    kind,
+    symbolName
+  };
+}
+
 function nodeText(node: TreeNode | null | undefined): string {
   return node?.text ?? "";
+}
+
+function moduleDocstringNode(rootNode: TreeNode): TreeNode | null {
+  const first = rootNode.namedChildren[0];
+  if (!first || first.type !== "expression_statement") {
+    return null;
+  }
+  return first.namedChildren.find((child) => child?.type === "string" || child?.type === "concatenated_string") ?? null;
+}
+
+function bodyDocstringNode(node: TreeNode | null | undefined): TreeNode | null {
+  const body = node?.childForFieldName("body");
+  if (!body) {
+    return null;
+  }
+  const first = body.namedChildren[0];
+  if (!first || first.type !== "expression_statement") {
+    return null;
+  }
+  return first.namedChildren.find((child) => child?.type === "string" || child?.type === "concatenated_string") ?? null;
+}
+
+function unquoteDocstringText(value: string): string {
+  return value
+    .trim()
+    .replace(/^("""|'''|"|')/, "")
+    .replace(/("""|'''|"|')$/, "");
+}
+
+function commentNodes(rootNode: TreeNode): TreeNode[] {
+  return rootNode.descendantsOfType("comment").filter((node): node is TreeNode => node !== null);
+}
+
+function extractTreeSitterRationales(
+  manifest: SourceManifest,
+  language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">,
+  rootNode: TreeNode
+): SourceRationale[] {
+  const results: SourceRationale[] = [];
+  let index = 0;
+  const push = (text: string, kind: SourceRationale["kind"], symbolName?: string) => {
+    const rationale = makeRationale(manifest, index + 1, text, kind, symbolName);
+    if (rationale) {
+      results.push(rationale);
+      index += 1;
+    }
+  };
+
+  if (language === "python") {
+    const moduleDocstring = moduleDocstringNode(rootNode);
+    if (moduleDocstring) {
+      push(unquoteDocstringText(moduleDocstring.text), "docstring");
+    }
+    for (const node of rootNode
+      .descendantsOfType(["class_definition", "function_definition"])
+      .filter((item): item is TreeNode => item !== null)) {
+      const name = extractIdentifier(node.childForFieldName("name"));
+      const docstring = bodyDocstringNode(node);
+      if (docstring) {
+        push(unquoteDocstringText(docstring.text), "docstring", name);
+      }
+    }
+  }
+
+  for (const commentNode of commentNodes(rootNode)) {
+    push(commentNode.text, rationaleKindFromText(commentNode.text));
+  }
+
+  return uniqueBy(results, (item) => `${item.symbolName ?? ""}:${item.text.toLowerCase()}`);
 }
 
 function findNamedChild(node: TreeNode | null | undefined, type: string): TreeNode | null {
@@ -1040,49 +1191,56 @@ export async function analyzeTreeSitterCode(
   manifest: SourceManifest,
   content: string,
   language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">
-): Promise<CodeAnalysis> {
+): Promise<{
+  code: CodeAnalysis;
+  rationales: SourceRationale[];
+}> {
   const module = await getTreeSitterModule();
   await ensureTreeSitterInit(module);
   const parser = new module.Parser();
   parser.setLanguage(await loadLanguage(language));
   const tree = parser.parse(content);
   if (!tree) {
-    return finalizeCodeAnalysis(
-      manifest,
-      language,
-      [],
-      [],
-      [],
-      [
-        {
-          code: 9000,
-          category: "error",
-          message: `Failed to parse ${language} source.`,
-          line: 1,
-          column: 1
-        }
-      ]
-    );
+    return {
+      code: finalizeCodeAnalysis(
+        manifest,
+        language,
+        [],
+        [],
+        [],
+        [
+          {
+            code: 9000,
+            category: "error",
+            message: `Failed to parse ${language} source.`,
+            line: 1,
+            column: 1
+          }
+        ]
+      ),
+      rationales: []
+    };
   }
 
   try {
     const diagnostics = diagnosticsFromTree(tree.rootNode);
+    const rationales = extractTreeSitterRationales(manifest, language, tree.rootNode);
     switch (language) {
       case "python":
-        return pythonCodeAnalysis(manifest, tree.rootNode, diagnostics);
+        return { code: pythonCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "go":
-        return goCodeAnalysis(manifest, tree.rootNode, diagnostics);
+        return { code: goCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "rust":
-        return rustCodeAnalysis(manifest, tree.rootNode, diagnostics);
+        return { code: rustCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "java":
-        return javaCodeAnalysis(manifest, tree.rootNode, diagnostics);
+        return { code: javaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "csharp":
-        return csharpCodeAnalysis(manifest, tree.rootNode, diagnostics);
+        return { code: csharpCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "php":
-        return phpCodeAnalysis(manifest, tree.rootNode, diagnostics);
+        return { code: phpCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "c":
       case "cpp":
-        return cFamilyCodeAnalysis(manifest, language, tree.rootNode, diagnostics);
+        return { code: cFamilyCodeAnalysis(manifest, language, tree.rootNode, diagnostics), rationales };
     }
   } finally {
     tree.delete();

@@ -9,9 +9,21 @@ import { ingestInput, listManifests } from "./ingest.js";
 import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact } from "./types.js";
 import { fileExists, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
-import { compileVault, getWorkspaceInfo, lintVault, listPages, queryVault, readPage, searchVault } from "./vault.js";
+import {
+  compileVault,
+  explainGraphVault,
+  getWorkspaceInfo,
+  lintVault,
+  listGodNodes,
+  listPages,
+  pathGraphVault,
+  queryGraphVault,
+  queryVault,
+  readPage,
+  searchVault
+} from "./vault.js";
 
-const SERVER_VERSION = "0.1.18";
+const SERVER_VERSION = "0.1.19";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -75,6 +87,79 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     async ({ limit }) => {
       const manifests = await listManifests(rootDir);
       return asToolText(limit ? manifests.slice(0, limit) : manifests);
+    }
+  );
+
+  server.registerTool(
+    "query_graph",
+    {
+      description: "Traverse the local graph from search seeds without calling a model provider.",
+      inputSchema: {
+        question: z.string().min(1).describe("Question or graph search seed"),
+        traversal: z.enum(["bfs", "dfs"]).optional().describe("Traversal strategy"),
+        budget: z.number().int().min(3).max(50).optional().describe("Maximum nodes to summarize")
+      }
+    },
+    async ({ question, traversal, budget }) => {
+      const result = await queryGraphVault(rootDir, question, {
+        traversal,
+        budget
+      });
+      return asToolText(result);
+    }
+  );
+
+  server.registerTool(
+    "get_node",
+    {
+      description: "Explain a graph node, its page, community, and neighbors.",
+      inputSchema: {
+        target: z.string().min(1).describe("Node or page label/id")
+      }
+    },
+    async ({ target }) => {
+      return asToolText(await explainGraphVault(rootDir, target));
+    }
+  );
+
+  server.registerTool(
+    "get_neighbors",
+    {
+      description: "Return the neighbors of a graph node or page target.",
+      inputSchema: {
+        target: z.string().min(1).describe("Node or page label/id")
+      }
+    },
+    async ({ target }) => {
+      const explanation = await explainGraphVault(rootDir, target);
+      return asToolText(explanation.neighbors);
+    }
+  );
+
+  server.registerTool(
+    "shortest_path",
+    {
+      description: "Find the shortest graph path between two targets.",
+      inputSchema: {
+        from: z.string().min(1).describe("Start node/page label or id"),
+        to: z.string().min(1).describe("End node/page label or id")
+      }
+    },
+    async ({ from, to }) => {
+      return asToolText(await pathGraphVault(rootDir, from, to));
+    }
+  );
+
+  server.registerTool(
+    "god_nodes",
+    {
+      description: "List the highest-connectivity graph nodes.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(25).optional().describe("Maximum nodes to return")
+      }
+    },
+    async ({ limit }) => {
+      return asToolText(await listGodNodes(rootDir, limit ?? 10));
     }
   );
 

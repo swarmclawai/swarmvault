@@ -31,6 +31,8 @@ swarmvault query "What keeps recurring?"
 swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
+swarmvault graph query "Which nodes bridge the biggest clusters?"
+swarmvault graph explain "concept:drift"
 swarmvault graph serve
 swarmvault graph export --html ./exports/graph.html
 ```
@@ -177,11 +179,27 @@ The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `sw
 
 ### `swarmvault graph serve`
 
-Start the local graph workspace backed by `state/graph.json`, `/api/search`, and `/api/page`.
+Start the local graph workspace backed by `state/graph.json`, `/api/search`, `/api/page`, and local graph query/path/explain endpoints.
+
+### `swarmvault graph query "<question>" [--dfs] [--budget <n>]`
+
+Run a deterministic local graph traversal seeded from local search and graph labels.
+
+### `swarmvault graph path <from> <to>`
+
+Return the shortest high-confidence path between two graph targets.
+
+### `swarmvault graph explain <target>`
+
+Inspect graph metadata, community membership, neighbors, and provenance for a node or page.
+
+### `swarmvault graph god-nodes [--limit <n>]`
+
+List the most connected bridge-heavy nodes in the current graph.
 
 ### `swarmvault graph export --html <output>`
 
-Export the graph workspace as a standalone HTML file with embedded graph and page data for offline sharing.
+Export the graph workspace as a standalone HTML file with embedded graph and page data for offline sharing. The exported file keeps read-only graph browsing, search, and page preview. The live graph query/path/explain actions remain part of `graph serve` and the MCP surface.
 
 ### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode>`
 

@@ -13,9 +13,12 @@ import { fileExists, readJsonFile } from "./utils.js";
 import {
   acceptApproval,
   archiveCandidate,
+  explainGraphVault,
   listApprovals,
   listCandidates,
+  pathGraphVault,
   promoteCandidate,
+  queryGraphVault,
   readApproval,
   rejectApproval
 } from "./vault.js";
@@ -108,6 +111,37 @@ export async function startGraphServer(rootDir: string, port?: number): Promise<
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(await fs.readFile(paths.graphPath, "utf8"));
+      return;
+    }
+
+    if (url.pathname === "/api/graph/query") {
+      const question = url.searchParams.get("q") ?? "";
+      const traversal = url.searchParams.get("traversal");
+      const budget = Number.parseInt(url.searchParams.get("budget") ?? "12", 10);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          await queryGraphVault(rootDir, question, {
+            traversal: traversal === "dfs" ? "dfs" : "bfs",
+            budget: Number.isFinite(budget) ? budget : 12
+          })
+        )
+      );
+      return;
+    }
+
+    if (url.pathname === "/api/graph/path") {
+      const from = url.searchParams.get("from") ?? "";
+      const to = url.searchParams.get("to") ?? "";
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(await pathGraphVault(rootDir, from, to)));
+      return;
+    }
+
+    if (url.pathname === "/api/graph/explain") {
+      const target = url.searchParams.get("target") ?? "";
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(await explainGraphVault(rootDir, target)));
       return;
     }
 

@@ -5,6 +5,7 @@ import {
   acceptApproval,
   archiveCandidate,
   compileVault,
+  explainGraphVault,
   exploreVault,
   exportGraphHtml,
   importInbox,
@@ -15,9 +16,12 @@ import {
   lintVault,
   listApprovals,
   listCandidates,
+  listGodNodes,
   listSchedules,
   loadVaultConfig,
+  pathGraphVault,
   promoteCandidate,
+  queryGraphVault,
   queryVault,
   readApproval,
   rejectApproval,
@@ -41,9 +45,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.18";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.19";
   } catch {
-    return "0.1.18";
+    return "0.1.19";
   }
 }
 
@@ -274,6 +278,68 @@ graph
       emitJson({ outputPath });
     } else {
       log(`Exported graph HTML to ${outputPath}`);
+    }
+  });
+
+graph
+  .command("query")
+  .description("Traverse the compiled graph deterministically from local search seeds.")
+  .argument("<question>", "Question or graph search seed")
+  .option("--dfs", "Prefer a depth-first traversal instead of breadth-first", false)
+  .option("--budget <n>", "Maximum number of graph nodes to summarize")
+  .action(async (question: string, options: { dfs?: boolean; budget?: string }) => {
+    const budget = options.budget ? Number.parseInt(options.budget, 10) : undefined;
+    const result = await queryGraphVault(process.cwd(), question, {
+      traversal: options.dfs ? "dfs" : "bfs",
+      budget: Number.isFinite(budget) ? budget : undefined
+    });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(result.summary);
+  });
+
+graph
+  .command("path")
+  .description("Find the shortest graph path between two nodes or pages.")
+  .argument("<from>", "Source node/page label or id")
+  .argument("<to>", "Target node/page label or id")
+  .action(async (from: string, to: string) => {
+    const result = await pathGraphVault(process.cwd(), from, to);
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(result.summary);
+  });
+
+graph
+  .command("explain")
+  .description("Explain a graph node, its page, community, and neighbors.")
+  .argument("<target>", "Node/page label or id")
+  .action(async (target: string) => {
+    const result = await explainGraphVault(process.cwd(), target);
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(result.summary);
+  });
+
+graph
+  .command("god-nodes")
+  .description("List the highest-connectivity non-source graph nodes.")
+  .option("--limit <n>", "Maximum number of nodes to return", "10")
+  .action(async (options: { limit?: string }) => {
+    const limit = Number.parseInt(options.limit ?? "10", 10);
+    const result = await listGodNodes(process.cwd(), Number.isFinite(limit) ? limit : 10);
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    for (const node of result) {
+      log(`${node.label} degree=${node.degree ?? 0} bridge=${node.bridgeScore ?? 0}`);
     }
   });
 

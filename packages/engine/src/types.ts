@@ -33,9 +33,10 @@ export type ProviderType = z.infer<typeof providerTypeSchema>;
 export const agentTypeSchema = z.enum(["codex", "claude", "cursor", "goose", "pi", "gemini", "opencode"]);
 export type AgentType = z.infer<typeof agentTypeSchema>;
 
-export type PageKind = "index" | "source" | "module" | "concept" | "entity" | "output" | "insight";
+export type PageKind = "index" | "source" | "module" | "concept" | "entity" | "output" | "insight" | "graph_report" | "community_summary";
 export type Freshness = "fresh" | "stale";
 export type ClaimStatus = "extracted" | "inferred" | "conflicted" | "stale";
+export type EvidenceClass = "extracted" | "inferred" | "ambiguous";
 export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore";
 export type OutputFormat = "markdown" | "report" | "slides" | "chart" | "image";
@@ -312,6 +313,14 @@ export interface CodeAnalysis {
   diagnostics: CodeDiagnostic[];
 }
 
+export interface SourceRationale {
+  id: string;
+  text: string;
+  citation: string;
+  kind: "docstring" | "comment" | "marker";
+  symbolName?: string;
+}
+
 export interface CodeIndexEntry {
   sourceId: string;
   moduleId: string;
@@ -339,13 +348,14 @@ export interface SourceAnalysis {
   entities: AnalyzedTerm[];
   claims: SourceClaim[];
   questions: string[];
+  rationales: SourceRationale[];
   code?: CodeAnalysis;
   producedAt: string;
 }
 
 export interface GraphNode {
   id: string;
-  type: "source" | "concept" | "entity" | "module" | "symbol";
+  type: "source" | "concept" | "entity" | "module" | "symbol" | "rationale";
   label: string;
   pageId?: string;
   freshness?: Freshness;
@@ -367,6 +377,7 @@ export interface GraphEdge {
   target: string;
   relation: string;
   status: ClaimStatus;
+  evidenceClass: EvidenceClass;
   confidence: number;
   provenance: string[];
 }
@@ -409,6 +420,61 @@ export interface GraphArtifact {
   }>;
   sources: SourceManifest[];
   pages: GraphPage[];
+}
+
+export interface GraphQueryMatch {
+  type: "node" | "page";
+  id: string;
+  label: string;
+  score: number;
+}
+
+export interface GraphQueryResult {
+  question: string;
+  traversal: "bfs" | "dfs";
+  seedNodeIds: string[];
+  seedPageIds: string[];
+  visitedNodeIds: string[];
+  visitedEdgeIds: string[];
+  pageIds: string[];
+  communities: string[];
+  summary: string;
+  matches: GraphQueryMatch[];
+}
+
+export interface GraphPathResult {
+  from: string;
+  to: string;
+  resolvedFromNodeId?: string;
+  resolvedToNodeId?: string;
+  found: boolean;
+  nodeIds: string[];
+  edgeIds: string[];
+  pageIds: string[];
+  summary: string;
+}
+
+export interface GraphExplainNeighbor {
+  nodeId: string;
+  label: string;
+  type: GraphNode["type"];
+  pageId?: string;
+  relation: string;
+  direction: "incoming" | "outgoing";
+  confidence: number;
+  evidenceClass: EvidenceClass;
+}
+
+export interface GraphExplainResult {
+  target: string;
+  node: GraphNode;
+  page?: GraphPage;
+  community?: {
+    id: string;
+    label: string;
+  };
+  neighbors: GraphExplainNeighbor[];
+  summary: string;
 }
 
 export interface ApprovalEntry {

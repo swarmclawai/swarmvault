@@ -17,7 +17,7 @@ function buildManagedBlock(target: "agents" | "claude" | "gemini" | "cursor"): s
     "- Read `swarmvault.schema.md` before compile or query style work. It is the canonical schema path.",
     "- Treat `raw/` as immutable source input.",
     "- Treat `wiki/` as generated markdown owned by the agent and compiler workflow.",
-    "- Read `wiki/index.md` before broad file searching when answering SwarmVault questions.",
+    "- Read `wiki/graph/report.md` before broad file searching when it exists; otherwise start with `wiki/index.md`.",
     "- Preserve frontmatter fields including `page_id`, `source_ids`, `node_ids`, `freshness`, and `source_hashes`.",
     "- Save high-value answers back into `wiki/outputs/` instead of leaving them only in chat.",
     "- Prefer `swarmvault ingest`, `swarmvault compile`, `swarmvault query`, and `swarmvault lint` for SwarmVault maintenance tasks.",

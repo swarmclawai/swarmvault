@@ -7,13 +7,19 @@ import {
   fetchApprovals,
   fetchCandidates,
   fetchGraphArtifact,
+  fetchGraphExplain,
+  fetchGraphPath,
+  fetchGraphQuery,
   fetchViewerPage,
   searchViewerPages,
   type ViewerApprovalDetail,
   type ViewerApprovalSummary,
   type ViewerCandidateRecord,
   type ViewerGraphArtifact,
+  type ViewerGraphExplainResult,
   type ViewerGraphNode,
+  type ViewerGraphPathResult,
+  type ViewerGraphQueryResult,
   type ViewerOutputAsset,
   type ViewerPagePayload,
   type ViewerSearchResult
@@ -23,6 +29,7 @@ const COLORS: Record<string, string> = {
   source: "#f59e0b",
   module: "#fb7185",
   symbol: "#8b5cf6",
+  rationale: "#14b8a6",
   concept: "#0ea5e9",
   entity: "#22c55e"
 };
@@ -52,11 +59,19 @@ export function App() {
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [pageStatusFilter, setPageStatusFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [communityFilter, setCommunityFilter] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ViewerSearchResult[]>([]);
+  const [graphQueryInput, setGraphQueryInput] = useState("");
+  const [graphQueryResult, setGraphQueryResult] = useState<ViewerGraphQueryResult | null>(null);
+  const [pathFrom, setPathFrom] = useState("");
+  const [pathTo, setPathTo] = useState("");
+  const [pathResult, setPathResult] = useState<ViewerGraphPathResult | null>(null);
+  const [graphExplain, setGraphExplain] = useState<ViewerGraphExplainResult | null>(null);
   const [activePage, setActivePage] = useState<ViewerPagePayload | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [graphError, setGraphError] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ViewerApprovalSummary[]>([]);
   const [approvalDetail, setApprovalDetail] = useState<ViewerApprovalDetail | null>(null);
   const [selectedApprovalId, setSelectedApprovalId] = useState<string>("");
@@ -77,6 +92,9 @@ export function App() {
   const projectOptions = uniqueStrings(graph?.pages?.flatMap((page) => page.projectIds ?? []) ?? []).sort((left, right) =>
     left.localeCompare(right)
   );
+  const communityOptions = uniqueStrings((graph?.communities ?? []).map((community) => community.id)).sort((left, right) =>
+    left.localeCompare(right)
+  );
   const backlinkPages = currentGraphPage
     ? uniqueStrings(currentGraphPage.backlinks)
         .map((pageId) => graph?.pages?.find((page) => page.id === pageId) ?? null)
@@ -87,6 +105,7 @@ export function App() {
         .map((pageId) => graph?.pages?.find((page) => page.id === pageId) ?? null)
         .filter((page): page is NonNullable<typeof page> => Boolean(page))
     : [];
+  const graphPageLinks = graph?.pages?.filter((page) => page.kind === "graph_report" || page.kind === "community_summary") ?? [];
 
   const refreshWorkspace = useCallback(async () => {
     let nextApprovalError: string | null = null;
@@ -155,17 +174,27 @@ export function App() {
       return;
     }
 
+    const allowedNodeIds = new Set(
+      graph.nodes.filter((node) => communityFilter === "all" || node.communityId === communityFilter).map((node) => node.id)
+    );
+    const pathNodeSet = new Set(pathResult?.nodeIds ?? []);
+    const pathEdgeSet = new Set(pathResult?.edgeIds ?? []);
     cyRef.current?.destroy();
     const cy = cytoscape({
       container: containerRef.current,
       elements: [
-        ...graph.nodes.map((node) => ({
-          data: { ...node, color: COLORS[node.type] ?? "#94a3b8" }
-        })),
+        ...graph.nodes
+          .filter((node) => allowedNodeIds.has(node.id))
+          .map((node) => ({
+            data: { ...node, color: COLORS[node.type] ?? "#94a3b8" },
+            classes: pathNodeSet.has(node.id) ? "path-node" : ""
+          })),
         ...graph.edges
+          .filter((edge) => allowedNodeIds.has(edge.source) && allowedNodeIds.has(edge.target))
           .filter((edge) => edgeStatusFilter === "all" || edge.status === edgeStatusFilter)
           .map((edge) => ({
-            data: edge
+            data: edge,
+            classes: pathEdgeSet.has(edge.id) ? "path-edge" : ""
           }))
       ],
       layout: {
@@ -214,6 +243,14 @@ export function App() {
           }
         },
         {
+          selector: 'node[type = "rationale"]',
+          style: {
+            shape: "hexagon",
+            width: 34,
+            height: 34
+          }
+        },
+        {
           selector: "edge",
           style: {
             width: 2,
@@ -224,6 +261,21 @@ export function App() {
             label: "data(relation)",
             "font-size": 9,
             color: "#cbd5e1"
+          }
+        },
+        {
+          selector: ".path-node",
+          style: {
+            "border-width": 4,
+            "border-color": "#38bdf8"
+          }
+        },
+        {
+          selector: ".path-edge",
+          style: {
+            width: 4,
+            "line-color": "#38bdf8",
+            "target-arrow-color": "#38bdf8"
           }
         },
         {
@@ -245,7 +297,30 @@ export function App() {
 
     cyRef.current = cy;
     return () => cy.destroy();
-  }, [graph, edgeStatusFilter]);
+  }, [communityFilter, edgeStatusFilter, graph, pathResult]);
+
+  useEffect(() => {
+    if (!selected) {
+      setGraphExplain(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchGraphExplain(selected.id)
+      .then((result) => {
+        if (!cancelled) {
+          setGraphExplain(result);
+          setGraphError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setGraphError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
 
   useEffect(() => {
     const normalizedQuery = deferredQuery.trim();
@@ -370,6 +445,34 @@ export function App() {
     }
   };
 
+  const handleGraphQuery = async () => {
+    if (!graphQueryInput.trim()) {
+      setGraphQueryResult(null);
+      return;
+    }
+    try {
+      const result = await fetchGraphQuery(graphQueryInput, { budget: 12 });
+      setGraphQueryResult(result);
+      setGraphError(null);
+    } catch (error) {
+      setGraphError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleGraphPath = async () => {
+    if (!pathFrom.trim() || !pathTo.trim()) {
+      setPathResult(null);
+      return;
+    }
+    try {
+      const result = await fetchGraphPath(pathFrom, pathTo);
+      setPathResult(result);
+      setGraphError(null);
+    } catch (error) {
+      setGraphError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <main className="app-shell">
       <section className="app-header">
@@ -402,6 +505,8 @@ export function App() {
               <option value="entity">Entity</option>
               <option value="output">Output</option>
               <option value="insight">Insight</option>
+              <option value="graph_report">Graph report</option>
+              <option value="community_summary">Community summary</option>
               <option value="index">Index</option>
             </select>
           </label>
@@ -423,6 +528,17 @@ export function App() {
               {projectOptions.map((projectId) => (
                 <option key={projectId} value={projectId}>
                   {projectId}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter">
+            Community
+            <select value={communityFilter} onChange={(event) => setCommunityFilter(event.target.value)}>
+              <option value="all">All</option>
+              {communityOptions.map((communityId) => (
+                <option key={communityId} value={communityId}>
+                  {communityId}
                 </option>
               ))}
             </select>
@@ -461,6 +577,50 @@ export function App() {
       <section className="workspace">
         <div className="canvas" ref={containerRef} />
         <aside className="rail">
+          <section className="panel">
+            <h2>Graph Tools</h2>
+            {graphError ? <p>{graphError}</p> : null}
+            <div className="review-list">
+              <article className="review-card">
+                <span className="panel-label">query</span>
+                <input
+                  type="search"
+                  value={graphQueryInput}
+                  onChange={(event) => setGraphQueryInput(event.target.value)}
+                  placeholder="Ask the local graph"
+                />
+                <button type="button" className="action-button" onClick={() => void handleGraphQuery()}>
+                  Run
+                </button>
+                {graphQueryResult ? (
+                  <>
+                    <p>{graphQueryResult.summary}</p>
+                    <div className="action-row">
+                      {graphQueryResult.pageIds
+                        .map((pageId) => graph?.pages?.find((page) => page.id === pageId))
+                        .filter((page): page is NonNullable<typeof page> => Boolean(page))
+                        .slice(0, 4)
+                        .map((page) => (
+                          <button key={page.id} type="button" className="link-button" onClick={() => void openPagePath(page.path, page.id)}>
+                            {page.title}
+                          </button>
+                        ))}
+                    </div>
+                  </>
+                ) : null}
+              </article>
+              <article className="review-card">
+                <span className="panel-label">path</span>
+                <input type="text" value={pathFrom} onChange={(event) => setPathFrom(event.target.value)} placeholder="From" />
+                <input type="text" value={pathTo} onChange={(event) => setPathTo(event.target.value)} placeholder="To" />
+                <button type="button" className="action-button" onClick={() => void handleGraphPath()}>
+                  Highlight
+                </button>
+                {pathResult ? <p>{pathResult.summary}</p> : null}
+              </article>
+            </div>
+          </section>
+
           <section className="panel">
             <h2>Search Results</h2>
             {searchError ? <p>{searchError}</p> : null}
@@ -614,6 +774,30 @@ export function App() {
                 <p>Degree: {selected.degree ?? 0}</p>
                 <p>Bridge score: {selected.bridgeScore ?? 0}</p>
                 <p>God node: {selected.isGodNode ? "Yes" : "No"}</p>
+                {graphExplain?.neighbors.length ? (
+                  <div className="linked-pages">
+                    <span className="panel-label">Neighbors</span>
+                    <div className="action-row">
+                      {graphExplain.neighbors.slice(0, 8).map((neighbor) => (
+                        <button
+                          key={`${neighbor.direction}:${neighbor.nodeId}:${neighbor.relation}`}
+                          type="button"
+                          className="link-button"
+                          onClick={() => {
+                            const element = cyRef.current?.getElementById(neighbor.nodeId);
+                            if (element) {
+                              cyRef.current?.elements().unselect();
+                              element.select();
+                              cyRef.current?.center(element);
+                            }
+                          }}
+                        >
+                          {neighbor.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : (
               <p>Select a node to inspect graph metrics and linked pages.</p>
@@ -673,6 +857,18 @@ export function App() {
                     <span className="panel-label">Related Pages</span>
                     <div className="action-row">
                       {relatedPages.map((page) => (
+                        <button key={page.id} type="button" className="link-button" onClick={() => void openPagePath(page.path, page.id)}>
+                          {page.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {graphPageLinks.length ? (
+                  <div className="linked-pages">
+                    <span className="panel-label">Graph Reports</span>
+                    <div className="action-row">
+                      {graphPageLinks.slice(0, 6).map((page) => (
                         <button key={page.id} type="button" className="link-button" onClick={() => void openPagePath(page.path, page.id)}>
                           {page.title}
                         </button>

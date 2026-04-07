@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.19
+
+- Added graph-first orientation pages under `wiki/graph/`, including a top-level report plus per-community summaries generated from the compiled graph
+- Added deterministic local graph navigation with `graph query`, `graph path`, `graph explain`, and `graph god-nodes`, plus matching read-only MCP graph tools
+- Added parser-backed code rationale nodes and `rationale_for` edges while explicitly keeping non-code rationale extraction deferred until it can be implemented without regex-first document sweeps
+- Updated the OSS docs, site docs, and spec notes for the new graph surfaces, graph trust semantics, and deferred export/non-code rationale gaps
+
 ## 0.1.18
 
 - Replaced the regex-style non-JS/TS code path with parser-backed local analyzers for Python, Go, Rust, Java, C#, C, C++, and PHP, while keeping the TypeScript compiler path for JavaScript and TypeScript

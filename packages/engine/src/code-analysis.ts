@@ -13,7 +13,8 @@ import type {
   CodeSymbolKind,
   SourceAnalysis,
   SourceClaim,
-  SourceManifest
+  SourceManifest,
+  SourceRationale
 } from "./types.js";
 import { normalizeWhitespace, slugify, toPosix, truncate, uniqueBy } from "./utils.js";
 
@@ -296,6 +297,79 @@ function buildDiagnostic(
   category: CodeDiagnostic["category"] = "warning"
 ): CodeDiagnostic {
   return { code, category, message, line, column };
+}
+
+const RATIONALE_MARKERS = ["NOTE:", "IMPORTANT:", "HACK:", "WHY:", "RATIONALE:"];
+
+function stripKnownCommentPrefix(line: string): string {
+  let next = line.trim();
+  for (const prefix of ["/**", "/*", "*/", "//", "#", "*"]) {
+    if (next.startsWith(prefix)) {
+      next = next.slice(prefix.length).trimStart();
+    }
+  }
+  return next;
+}
+
+function cleanCommentText(value: string): string {
+  return normalizeWhitespace(
+    value
+      .split(/\r?\n/)
+      .map((line) => stripKnownCommentPrefix(line))
+      .join("\n")
+      .trim()
+  );
+}
+
+function rationaleKindFromText(text: string): SourceRationale["kind"] {
+  const upper = text.toUpperCase();
+  return RATIONALE_MARKERS.some((marker) => upper.startsWith(marker)) ? "marker" : "comment";
+}
+
+function normalizeRationaleText(value: string): string {
+  let next = normalizeWhitespace(value.trim());
+  const upper = next.toUpperCase();
+  for (const marker of RATIONALE_MARKERS) {
+    if (upper.startsWith(marker)) {
+      next = next.slice(marker.length).trimStart();
+      break;
+    }
+  }
+  return next;
+}
+
+function isLikelyRationaleText(value: string): boolean {
+  if (value.length < 20) {
+    return false;
+  }
+  const upper = value.toUpperCase();
+  if (RATIONALE_MARKERS.some((marker) => upper.startsWith(marker))) {
+    return true;
+  }
+  const lower = value.toLowerCase();
+  return ["why", "because", "tradeoff", "important", "avoid", "workaround", "reason", "so that", "in order to"].some((needle) =>
+    lower.includes(needle)
+  );
+}
+
+function makeRationale(
+  manifest: SourceManifest,
+  index: number,
+  text: string,
+  kind: SourceRationale["kind"],
+  symbolName?: string
+): SourceRationale | null {
+  const normalized = normalizeRationaleText(cleanCommentText(text));
+  if (!isLikelyRationaleText(normalized)) {
+    return null;
+  }
+  return {
+    id: `rationale:${manifest.sourceId}:${index}`,
+    text: truncate(normalized, 280),
+    citation: manifest.sourceId,
+    kind,
+    symbolName
+  };
 }
 
 function stripCodeExtension(filePath: string): string {
@@ -1483,7 +1557,65 @@ function _analyzeCFamilyCode(manifest: SourceManifest, content: string): CodeAna
   return finalizeCodeAnalysis(manifest, language, imports, draftSymbols, exportLabels, diagnostics);
 }
 
-function analyzeTypeScriptLikeCode(manifest: SourceManifest, content: string): CodeAnalysis {
+function statementRationaleSymbolName(statement: ts.Statement): string | undefined {
+  if (
+    (ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isEnumDeclaration(statement)) &&
+    statement.name
+  ) {
+    return statement.name.text;
+  }
+  if (ts.isTypeAliasDeclaration(statement)) {
+    return statement.name.text;
+  }
+  if (ts.isVariableStatement(statement)) {
+    const first = statement.declarationList.declarations[0];
+    return first && ts.isIdentifier(first.name) ? first.name.text : undefined;
+  }
+  return undefined;
+}
+
+function extractTypeScriptRationales(manifest: SourceManifest, content: string, sourceFile: ts.SourceFile): SourceRationale[] {
+  const rationales: SourceRationale[] = [];
+  let index = 0;
+
+  const pushRationale = (rawText: string, symbolName?: string, kind?: SourceRationale["kind"]) => {
+    const rationale = makeRationale(manifest, index + 1, rawText, kind ?? rationaleKindFromText(rawText), symbolName);
+    if (rationale) {
+      rationales.push(rationale);
+      index += 1;
+    }
+  };
+
+  const firstStatement = sourceFile.statements[0];
+  if (firstStatement) {
+    for (const range of ts.getLeadingCommentRanges(content, firstStatement.getFullStart()) ?? []) {
+      pushRationale(content.slice(range.pos, range.end));
+    }
+  }
+
+  for (const statement of sourceFile.statements) {
+    const symbolName = statementRationaleSymbolName(statement);
+    for (const jsDoc of (statement as ts.Node & { jsDoc?: ts.JSDoc[] }).jsDoc ?? []) {
+      pushRationale(jsDoc.getText(sourceFile), symbolName, "docstring");
+    }
+    for (const range of ts.getLeadingCommentRanges(content, statement.getFullStart()) ?? []) {
+      pushRationale(content.slice(range.pos, range.end), symbolName);
+    }
+  }
+
+  return uniqueBy(rationales, (item) => `${item.symbolName ?? ""}:${item.text.toLowerCase()}`);
+}
+
+function analyzeTypeScriptLikeCode(
+  manifest: SourceManifest,
+  content: string
+): {
+  code: CodeAnalysis;
+  rationales: SourceRationale[];
+} {
   const language = manifest.language ?? inferCodeLanguage(manifest.originalPath ?? manifest.storedPath, manifest.mimeType) ?? "typescript";
   const sourceFile = ts.createSourceFile(
     manifest.originalPath ?? manifest.storedPath,
@@ -1721,7 +1853,10 @@ function analyzeTypeScriptLikeCode(manifest: SourceManifest, content: string): C
     };
   });
 
-  return finalizeCodeAnalysis(manifest, language, imports, draftSymbols, exportLabels, diagnostics);
+  return {
+    code: finalizeCodeAnalysis(manifest, language, imports, draftSymbols, exportLabels, diagnostics),
+    rationales: extractTypeScriptRationales(manifest, content, sourceFile)
+  };
 }
 
 export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage | undefined {
@@ -2146,13 +2281,13 @@ function escapeRegExp(value: string): string {
 
 export async function analyzeCodeSource(manifest: SourceManifest, extractedText: string, schemaHash: string): Promise<SourceAnalysis> {
   const language = manifest.language ?? inferCodeLanguage(manifest.originalPath ?? manifest.storedPath, manifest.mimeType) ?? "typescript";
-  const code =
+  const { code, rationales } =
     language === "javascript" || language === "jsx" || language === "typescript" || language === "tsx"
       ? analyzeTypeScriptLikeCode(manifest, extractedText)
       : await analyzeTreeSitterCode(manifest, extractedText, language);
 
   return {
-    analysisVersion: 3,
+    analysisVersion: 4,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
     schemaHash,
@@ -2162,6 +2297,7 @@ export async function analyzeCodeSource(manifest: SourceManifest, extractedText:
     entities: [],
     claims: codeClaims(manifest, code),
     questions: codeQuestions(manifest, code),
+    rationales,
     code,
     producedAt: new Date().toISOString()
   };

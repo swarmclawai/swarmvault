@@ -2,6 +2,9 @@ import matter from "gray-matter";
 import { modulePageTitle } from "./code-analysis.js";
 import type {
   Freshness,
+  GraphArtifact,
+  GraphEdge,
+  GraphNode,
   GraphPage,
   OutputAsset,
   OutputFormat,
@@ -55,6 +58,10 @@ function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
       return `entities/${slug}.md`;
     case "output":
       return `outputs/${slug}.md`;
+    case "graph_report":
+      return "graph/report.md";
+    case "community_summary":
+      return `graph/communities/${slug}.md`;
     default:
       return `${slug}.md`;
   }
@@ -66,6 +73,11 @@ export function candidatePagePathFor(kind: "concept" | "entity", slug: string): 
 
 function pageLink(page: Pick<GraphPage, "path" | "title">): string {
   return `[[${page.path.replace(/\.md$/, "")}|${page.title}]]`;
+}
+
+function graphNodeLink(node: GraphNode, pagesById: Map<string, GraphPage>): string {
+  const page = node.pageId ? pagesById.get(node.pageId) : undefined;
+  return page ? pageLink(page) : `\`${node.label}\``;
 }
 
 function assetMarkdownPath(assetPath: string): string {
@@ -499,6 +511,7 @@ export function buildIndexPage(
   const candidates = pages.filter((page) => page.status === "candidate");
   const outputs = pages.filter((page) => page.kind === "output");
   const insights = pages.filter((page) => page.kind === "insight");
+  const graphPages = pages.filter((page) => page.kind === "graph_report" || page.kind === "community_summary");
 
   return [
     "---",
@@ -544,6 +557,12 @@ export function buildIndexPage(
     "",
     ...(outputs.length ? outputs.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No saved outputs yet."]),
     "",
+    "## Graph",
+    "",
+    ...(graphPages.length
+      ? graphPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+      : ["- No graph reports yet."]),
+    "",
     "## Projects",
     "",
     ...(projectPages.length
@@ -564,7 +583,7 @@ export function buildIndexPage(
 }
 
 export function buildSectionIndex(
-  kind: "sources" | "code" | "concepts" | "entities" | "outputs" | "candidates",
+  kind: "sources" | "code" | "concepts" | "entities" | "outputs" | "candidates" | "graph",
   pages: GraphPage[],
   schemaHash: string,
   metadata: ManagedPageMetadata,
@@ -593,6 +612,267 @@ export function buildSectionIndex(
       source_hashes: {}
     }
   );
+}
+
+function communityPagePath(communityId: string): string {
+  return pagePathFor("community_summary", communityId.replace(/^community:/, ""));
+}
+
+type GraphPageRecord = {
+  page: GraphPage;
+  content: string;
+};
+
+function nodeSummary(node: GraphNode): string {
+  const degree = typeof node.degree === "number" ? `degree=${node.degree}` : "";
+  const bridge = typeof node.bridgeScore === "number" ? `bridge=${node.bridgeScore}` : "";
+  return [node.type, degree, bridge].filter(Boolean).join(", ");
+}
+
+function crossCommunityEdges(graph: GraphArtifact): GraphEdge[] {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  return graph.edges
+    .filter((edge) => {
+      const source = nodesById.get(edge.source);
+      const target = nodesById.get(edge.target);
+      return source?.communityId && target?.communityId && source.communityId !== target.communityId;
+    })
+    .sort((left, right) => right.confidence - left.confidence || left.relation.localeCompare(right.relation));
+}
+
+function suggestedGraphQuestions(graph: GraphArtifact): string[] {
+  const thinCommunities = (graph.communities ?? []).filter((community) => community.nodeIds.length <= 2);
+  const bridgeNodes = graph.nodes
+    .filter((node) => (node.bridgeScore ?? 0) > 0)
+    .sort((left, right) => (right.bridgeScore ?? 0) - (left.bridgeScore ?? 0))
+    .slice(0, 3);
+  return uniqueStrings([
+    ...thinCommunities.map((community) => `What sources would strengthen community ${community.label}?`),
+    ...bridgeNodes.map((node) => `Why does ${node.label} connect multiple communities in the vault?`)
+  ]).slice(0, 6);
+}
+
+export function buildGraphReportPage(input: {
+  graph: GraphArtifact;
+  schemaHash: string;
+  metadata: ManagedGraphPageMetadata;
+  communityPages: Pick<GraphPage, "id" | "path" | "title">[];
+}): GraphPageRecord {
+  const pageId = "graph:report";
+  const pathValue = pagePathFor("graph_report", "report");
+  const pagesById = new Map(input.graph.pages.map((page) => [page.id, page]));
+  const nodesById = new Map(input.graph.nodes.map((node) => [node.id, node]));
+  const godNodes = input.graph.nodes
+    .filter((node) => node.isGodNode)
+    .sort((left, right) => (right.degree ?? 0) - (left.degree ?? 0))
+    .slice(0, 8);
+  const bridgeNodes = input.graph.nodes
+    .filter((node) => (node.bridgeScore ?? 0) > 0)
+    .sort((left, right) => (right.bridgeScore ?? 0) - (left.bridgeScore ?? 0))
+    .slice(0, 8);
+  const surprisingEdges = crossCommunityEdges(input.graph).slice(0, 8);
+  const thinCommunities = (input.graph.communities ?? []).filter((community) => community.nodeIds.length <= 2);
+  const relatedNodeIds = uniqueStrings([...godNodes, ...bridgeNodes].map((node) => node.id));
+  const relatedPageIds = uniqueStrings([
+    ...godNodes.map((node) => node.pageId ?? ""),
+    ...bridgeNodes.map((node) => node.pageId ?? ""),
+    ...input.communityPages.map((page) => page.id)
+  ]);
+  const relatedSourceIds = uniqueStrings(relatedNodeIds.flatMap((nodeId) => nodesById.get(nodeId)?.sourceIds ?? []));
+
+  const frontmatter = {
+    page_id: pageId,
+    kind: "graph_report",
+    title: "Graph Report",
+    tags: ["graph", "report"],
+    source_ids: relatedSourceIds,
+    project_ids: [],
+    node_ids: relatedNodeIds,
+    freshness: "fresh" satisfies Freshness,
+    status: input.metadata.status,
+    confidence: input.metadata.confidence,
+    created_at: input.metadata.createdAt,
+    updated_at: input.metadata.updatedAt,
+    compiled_from: input.metadata.compiledFrom,
+    managed_by: input.metadata.managedBy,
+    backlinks: [],
+    schema_hash: input.schemaHash,
+    source_hashes: {},
+    related_page_ids: relatedPageIds,
+    related_node_ids: relatedNodeIds,
+    related_source_ids: relatedSourceIds
+  };
+
+  const body = [
+    "# Graph Report",
+    "",
+    "## Overview",
+    "",
+    `- Nodes: ${input.graph.nodes.length}`,
+    `- Edges: ${input.graph.edges.length}`,
+    `- Pages: ${input.graph.pages.length}`,
+    `- Communities: ${input.graph.communities?.length ?? 0}`,
+    "",
+    "## God Nodes",
+    "",
+    ...(godNodes.length
+      ? godNodes.map((node) => `- ${graphNodeLink(node, pagesById)} (${nodeSummary(node)})`)
+      : ["- No high-connectivity nodes detected."]),
+    "",
+    "## Bridge Nodes",
+    "",
+    ...(bridgeNodes.length
+      ? bridgeNodes.map((node) => `- ${graphNodeLink(node, pagesById)} (${nodeSummary(node)})`)
+      : ["- No cross-community bridge nodes detected."]),
+    "",
+    "## Communities",
+    "",
+    ...(input.communityPages.length
+      ? input.communityPages.map((page) => `- ${pageLink(page)}`)
+      : ["- No community summaries generated yet."]),
+    "",
+    "## Thin Communities",
+    "",
+    ...(thinCommunities.length
+      ? thinCommunities.map((community) => `- ${community.label} (${community.nodeIds.length} node(s))`)
+      : ["- No thin communities detected."]),
+    "",
+    "## Cross-Community Surprises",
+    "",
+    ...(surprisingEdges.length
+      ? surprisingEdges.map((edge) => {
+          const source = nodesById.get(edge.source);
+          const target = nodesById.get(edge.target);
+          return `- ${source ? graphNodeLink(source, pagesById) : `\`${edge.source}\``} ${edge.relation} ${target ? graphNodeLink(target, pagesById) : `\`${edge.target}\``} (${edge.evidenceClass}, ${edge.confidence.toFixed(2)})`;
+        })
+      : ["- No cross-community links detected."]),
+    "",
+    "## Suggested Follow-Up Questions",
+    "",
+    ...suggestedGraphQuestions(input.graph).map((question) => `- ${question}`),
+    ""
+  ].join("\n");
+
+  return {
+    page: {
+      id: pageId,
+      path: pathValue,
+      title: "Graph Report",
+      kind: "graph_report",
+      sourceIds: relatedSourceIds,
+      projectIds: [],
+      nodeIds: relatedNodeIds,
+      freshness: "fresh",
+      status: input.metadata.status,
+      confidence: input.metadata.confidence,
+      backlinks: [],
+      schemaHash: input.schemaHash,
+      sourceHashes: {},
+      relatedPageIds,
+      relatedNodeIds,
+      relatedSourceIds,
+      createdAt: input.metadata.createdAt,
+      updatedAt: input.metadata.updatedAt,
+      compiledFrom: input.metadata.compiledFrom,
+      managedBy: input.metadata.managedBy
+    },
+    content: matter.stringify(body, frontmatter)
+  };
+}
+
+export function buildCommunitySummaryPage(input: {
+  graph: GraphArtifact;
+  community: NonNullable<GraphArtifact["communities"]>[number];
+  schemaHash: string;
+  metadata: ManagedGraphPageMetadata;
+}): GraphPageRecord {
+  const pageId = `graph:${input.community.id}`;
+  const pathValue = communityPagePath(input.community.id);
+  const nodesById = new Map(input.graph.nodes.map((node) => [node.id, node]));
+  const pagesById = new Map(input.graph.pages.map((page) => [page.id, page]));
+  const communityNodes = input.community.nodeIds.map((nodeId) => nodesById.get(nodeId)).filter((node): node is GraphNode => Boolean(node));
+  const communityPageIds = uniqueStrings(communityNodes.map((node) => node.pageId ?? ""));
+  const communityPages = communityPageIds.map((id) => pagesById.get(id)).filter((page): page is GraphPage => Boolean(page));
+  const externalEdges = input.graph.edges
+    .filter((edge) => {
+      const source = nodesById.get(edge.source);
+      const target = nodesById.get(edge.target);
+      return source?.communityId === input.community.id && target?.communityId && target.communityId !== input.community.id;
+    })
+    .slice(0, 8);
+  const relatedSourceIds = uniqueStrings(communityNodes.flatMap((node) => node.sourceIds));
+
+  const frontmatter = {
+    page_id: pageId,
+    kind: "community_summary",
+    title: `Community: ${input.community.label}`,
+    tags: ["graph", "community"],
+    source_ids: relatedSourceIds,
+    project_ids: [],
+    node_ids: input.community.nodeIds,
+    freshness: "fresh" satisfies Freshness,
+    status: input.metadata.status,
+    confidence: input.metadata.confidence,
+    created_at: input.metadata.createdAt,
+    updated_at: input.metadata.updatedAt,
+    compiled_from: input.metadata.compiledFrom,
+    managed_by: input.metadata.managedBy,
+    backlinks: ["graph:report"],
+    schema_hash: input.schemaHash,
+    source_hashes: {},
+    related_page_ids: uniqueStrings(["graph:report", ...communityPageIds]),
+    related_node_ids: input.community.nodeIds,
+    related_source_ids: relatedSourceIds
+  };
+
+  const body = [
+    `# Community: ${input.community.label}`,
+    "",
+    "## Nodes",
+    "",
+    ...communityNodes.map((node) => `- ${graphNodeLink(node, pagesById)} (${nodeSummary(node)})`),
+    "",
+    "## Pages",
+    "",
+    ...(communityPages.length ? communityPages.map((page) => `- ${pageLink(page)}`) : ["- No canonical pages linked."]),
+    "",
+    "## External Links",
+    "",
+    ...(externalEdges.length
+      ? externalEdges.map((edge) => {
+          const source = nodesById.get(edge.source);
+          const target = nodesById.get(edge.target);
+          return `- ${source ? graphNodeLink(source, pagesById) : `\`${edge.source}\``} ${edge.relation} ${target ? graphNodeLink(target, pagesById) : `\`${edge.target}\``} (${edge.evidenceClass})`;
+        })
+      : ["- No external links detected."]),
+    ""
+  ].join("\n");
+
+  return {
+    page: {
+      id: pageId,
+      path: pathValue,
+      title: `Community: ${input.community.label}`,
+      kind: "community_summary",
+      sourceIds: relatedSourceIds,
+      projectIds: [],
+      nodeIds: input.community.nodeIds,
+      freshness: "fresh",
+      status: input.metadata.status,
+      confidence: input.metadata.confidence,
+      backlinks: ["graph:report"],
+      schemaHash: input.schemaHash,
+      sourceHashes: {},
+      relatedPageIds: uniqueStrings(["graph:report", ...communityPageIds]),
+      relatedNodeIds: input.community.nodeIds,
+      relatedSourceIds,
+      createdAt: input.metadata.createdAt,
+      updatedAt: input.metadata.updatedAt,
+      compiledFrom: input.metadata.compiledFrom,
+      managedBy: input.metadata.managedBy
+    },
+    content: matter.stringify(body, frontmatter)
+  };
 }
 
 export function buildProjectsIndex(projectPages: GraphPage[], schemaHash: string, metadata: ManagedPageMetadata): string {
