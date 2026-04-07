@@ -21,12 +21,15 @@ If you only want to use SwarmVault as a tool, install `@swarmvaultai/cli` instea
 import {
   compileVault,
   createMcpServer,
+  createWebSearchAdapter,
   defaultVaultConfig,
   defaultVaultSchema,
+  exploreVault,
   importInbox,
   ingestInput,
   initVault,
   installAgent,
+  getWebSearchAdapterForTask,
   lintVault,
   loadVaultConfig,
   loadVaultSchema,
@@ -53,8 +56,11 @@ console.log(schema.path);
 await importInbox(rootDir);
 await compileVault(rootDir);
 
-const result = await queryVault(rootDir, "What changed most recently?", true);
-console.log(result.answer);
+const saved = await queryVault(rootDir, "What changed most recently?", true);
+console.log(saved.savedTo);
+
+const exploration = await exploreVault(rootDir, "What should I investigate next?", 3);
+console.log(exploration.hubPath);
 
 const watcher = await watchVault(rootDir, { lint: true });
 ```
@@ -63,7 +69,7 @@ const watcher = await watchVault(rootDir, { lint: true });
 
 Each workspace carries a root markdown file named `swarmvault.schema.md`.
 
-The engine treats that file as vault-specific operating guidance for compile and query work. In `v0.1.4`:
+The engine treats that file as vault-specific operating guidance for compile and query work. Currently:
 
 - `initVault()` creates the default schema file
 - `loadVaultSchema()` resolves the canonical file and legacy `schema.md` fallback
@@ -105,13 +111,19 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 ### Compile + Query
 
 - `compileVault(rootDir)` writes wiki pages, graph data, and search state using the vault schema as guidance
-- `queryVault(rootDir, question, save)` answers against the compiled vault using the same schema layer
+- `queryVault(rootDir, question, save)` answers against the compiled vault using the same schema layer and can persist a first-class output page
+- `exploreVault(rootDir, question, steps)` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
 
 ### Automation
 
 - `watchVault(rootDir, options)` watches the inbox and appends run records to `state/jobs.ndjson`
-- `lintVault(rootDir)` runs health and anti-drift checks
+- `lintVault(rootDir, options)` runs structural lint, optional deep lint, and optional web-augmented evidence gathering
+
+### Web Search Adapters
+
+- `createWebSearchAdapter(rootDir, id, config)` constructs a normalized web search adapter
+- `getWebSearchAdapterForTask(rootDir, "deepLintProvider")` resolves the configured adapter for `lint --deep --web`
 
 ### MCP
 
@@ -128,13 +140,15 @@ Running the engine produces a local workspace with these main areas:
 - `inbox/`: capture staging area for markdown bundles and imported files
 - `raw/sources/`: immutable source copies
 - `raw/assets/`: copied attachments referenced by ingested markdown bundles
-- `wiki/`: generated markdown pages and saved outputs
+- `wiki/`: generated markdown pages, saved query outputs, and exploration hub pages
 - `state/manifests/`: source manifests
 - `state/extracts/`: extracted text
 - `state/analyses/`: model analysis output
 - `state/graph.json`: compiled graph
 - `state/search.sqlite`: full-text index
 - `state/jobs.ndjson`: watch-mode automation logs
+
+Saved outputs are indexed immediately into the graph page registry and search index, then linked back into compiled source, concept, and entity pages during later compile runs.
 
 ## Notes
 

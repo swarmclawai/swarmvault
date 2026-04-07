@@ -133,7 +133,7 @@ describe("swarmvault workflow", () => {
         "  const logDir = path.join(rootDir, 'state');",
         "  async function append(name, payload) {",
         "    await fs.mkdir(logDir, { recursive: true });",
-        "    await fs.appendFile(path.join(logDir, name), `${JSON.stringify(payload)}\\n`, 'utf8');",
+        "    await fs.appendFile(path.join(logDir, name), JSON.stringify(payload) + '\\n', 'utf8');",
         "  }",
         "",
         "  return {",

@@ -2,7 +2,7 @@
 
 SwarmVault is a local-first LLM knowledge compiler.
 
-It takes raw research inputs such as markdown, PDFs, images, and URLs, stores them immutably, and compiles them into a persistent markdown wiki, a structured graph, and a local search index. Instead of losing work inside chat history, your summaries, query outputs, and graph structure stay on disk as reviewable artifacts.
+It takes raw research inputs such as markdown, PDFs, images, and URLs, stores them immutably, and compiles them into a persistent markdown wiki, a structured graph, and a local search index. Instead of losing work inside chat history, your summaries, query outputs, exploration runs, and graph structure stay on disk as reviewable artifacts.
 
 Each vault also carries a user-editable schema file, `swarmvault.schema.md`, which teaches the compiler and query layer how that vault should be organized.
 
@@ -13,7 +13,7 @@ SwarmVault is designed around a simple loop:
 1. Ingest source material into a local workspace
 2. Edit the vault schema to define naming rules, categories, and grounding expectations
 3. Compile those sources into `wiki/` and `state/graph.json`
-4. Query the compiled vault and optionally save answers back into the wiki
+4. Query or explore the compiled vault and save useful answers back into the wiki
 5. Keep the vault healthy with linting, inbox automation, and MCP access
 
 The open source runtime gives you:
@@ -22,8 +22,9 @@ The open source runtime gives you:
 - A structured graph artifact for relationships, provenance, and freshness
 - A vault-specific schema file that guides compile and query behavior
 - Local full-text search over compiled pages
-- CLI workflows for ingest, inbox import, compile, query, lint, watch, MCP, and graph serving
+- CLI workflows for ingest, inbox import, compile, query, explore, lint, watch, MCP, and graph serving
 - Pluggable model providers, including OpenAI, Anthropic, Gemini, Ollama, generic OpenAI-compatible APIs, and custom adapters
+- Optional web-search augmentation for deep lint findings
 
 ## Install
 
@@ -45,6 +46,8 @@ sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault compile
 swarmvault query "What are the main ideas?" --save
+swarmvault explore "What should I investigate next?" --steps 3
+swarmvault lint --deep
 swarmvault graph serve
 ```
 
@@ -97,7 +100,7 @@ Every vault carries a root schema file:
 swarmvault.schema.md
 ```
 
-This is a markdown instruction layer, not a separate DSL. In `v0.1.4`, SwarmVault reads that file during compile and query so each vault can define its own:
+This is a markdown instruction layer, not a separate DSL. SwarmVault reads that file during compile and query so each vault can define its own:
 
 - naming rules
 - concept and entity categories
@@ -113,12 +116,23 @@ Generated pages include a `schema_hash` in frontmatter, which lets lint mark pag
 - `swarmvault ingest <input>`: ingest a local file path or URL
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
 - `swarmvault compile`: build wiki pages, graph data, and the search index using the vault schema as guidance
-- `swarmvault query "<question>" --save`: answer questions and optionally persist them into `wiki/outputs/`, guided by the vault schema
-- `swarmvault lint`: run anti-drift and health checks
+- `swarmvault query "<question>" [--save]`: answer questions against the compiled vault, optionally persisting the answer as a first-class output page
+- `swarmvault explore "<question>" [--steps <n>]`: run a save-first multi-step research loop and write a hub page plus step outputs
+- `swarmvault lint [--deep] [--web]`: run structural lint, optional LLM-powered deep lint, and optional web-augmented evidence gathering
 - `swarmvault watch --lint`: watch the inbox and run import/compile cycles on changes
 - `swarmvault mcp`: start a local MCP server over stdio
 - `swarmvault graph serve`: open the local graph viewer
 - `swarmvault install --agent codex|claude|cursor`: install agent-specific rules
+
+## Compounding Loop
+
+SwarmVault is designed so useful work compounds:
+
+- `query --save` writes output pages into `wiki/outputs/`
+- saved outputs are indexed immediately into search and the graph page registry
+- later `compile` runs add `Related Outputs` sections back onto relevant source, concept, and entity pages
+- `explore` chains several saved queries together and writes a hub page you can revisit
+- `lint --deep` can suggest missing citations, coverage gaps, candidate pages, and follow-up questions without mutating the vault
 
 ## Why This Exists
 
@@ -160,6 +174,38 @@ Example provider config:
   }
 }
 ```
+
+## Web Search For Deep Lint
+
+`swarmvault lint --deep --web` uses a separate `webSearch` config block instead of the normal LLM provider registry.
+
+```json
+{
+  "webSearch": {
+    "providers": {
+      "evidence": {
+        "type": "http-json",
+        "endpoint": "https://search.example/api/search",
+        "method": "GET",
+        "apiKeyEnv": "SEARCH_API_KEY",
+        "apiKeyHeader": "Authorization",
+        "apiKeyPrefix": "Bearer ",
+        "queryParam": "q",
+        "limitParam": "limit",
+        "resultsPath": "results",
+        "titleField": "title",
+        "urlField": "url",
+        "snippetField": "snippet"
+      }
+    },
+    "tasks": {
+      "deepLintProvider": "evidence"
+    }
+  }
+}
+```
+
+If `--web` is requested without a configured web-search provider, SwarmVault fails clearly instead of silently skipping evidence gathering.
 
 ## Packages
 

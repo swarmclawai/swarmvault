@@ -1,24 +1,37 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
+import { z } from "zod";
 import { installConfiguredAgents } from "./agents.js";
 import { analysisSignature, analyzeSource } from "./analysis.js";
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
+import { runDeepLint } from "./deep-lint.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
 import { appendLogEntry } from "./logs.js";
-import { buildAggregatePage, buildIndexPage, buildOutputPage, buildSectionIndex, buildSourcePage } from "./markdown.js";
+import {
+  buildAggregatePage,
+  buildExploreHubPage,
+  buildIndexPage,
+  buildOutputPage,
+  buildSectionIndex,
+  buildSourcePage
+} from "./markdown.js";
+import { loadSavedOutputPages, relatedOutputsForPage, resolveUniqueOutputSlug } from "./outputs.js";
 import { getProviderForTask } from "./providers/registry.js";
 import { buildSchemaPrompt, loadVaultSchema } from "./schema.js";
 import { rebuildSearchIndex, searchPages } from "./search.js";
 import type {
   CompileResult,
   CompileState,
+  ExploreResult,
+  ExploreStepResult,
   GraphArtifact,
   GraphEdge,
   GraphNode,
   GraphPage,
   LintFinding,
+  LintOptions,
   QueryResult,
   SearchResult,
   SourceAnalysis,
@@ -35,6 +48,14 @@ import {
   writeFileIfChanged,
   writeJsonFile
 } from "./utils.js";
+
+type QueryExecutionResult = {
+  answer: string;
+  citations: string[];
+  relatedPageIds: string[];
+  relatedNodeIds: string[];
+  relatedSourceIds: string[];
+};
 
 function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pages: GraphPage[]): GraphArtifact {
   const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
@@ -99,7 +120,6 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
     }
   }
 
-  // Concept-scoped conflict detection
   const conceptClaims = new Map<string, Array<{ claim: SourceAnalysis["claims"][number]; sourceId: string }>>();
   for (const analysis of analyses) {
     for (const claim of analysis.claims) {
@@ -116,26 +136,26 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
 
   const conflictEdgeKeys = new Set<string>();
   for (const [, claimsForConcept] of conceptClaims) {
-    const positive = claimsForConcept.filter((c) => c.claim.polarity === "positive");
-    const negative = claimsForConcept.filter((c) => c.claim.polarity === "negative");
-    for (const pos of positive) {
-      for (const neg of negative) {
-        if (pos.sourceId === neg.sourceId) {
+    const positive = claimsForConcept.filter((item) => item.claim.polarity === "positive");
+    const negative = claimsForConcept.filter((item) => item.claim.polarity === "negative");
+    for (const positiveClaim of positive) {
+      for (const negativeClaim of negative) {
+        if (positiveClaim.sourceId === negativeClaim.sourceId) {
           continue;
         }
-        const edgeKey = [pos.sourceId, neg.sourceId].sort().join("|");
+        const edgeKey = [positiveClaim.sourceId, negativeClaim.sourceId].sort().join("|");
         if (conflictEdgeKeys.has(edgeKey)) {
           continue;
         }
         conflictEdgeKeys.add(edgeKey);
         edges.push({
-          id: `conflict:${pos.claim.id}->${neg.claim.id}`,
-          source: `source:${pos.sourceId}`,
-          target: `source:${neg.sourceId}`,
+          id: `conflict:${positiveClaim.claim.id}->${negativeClaim.claim.id}`,
+          source: `source:${positiveClaim.sourceId}`,
+          target: `source:${negativeClaim.sourceId}`,
           relation: "conflicted_with",
           status: "conflicted",
-          confidence: conflictConfidence(pos.claim, neg.claim),
-          provenance: [pos.sourceId, neg.sourceId]
+          confidence: conflictConfidence(positiveClaim.claim, negativeClaim.claim),
+          provenance: [positiveClaim.sourceId, negativeClaim.sourceId]
         });
       }
     }
@@ -166,6 +186,7 @@ function aggregateItems(
     string,
     { name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }
   >();
+
   for (const analysis of analyses) {
     for (const item of analysis[kind]) {
       const key = slugify(item.name);
@@ -181,219 +202,180 @@ function aggregateItems(
       grouped.set(key, existing);
     }
   }
+
   return [...grouped.values()];
 }
 
-export async function initVault(rootDir: string): Promise<void> {
-  await initWorkspace(rootDir);
-  await installConfiguredAgents(rootDir);
-}
-
-export async function compileVault(rootDir: string): Promise<CompileResult> {
-  const { paths } = await initWorkspace(rootDir);
-  const schema = await loadVaultSchema(rootDir);
-  const provider = await getProviderForTask(rootDir, "compileProvider");
-  const manifests = await listManifests(rootDir);
-
-  // Incremental compilation: compare against previous compile state
-  const previousState = await readJsonFile<CompileState>(paths.compileStatePath);
-  const schemaChanged = !previousState || previousState.schemaHash !== schema.hash;
-  const previousSourceHashes = previousState?.sourceHashes ?? {};
-  const previousAnalyses = previousState?.analyses ?? {};
-  const currentSourceIds = new Set(manifests.map((m) => m.sourceId));
-  const previousSourceIds = new Set(Object.keys(previousSourceHashes));
-  const sourcesChanged = currentSourceIds.size !== previousSourceIds.size || [...currentSourceIds].some((id) => !previousSourceIds.has(id));
-
-  const dirty: SourceManifest[] = [];
-  const clean: SourceManifest[] = [];
-
-  for (const manifest of manifests) {
-    const hashChanged = previousSourceHashes[manifest.sourceId] !== manifest.contentHash;
-    const noAnalysis = !previousAnalyses[manifest.sourceId];
-    if (schemaChanged || hashChanged || noAnalysis) {
-      dirty.push(manifest);
-    } else {
-      clean.push(manifest);
-    }
-  }
-
-  // Early return when nothing changed
-  if (dirty.length === 0 && !schemaChanged && !sourcesChanged) {
-    return {
-      graphPath: paths.graphPath,
-      pageCount: previousState?.analyses ? Object.keys(previousState.analyses).length : 0,
-      changedPages: [],
-      sourceCount: manifests.length
-    };
-  }
-
-  // Only analyze dirty sources; load cached analyses for clean ones
-  const [dirtyAnalyses, cleanAnalyses] = await Promise.all([
-    Promise.all(
-      dirty.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema))
-    ),
-    Promise.all(
-      clean.map(async (manifest) => {
-        const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
-        if (cached) {
-          return cached;
-        }
-        return analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema);
-      })
-    )
-  ]);
-
-  const analyses = [...dirtyAnalyses, ...cleanAnalyses];
-  const changedPages: string[] = [];
-  const pages: GraphPage[] = [];
-
-  await Promise.all([
-    ensureDir(path.join(paths.wikiDir, "sources")),
-    ensureDir(path.join(paths.wikiDir, "concepts")),
-    ensureDir(path.join(paths.wikiDir, "entities")),
-    ensureDir(path.join(paths.wikiDir, "outputs"))
-  ]);
-
-  for (const manifest of manifests) {
-    const analysis = analyses.find((item) => item.sourceId === manifest.sourceId);
-    if (!analysis) {
-      continue;
-    }
-    const sourcePage = buildSourcePage(manifest, analysis, schema.hash, 1.0);
-    pages.push(sourcePage.page);
-    await writePage(paths.wikiDir, sourcePage.page.path, sourcePage.content, changedPages);
-  }
-
-  for (const aggregate of aggregateItems(analyses, "concepts")) {
-    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
-    const page = buildAggregatePage(
-      "concept",
-      aggregate.name,
-      aggregate.descriptions,
-      aggregate.sourceAnalyses,
-      aggregate.sourceHashes,
-      schema.hash,
-      confidence
-    );
-    pages.push(page.page);
-    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
-  }
-
-  for (const aggregate of aggregateItems(analyses, "entities")) {
-    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
-    const page = buildAggregatePage(
-      "entity",
-      aggregate.name,
-      aggregate.descriptions,
-      aggregate.sourceAnalyses,
-      aggregate.sourceHashes,
-      schema.hash,
-      confidence
-    );
-    pages.push(page.page);
-    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
-  }
-
-  const graph = buildGraph(manifests, analyses, pages);
-  await writeJsonFile(paths.graphPath, graph);
-  await writeJsonFile(paths.compileStatePath, {
-    generatedAt: graph.generatedAt,
-    schemaHash: schema.hash,
-    analyses: Object.fromEntries(analyses.map((a) => [a.sourceId, analysisSignature(a)])),
-    sourceHashes: Object.fromEntries(manifests.map((m) => [m.sourceId, m.contentHash]))
-  } satisfies CompileState);
-
-  await writePage(paths.wikiDir, "index.md", buildIndexPage(pages, schema.hash), changedPages);
-  await writePage(
-    paths.wikiDir,
-    "sources/index.md",
-    buildSectionIndex(
-      "sources",
-      pages.filter((page) => page.kind === "source"),
-      schema.hash
-    ),
-    changedPages
-  );
-  await writePage(
-    paths.wikiDir,
-    "concepts/index.md",
-    buildSectionIndex(
-      "concepts",
-      pages.filter((page) => page.kind === "concept"),
-      schema.hash
-    ),
-    changedPages
-  );
-  await writePage(
-    paths.wikiDir,
-    "entities/index.md",
-    buildSectionIndex(
-      "entities",
-      pages.filter((page) => page.kind === "entity"),
-      schema.hash
-    ),
-    changedPages
-  );
-
-  if (changedPages.length > 0) {
-    await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
-  }
-
-  await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [
-    `provider=${provider.id}`,
-    `pages=${pages.length}`,
-    `dirty=${dirty.length}`,
-    `clean=${clean.length}`,
-    `schema=${schema.hash.slice(0, 12)}`
-  ]);
-
+function emptyGraphPage(input: {
+  id: string;
+  path: string;
+  title: string;
+  kind: GraphPage["kind"];
+  sourceIds: string[];
+  nodeIds: string[];
+  schemaHash: string;
+  sourceHashes: Record<string, string>;
+  confidence: number;
+}): GraphPage {
   return {
-    graphPath: paths.graphPath,
-    pageCount: pages.length,
-    changedPages,
-    sourceCount: manifests.length
+    id: input.id,
+    path: input.path,
+    title: input.title,
+    kind: input.kind,
+    sourceIds: input.sourceIds,
+    nodeIds: input.nodeIds,
+    freshness: "fresh",
+    confidence: input.confidence,
+    backlinks: [],
+    schemaHash: input.schemaHash,
+    sourceHashes: input.sourceHashes,
+    relatedPageIds: [],
+    relatedNodeIds: [],
+    relatedSourceIds: []
   };
 }
 
-export async function queryVault(rootDir: string, question: string, save = false): Promise<QueryResult> {
+function outputHashes(outputPages: Awaited<ReturnType<typeof loadSavedOutputPages>>): Record<string, string> {
+  return Object.fromEntries(outputPages.map((page) => [page.page.id, page.contentHash]));
+}
+
+function recordsEqual(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
+async function requiredCompileArtifactsExist(paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"]): Promise<boolean> {
+  const requiredPaths = [
+    paths.graphPath,
+    paths.searchDbPath,
+    path.join(paths.wikiDir, "index.md"),
+    path.join(paths.wikiDir, "sources", "index.md"),
+    path.join(paths.wikiDir, "concepts", "index.md"),
+    path.join(paths.wikiDir, "entities", "index.md"),
+    path.join(paths.wikiDir, "outputs", "index.md")
+  ];
+
+  const checks = await Promise.all(requiredPaths.map((filePath) => fileExists(filePath)));
+  return checks.every(Boolean);
+}
+
+async function refreshIndexesAndSearch(rootDir: string, schemaHash: string, pages: GraphPage[]): Promise<void> {
+  const { paths } = await loadVaultConfig(rootDir);
+  await ensureDir(path.join(paths.wikiDir, "outputs"));
+  await writeFileIfChanged(path.join(paths.wikiDir, "index.md"), buildIndexPage(pages, schemaHash));
+  await writeFileIfChanged(
+    path.join(paths.wikiDir, "outputs", "index.md"),
+    buildSectionIndex(
+      "outputs",
+      pages.filter((page) => page.kind === "output"),
+      schemaHash
+    )
+  );
+  await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
+}
+
+async function upsertGraphPages(rootDir: string, pages: GraphPage[]): Promise<void> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const manifests = await listManifests(rootDir);
+  const nonOutputPages = graph?.pages.filter((page) => page.kind !== "output") ?? [];
+  const nextGraph: GraphArtifact = {
+    generatedAt: new Date().toISOString(),
+    nodes: graph?.nodes ?? [],
+    edges: graph?.edges ?? [],
+    sources: graph?.sources ?? manifests,
+    pages: [...nonOutputPages, ...pages]
+  };
+  await writeJsonFile(paths.graphPath, nextGraph);
+}
+
+async function persistOutputPage(
+  rootDir: string,
+  input: Parameters<typeof buildOutputPage>[0]
+): Promise<{ page: GraphPage; savedTo: string }> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const slug = await resolveUniqueOutputSlug(paths.wikiDir, input.slug ?? slugify(input.question));
+  const output = buildOutputPage({ ...input, slug });
+  const absolutePath = path.join(paths.wikiDir, output.page.path);
+  await ensureDir(path.dirname(absolutePath));
+  await fs.writeFile(absolutePath, output.content, "utf8");
+
+  const storedOutputs = await loadSavedOutputPages(paths.wikiDir);
+  const outputPages = storedOutputs.map((page) => page.page);
+  await upsertGraphPages(rootDir, outputPages);
+
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  await refreshIndexesAndSearch(rootDir, input.schemaHash, graph?.pages ?? outputPages);
+
+  return { page: output.page, savedTo: absolutePath };
+}
+
+async function persistExploreHub(
+  rootDir: string,
+  input: Parameters<typeof buildExploreHubPage>[0]
+): Promise<{ page: GraphPage; savedTo: string }> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const slug = await resolveUniqueOutputSlug(paths.wikiDir, input.slug ?? `explore-${slugify(input.question)}`);
+  const hub = buildExploreHubPage({ ...input, slug });
+  const absolutePath = path.join(paths.wikiDir, hub.page.path);
+  await ensureDir(path.dirname(absolutePath));
+  await fs.writeFile(absolutePath, hub.content, "utf8");
+
+  const storedOutputs = await loadSavedOutputPages(paths.wikiDir);
+  const outputPages = storedOutputs.map((page) => page.page);
+  await upsertGraphPages(rootDir, outputPages);
+
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  await refreshIndexesAndSearch(rootDir, input.schemaHash, graph?.pages ?? outputPages);
+
+  return { page: hub.page, savedTo: absolutePath };
+}
+
+async function executeQuery(rootDir: string, question: string): Promise<QueryExecutionResult> {
   const { paths } = await loadVaultConfig(rootDir);
   const schema = await loadVaultSchema(rootDir);
   const provider = await getProviderForTask(rootDir, "queryProvider");
-  if (!(await fileExists(paths.searchDbPath))) {
+  if (!(await fileExists(paths.searchDbPath)) || !(await fileExists(paths.graphPath))) {
     await compileVault(rootDir);
   }
 
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const pageMap = new Map((graph?.pages ?? []).map((page) => [page.id, page]));
   const searchResults = searchPages(paths.searchDbPath, question, 5);
   const excerpts = await Promise.all(
     searchResults.map(async (result) => {
       const absolutePath = path.join(paths.wikiDir, result.path);
-      const content = await fs.readFile(absolutePath, "utf8");
-      const parsed = matter(content);
-      return `# ${result.title}\n${truncate(normalizeWhitespace(parsed.content), 1200)}`;
+      try {
+        const content = await fs.readFile(absolutePath, "utf8");
+        const parsed = matter(content);
+        return `# ${result.title}\n${truncate(normalizeWhitespace(parsed.content), 1200)}`;
+      } catch {
+        return `# ${result.title}\n${result.snippet}`;
+      }
     })
   );
 
-  // Load raw source material for grounding (spec principle #6)
-  const allSourceIds: string[] = [];
-  for (const result of searchResults) {
-    const absolutePath = path.join(paths.wikiDir, result.path);
-    try {
-      const content = await fs.readFile(absolutePath, "utf8");
-      const parsed = matter(content);
-      const ids = parsed.data.source_ids;
-      if (Array.isArray(ids)) {
-        allSourceIds.push(...ids);
-      }
-    } catch {
-      // Page may not exist
-    }
-  }
-  const sourceIds = uniqueBy(allSourceIds, (id) => id).slice(0, 5);
+  const relatedPageIds = uniqueBy(
+    searchResults.map((result) => result.pageId),
+    (item) => item
+  );
+  const relatedNodeIds = uniqueBy(
+    relatedPageIds.flatMap((pageId) => pageMap.get(pageId)?.nodeIds ?? []),
+    (item) => item
+  );
+  const relatedSourceIds = uniqueBy(
+    relatedPageIds.flatMap((pageId) => pageMap.get(pageId)?.sourceIds ?? []),
+    (item) => item
+  );
 
   const manifests = await listManifests(rootDir);
   const rawExcerpts: string[] = [];
-  for (const sourceId of sourceIds) {
-    const manifest = manifests.find((m) => m.sourceId === sourceId);
+  for (const sourceId of relatedSourceIds.slice(0, 5)) {
+    const manifest = manifests.find((item) => item.sourceId === sourceId);
     if (!manifest) {
       continue;
     }
@@ -420,7 +402,6 @@ export async function queryVault(rootDir: string, question: string, save = false
       excerpts.join("\n\n---\n\n"),
       ...(rawExcerpts.length ? ["", "Raw source material:", rawExcerpts.join("\n\n---\n\n")] : [])
     ].join("\n\n");
-
     const response = await provider.generateText({
       system: buildSchemaPrompt(
         schema,
@@ -431,25 +412,381 @@ export async function queryVault(rootDir: string, question: string, save = false
     answer = response.text;
   }
 
-  const citations = uniqueBy(
-    searchResults.filter((result) => result.pageId.startsWith("source:")).map((result) => result.pageId.replace(/^source:/, "")),
-    (item) => item
+  return {
+    answer,
+    citations: relatedSourceIds,
+    relatedPageIds,
+    relatedNodeIds,
+    relatedSourceIds
+  };
+}
+
+async function generateFollowUpQuestions(rootDir: string, question: string, answer: string): Promise<string[]> {
+  const provider = await getProviderForTask(rootDir, "queryProvider");
+  const schema = await loadVaultSchema(rootDir);
+
+  if (provider.type === "heuristic") {
+    return uniqueBy(
+      [
+        `What evidence best supports ${question}?`,
+        `What contradicts ${question}?`,
+        `Which sources should be added to answer ${question} better?`
+      ],
+      (item) => item
+    ).slice(0, 3);
+  }
+
+  const response = await provider.generateStructured(
+    {
+      system: buildSchemaPrompt(schema, "Propose concise follow-up research questions for the vault. Return only useful next questions."),
+      prompt: `Root question: ${question}\n\nCurrent answer:\n${answer}`
+    },
+    z.object({
+      questions: z.array(z.string().min(1)).max(5)
+    })
   );
+
+  return uniqueBy(response.questions, (item) => item).filter((item) => item !== question);
+}
+
+export async function initVault(rootDir: string): Promise<void> {
+  await initWorkspace(rootDir);
+  await installConfiguredAgents(rootDir);
+}
+
+export async function compileVault(rootDir: string): Promise<CompileResult> {
+  const { paths } = await initWorkspace(rootDir);
+  const schema = await loadVaultSchema(rootDir);
+  const provider = await getProviderForTask(rootDir, "compileProvider");
+  const manifests = await listManifests(rootDir);
+  const storedOutputPages = await loadSavedOutputPages(paths.wikiDir);
+  const outputPages = storedOutputPages.map((page) => page.page);
+  const currentOutputHashes = outputHashes(storedOutputPages);
+
+  const previousState = await readJsonFile<CompileState>(paths.compileStatePath);
+  const schemaChanged = !previousState || previousState.schemaHash !== schema.hash;
+  const previousSourceHashes = previousState?.sourceHashes ?? {};
+  const previousAnalyses = previousState?.analyses ?? {};
+  const previousOutputHashes = previousState?.outputHashes ?? {};
+  const currentSourceIds = new Set(manifests.map((item) => item.sourceId));
+  const previousSourceIds = new Set(Object.keys(previousSourceHashes));
+  const sourcesChanged =
+    currentSourceIds.size !== previousSourceIds.size || [...currentSourceIds].some((sourceId) => !previousSourceIds.has(sourceId));
+  const outputsChanged = !recordsEqual(currentOutputHashes, previousOutputHashes);
+  const artifactsExist = await requiredCompileArtifactsExist(paths);
+
+  const dirty: SourceManifest[] = [];
+  const clean: SourceManifest[] = [];
+  for (const manifest of manifests) {
+    const hashChanged = previousSourceHashes[manifest.sourceId] !== manifest.contentHash;
+    const noAnalysis = !previousAnalyses[manifest.sourceId];
+    if (schemaChanged || hashChanged || noAnalysis) {
+      dirty.push(manifest);
+    } else {
+      clean.push(manifest);
+    }
+  }
+
+  if (dirty.length === 0 && !schemaChanged && !sourcesChanged && !outputsChanged && artifactsExist) {
+    const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+    return {
+      graphPath: paths.graphPath,
+      pageCount: graph?.pages.length ?? outputPages.length,
+      changedPages: [],
+      sourceCount: manifests.length
+    };
+  }
+
+  const [dirtyAnalyses, cleanAnalyses] = await Promise.all([
+    Promise.all(
+      dirty.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema))
+    ),
+    Promise.all(
+      clean.map(async (manifest) => {
+        const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
+        if (cached) {
+          return cached;
+        }
+        return analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema);
+      })
+    )
+  ]);
+
+  const analyses = [...dirtyAnalyses, ...cleanAnalyses];
+  const changedPages: string[] = [];
+  const compiledPages: GraphPage[] = [];
+
+  await Promise.all([
+    ensureDir(path.join(paths.wikiDir, "sources")),
+    ensureDir(path.join(paths.wikiDir, "concepts")),
+    ensureDir(path.join(paths.wikiDir, "entities")),
+    ensureDir(path.join(paths.wikiDir, "outputs"))
+  ]);
+
+  for (const manifest of manifests) {
+    const analysis = analyses.find((item) => item.sourceId === manifest.sourceId);
+    if (!analysis) {
+      continue;
+    }
+
+    const preview = emptyGraphPage({
+      id: `source:${manifest.sourceId}`,
+      path: `sources/${manifest.sourceId}.md`,
+      title: analysis.title,
+      kind: "source",
+      sourceIds: [manifest.sourceId],
+      nodeIds: [`source:${manifest.sourceId}`, ...analysis.concepts.map((item) => item.id), ...analysis.entities.map((item) => item.id)],
+      schemaHash: schema.hash,
+      sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+      confidence: 1
+    });
+    const sourcePage = buildSourcePage(manifest, analysis, schema.hash, 1, relatedOutputsForPage(preview, outputPages));
+    compiledPages.push(sourcePage.page);
+    await writePage(paths.wikiDir, sourcePage.page.path, sourcePage.content, changedPages);
+  }
+
+  for (const aggregate of aggregateItems(analyses, "concepts")) {
+    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
+    const preview = emptyGraphPage({
+      id: `concept:${slugify(aggregate.name)}`,
+      path: `concepts/${slugify(aggregate.name)}.md`,
+      title: aggregate.name,
+      kind: "concept",
+      sourceIds: aggregate.sourceAnalyses.map((item) => item.sourceId),
+      nodeIds: [`concept:${slugify(aggregate.name)}`],
+      schemaHash: schema.hash,
+      sourceHashes: aggregate.sourceHashes,
+      confidence
+    });
+    const page = buildAggregatePage(
+      "concept",
+      aggregate.name,
+      aggregate.descriptions,
+      aggregate.sourceAnalyses,
+      aggregate.sourceHashes,
+      schema.hash,
+      confidence,
+      relatedOutputsForPage(preview, outputPages)
+    );
+    compiledPages.push(page.page);
+    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
+  }
+
+  for (const aggregate of aggregateItems(analyses, "entities")) {
+    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
+    const preview = emptyGraphPage({
+      id: `entity:${slugify(aggregate.name)}`,
+      path: `entities/${slugify(aggregate.name)}.md`,
+      title: aggregate.name,
+      kind: "entity",
+      sourceIds: aggregate.sourceAnalyses.map((item) => item.sourceId),
+      nodeIds: [`entity:${slugify(aggregate.name)}`],
+      schemaHash: schema.hash,
+      sourceHashes: aggregate.sourceHashes,
+      confidence
+    });
+    const page = buildAggregatePage(
+      "entity",
+      aggregate.name,
+      aggregate.descriptions,
+      aggregate.sourceAnalyses,
+      aggregate.sourceHashes,
+      schema.hash,
+      confidence,
+      relatedOutputsForPage(preview, outputPages)
+    );
+    compiledPages.push(page.page);
+    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
+  }
+
+  const allPages = [...compiledPages, ...outputPages];
+  const graph = buildGraph(manifests, analyses, allPages);
+  await writeJsonFile(paths.graphPath, graph);
+  await writeJsonFile(paths.compileStatePath, {
+    generatedAt: graph.generatedAt,
+    schemaHash: schema.hash,
+    analyses: Object.fromEntries(analyses.map((analysis) => [analysis.sourceId, analysisSignature(analysis)])),
+    sourceHashes: Object.fromEntries(manifests.map((manifest) => [manifest.sourceId, manifest.contentHash])),
+    outputHashes: currentOutputHashes
+  } satisfies CompileState);
+
+  await writePage(paths.wikiDir, "index.md", buildIndexPage(allPages, schema.hash), changedPages);
+  await writePage(
+    paths.wikiDir,
+    "sources/index.md",
+    buildSectionIndex(
+      "sources",
+      allPages.filter((page) => page.kind === "source"),
+      schema.hash
+    ),
+    changedPages
+  );
+  await writePage(
+    paths.wikiDir,
+    "concepts/index.md",
+    buildSectionIndex(
+      "concepts",
+      allPages.filter((page) => page.kind === "concept"),
+      schema.hash
+    ),
+    changedPages
+  );
+  await writePage(
+    paths.wikiDir,
+    "entities/index.md",
+    buildSectionIndex(
+      "entities",
+      allPages.filter((page) => page.kind === "entity"),
+      schema.hash
+    ),
+    changedPages
+  );
+  await writePage(
+    paths.wikiDir,
+    "outputs/index.md",
+    buildSectionIndex(
+      "outputs",
+      allPages.filter((page) => page.kind === "output"),
+      schema.hash
+    ),
+    changedPages
+  );
+
+  if (changedPages.length > 0 || outputsChanged || !artifactsExist) {
+    await rebuildSearchIndex(paths.searchDbPath, allPages, paths.wikiDir);
+  }
+
+  await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [
+    `provider=${provider.id}`,
+    `pages=${allPages.length}`,
+    `dirty=${dirty.length}`,
+    `clean=${clean.length}`,
+    `outputs=${outputPages.length}`,
+    `schema=${schema.hash.slice(0, 12)}`
+  ]);
+
+  return {
+    graphPath: paths.graphPath,
+    pageCount: allPages.length,
+    changedPages,
+    sourceCount: manifests.length
+  };
+}
+
+export async function queryVault(rootDir: string, question: string, save = false): Promise<QueryResult> {
+  const schema = await loadVaultSchema(rootDir);
+  const query = await executeQuery(rootDir, question);
   let savedTo: string | undefined;
+  let savedPageId: string | undefined;
+
   if (save) {
-    const output = buildOutputPage(question, answer, citations, schema.hash);
-    const absolutePath = path.join(paths.wikiDir, output.page.path);
-    await ensureDir(path.dirname(absolutePath));
-    await fs.writeFile(absolutePath, output.content, "utf8");
-    savedTo = absolutePath;
+    const saved = await persistOutputPage(rootDir, {
+      question,
+      answer: query.answer,
+      citations: query.citations,
+      schemaHash: schema.hash,
+      relatedPageIds: query.relatedPageIds,
+      relatedNodeIds: query.relatedNodeIds,
+      relatedSourceIds: query.relatedSourceIds,
+      origin: "query"
+    });
+    savedTo = saved.savedTo;
+    savedPageId = saved.page.id;
   }
 
   await appendLogEntry(rootDir, "query", question, [
-    `citations=${citations.join(",") || "none"}`,
+    `citations=${query.citations.join(",") || "none"}`,
     `saved=${Boolean(savedTo)}`,
-    `rawSources=${rawExcerpts.length}`
+    `rawSources=${query.relatedSourceIds.length}`
   ]);
-  return { answer, savedTo, citations };
+
+  return {
+    answer: query.answer,
+    savedTo,
+    savedPageId,
+    citations: query.citations,
+    relatedPageIds: query.relatedPageIds,
+    relatedNodeIds: query.relatedNodeIds,
+    relatedSourceIds: query.relatedSourceIds
+  };
+}
+
+export async function exploreVault(rootDir: string, question: string, steps = 3): Promise<ExploreResult> {
+  const schema = await loadVaultSchema(rootDir);
+  const stepResults: ExploreStepResult[] = [];
+  const stepPages: GraphPage[] = [];
+  const visited = new Set<string>();
+  const suggestedQuestions: string[] = [];
+  let currentQuestion = question;
+
+  for (let step = 1; step <= Math.max(1, steps); step++) {
+    const normalizedQuestion = normalizeWhitespace(currentQuestion).toLowerCase();
+    if (!normalizedQuestion || visited.has(normalizedQuestion)) {
+      break;
+    }
+
+    visited.add(normalizedQuestion);
+    const query = await executeQuery(rootDir, currentQuestion);
+    const saved = await persistOutputPage(rootDir, {
+      title: `Explore Step ${step}: ${currentQuestion}`,
+      question: currentQuestion,
+      answer: query.answer,
+      citations: query.citations,
+      schemaHash: schema.hash,
+      relatedPageIds: query.relatedPageIds,
+      relatedNodeIds: query.relatedNodeIds,
+      relatedSourceIds: query.relatedSourceIds,
+      origin: "explore",
+      slug: `explore-${slugify(question)}-step-${step}`
+    });
+
+    const followUpQuestions = await generateFollowUpQuestions(rootDir, currentQuestion, query.answer);
+    stepResults.push({
+      step,
+      question: currentQuestion,
+      answer: query.answer,
+      savedTo: saved.savedTo,
+      savedPageId: saved.page.id,
+      citations: query.citations,
+      followUpQuestions
+    });
+    stepPages.push(saved.page);
+    suggestedQuestions.push(...followUpQuestions);
+
+    const nextQuestion = followUpQuestions.find((item) => !visited.has(normalizeWhitespace(item).toLowerCase()));
+    if (!nextQuestion) {
+      break;
+    }
+    currentQuestion = nextQuestion;
+  }
+
+  const allCitations = uniqueBy(
+    stepResults.flatMap((step) => step.citations),
+    (item) => item
+  );
+  const hub = await persistExploreHub(rootDir, {
+    question,
+    stepPages,
+    followUpQuestions: uniqueBy(suggestedQuestions, (item) => item),
+    citations: allCitations,
+    schemaHash: schema.hash,
+    slug: `explore-${slugify(question)}`
+  });
+
+  await appendLogEntry(rootDir, "explore", question, [
+    `steps=${stepResults.length}`,
+    `hub=${hub.page.id}`,
+    `citations=${allCitations.join(",") || "none"}`
+  ]);
+
+  return {
+    rootQuestion: question,
+    hubPath: hub.savedTo,
+    hubPageId: hub.page.id,
+    stepCount: stepResults.length,
+    steps: stepResults,
+    suggestedQuestions: uniqueBy(suggestedQuestions, (item) => item)
+  };
 }
 
 export async function searchVault(rootDir: string, query: string, limit = 5): Promise<SearchResult[]> {
@@ -522,12 +859,83 @@ export async function getWorkspaceInfo(rootDir: string): Promise<{
   };
 }
 
-export async function lintVault(rootDir: string): Promise<LintFinding[]> {
+function structuralLintFindings(
+  _rootDir: string,
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  graph: GraphArtifact,
+  schemaHash: string,
+  manifests: SourceManifest[]
+): Promise<LintFinding[]> {
+  const manifestMap = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
+  return Promise.all(
+    graph.pages.map(async (page) => {
+      const findings: LintFinding[] = [];
+
+      if (page.schemaHash !== schemaHash) {
+        findings.push({
+          severity: "warning",
+          code: "stale_page",
+          message: `Page ${page.title} is stale because the vault schema changed.`,
+          pagePath: path.join(paths.wikiDir, page.path),
+          relatedPageIds: [page.id]
+        });
+      }
+
+      for (const [sourceId, knownHash] of Object.entries(page.sourceHashes)) {
+        const manifest = manifestMap.get(sourceId);
+        if (manifest && manifest.contentHash !== knownHash) {
+          findings.push({
+            severity: "warning",
+            code: "stale_page",
+            message: `Page ${page.title} is stale because source ${sourceId} changed.`,
+            pagePath: path.join(paths.wikiDir, page.path),
+            relatedSourceIds: [sourceId],
+            relatedPageIds: [page.id]
+          });
+        }
+      }
+
+      if (page.kind !== "index" && page.backlinks.length === 0) {
+        findings.push({
+          severity: "info",
+          code: "orphan_page",
+          message: `Page ${page.title} has no backlinks.`,
+          pagePath: path.join(paths.wikiDir, page.path),
+          relatedPageIds: [page.id]
+        });
+      }
+
+      const absolutePath = path.join(paths.wikiDir, page.path);
+      if (await fileExists(absolutePath)) {
+        const content = await fs.readFile(absolutePath, "utf8");
+        if (content.includes("## Claims")) {
+          const uncited = content.split("\n").filter((line) => line.startsWith("- ") && !line.includes("[source:"));
+          if (uncited.length) {
+            findings.push({
+              severity: "warning",
+              code: "uncited_claims",
+              message: `Page ${page.title} contains uncited claim bullets.`,
+              pagePath: absolutePath,
+              relatedPageIds: [page.id]
+            });
+          }
+        }
+      }
+
+      return findings;
+    })
+  ).then((results) => results.flat());
+}
+
+export async function lintVault(rootDir: string, options: LintOptions = {}): Promise<LintFinding[]> {
+  if (options.web && !options.deep) {
+    throw new Error("`--web` can only be used together with `--deep`.");
+  }
+
   const { paths } = await loadVaultConfig(rootDir);
   const schema = await loadVaultSchema(rootDir);
   const manifests = await listManifests(rootDir);
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
-  const findings: LintFinding[] = [];
 
   if (!graph) {
     return [
@@ -539,57 +947,17 @@ export async function lintVault(rootDir: string): Promise<LintFinding[]> {
     ];
   }
 
-  const manifestMap = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
-
-  for (const page of graph.pages) {
-    if (page.schemaHash !== schema.hash) {
-      findings.push({
-        severity: "warning",
-        code: "stale_page",
-        message: `Page ${page.title} is stale because the vault schema changed.`,
-        pagePath: path.join(paths.wikiDir, page.path)
-      });
-    }
-
-    for (const [sourceId, knownHash] of Object.entries(page.sourceHashes)) {
-      const manifest = manifestMap.get(sourceId);
-      if (manifest && manifest.contentHash !== knownHash) {
-        findings.push({
-          severity: "warning",
-          code: "stale_page",
-          message: `Page ${page.title} is stale because source ${sourceId} changed.`,
-          pagePath: path.join(paths.wikiDir, page.path)
-        });
-      }
-    }
-
-    if (page.kind !== "index" && page.backlinks.length === 0) {
-      findings.push({
-        severity: "info",
-        code: "orphan_page",
-        message: `Page ${page.title} has no backlinks.`,
-        pagePath: path.join(paths.wikiDir, page.path)
-      });
-    }
-
-    const absolutePath = path.join(paths.wikiDir, page.path);
-    if (await fileExists(absolutePath)) {
-      const content = await fs.readFile(absolutePath, "utf8");
-      if (content.includes("## Claims")) {
-        const uncited = content.split("\n").filter((line) => line.startsWith("- ") && !line.includes("[source:"));
-        if (uncited.length) {
-          findings.push({
-            severity: "warning",
-            code: "uncited_claims",
-            message: `Page ${page.title} contains uncited claim bullets.`,
-            pagePath: absolutePath
-          });
-        }
-      }
-    }
+  const findings = await structuralLintFindings(rootDir, paths, graph, schema.hash, manifests);
+  if (options.deep) {
+    findings.push(...(await runDeepLint(rootDir, findings, { web: options.web })));
   }
 
-  await appendLogEntry(rootDir, "lint", `Linted ${graph.pages.length} page(s)`, [`findings=${findings.length}`]);
+  await appendLogEntry(rootDir, "lint", `Linted ${graph.pages.length} page(s)`, [
+    `findings=${findings.length}`,
+    `deep=${Boolean(options.deep)}`,
+    `web=${Boolean(options.web)}`
+  ]);
+
   return findings;
 }
 
@@ -598,6 +966,7 @@ export async function bootstrapDemo(rootDir: string, input?: string): Promise<{ 
   if (!input) {
     return {};
   }
+
   const manifest = await ingestInput(rootDir, input);
   const compile = await compileVault(rootDir);
   return {

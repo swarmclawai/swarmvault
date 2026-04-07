@@ -2,11 +2,13 @@
 import process from "node:process";
 import {
   compileVault,
+  exploreVault,
   importInbox,
   ingestInput,
   initVault,
   installAgent,
   lintVault,
+  loadVaultConfig,
   queryVault,
   startGraphServer,
   startMcpServer,
@@ -19,7 +21,7 @@ const program = new Command();
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.4")
+  .version("0.1.5")
   .option("--json", "Emit structured JSON output", false);
 
 function isJson(): boolean {
@@ -109,10 +111,31 @@ program
   });
 
 program
+  .command("explore")
+  .description("Run a save-first multi-step exploration loop against the vault.")
+  .argument("<question>", "Root question to explore")
+  .option("--steps <n>", "Maximum number of exploration steps", "3")
+  .action(async (question: string, options: { steps?: string }) => {
+    const stepCount = Number.parseInt(options.steps ?? "3", 10);
+    const result = await exploreVault(process.cwd(), question, Number.isFinite(stepCount) ? stepCount : 3);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Exploration hub saved to ${result.hubPath}`);
+      log(`Completed ${result.stepCount} step(s).`);
+    }
+  });
+
+program
   .command("lint")
   .description("Run anti-drift and wiki-health checks.")
-  .action(async () => {
-    const findings = await lintVault(process.cwd());
+  .option("--deep", "Run LLM-powered advisory lint", false)
+  .option("--web", "Augment deep lint with configured web search", false)
+  .action(async (options: { deep?: boolean; web?: boolean }) => {
+    const findings = await lintVault(process.cwd(), {
+      deep: options.deep ?? false,
+      web: options.web ?? false
+    });
     if (isJson()) {
       emitJson(findings);
       return;
@@ -152,12 +175,13 @@ program
   .option("--debounce <ms>", "Debounce window in milliseconds", "900")
   .action(async (options: { lint?: boolean; debounce?: string }) => {
     const debounceMs = Number.parseInt(options.debounce ?? "900", 10);
+    const { paths } = await loadVaultConfig(process.cwd());
     const controller = await watchVault(process.cwd(), {
       lint: options.lint ?? false,
       debounceMs: Number.isFinite(debounceMs) ? debounceMs : 900
     });
     if (isJson()) {
-      emitJson({ status: "watching", inboxDir: "inbox" });
+      emitJson({ status: "watching", inboxDir: paths.inboxDir });
     } else {
       log("Watching inbox for changes. Press Ctrl+C to stop.");
     }

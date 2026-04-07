@@ -86,6 +86,7 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
       success = false;
       error = caught instanceof Error ? caught.message : String(caught);
       consecutiveFailures++;
+      pending = true;
 
       if (consecutiveFailures >= CRITICAL_THRESHOLD) {
         process.stderr.write(
@@ -128,6 +129,20 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
     .on("addDir", (dirPath) => schedule(`addDir:${toWatchReason(paths.inboxDir, dirPath)}`))
     .on("unlinkDir", (dirPath) => schedule(`unlinkDir:${toWatchReason(paths.inboxDir, dirPath)}`))
     .on("error", (caught) => schedule(`error:${caught instanceof Error ? caught.message : String(caught)}`));
+
+  await new Promise<void>((resolve, reject) => {
+    const handleReady = () => {
+      watcher.off("error", handleError);
+      resolve();
+    };
+    const handleError = (caught: unknown) => {
+      watcher.off("ready", handleReady);
+      reject(caught);
+    };
+
+    watcher.once("ready", handleReady);
+    watcher.once("error", handleError);
+  });
 
   return {
     close: async () => {

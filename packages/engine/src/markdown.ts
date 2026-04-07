@@ -1,5 +1,5 @@
 import matter from "gray-matter";
-import type { Freshness, GraphPage, PageKind, SourceAnalysis, SourceManifest } from "./types.js";
+import type { Freshness, GraphPage, OutputOrigin, PageKind, SourceAnalysis, SourceManifest } from "./types.js";
 import { slugify } from "./utils.js";
 
 function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
@@ -17,18 +17,32 @@ function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
   }
 }
 
+function pageLink(page: Pick<GraphPage, "path" | "title">): string {
+  return `[[${page.path.replace(/\.md$/, "")}|${page.title}]]`;
+}
+
+function relatedOutputsSection(relatedOutputs: GraphPage[]): string[] {
+  if (!relatedOutputs.length) {
+    return [];
+  }
+
+  return ["## Related Outputs", "", ...relatedOutputs.map((page) => `- ${pageLink(page)}`), ""];
+}
+
 export function buildSourcePage(
   manifest: SourceManifest,
   analysis: SourceAnalysis,
   schemaHash: string,
-  confidence = 1.0
+  confidence = 1.0,
+  relatedOutputs: GraphPage[] = []
 ): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
   const nodeIds = [`source:${manifest.sourceId}`, ...analysis.concepts.map((item) => item.id), ...analysis.entities.map((item) => item.id)];
   const backlinks = [
     ...analysis.concepts.map((item) => `concept:${slugify(item.name)}`),
-    ...analysis.entities.map((item) => `entity:${slugify(item.name)}`)
+    ...analysis.entities.map((item) => `entity:${slugify(item.name)}`),
+    ...relatedOutputs.map((page) => page.id)
   ];
 
   const frontmatter = {
@@ -81,6 +95,8 @@ export function buildSourcePage(
     "## Questions",
     "",
     ...(analysis.questions.length ? analysis.questions.map((question) => `- ${question}`) : ["- No follow-up questions yet."]),
+    "",
+    ...relatedOutputsSection(relatedOutputs),
     ""
   ].join("\n");
 
@@ -96,7 +112,10 @@ export function buildSourcePage(
       confidence,
       backlinks,
       schemaHash,
-      sourceHashes: { [manifest.sourceId]: manifest.contentHash }
+      sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+      relatedPageIds: relatedOutputs.map((page) => page.id),
+      relatedNodeIds: [],
+      relatedSourceIds: []
     },
     content: matter.stringify(body, frontmatter)
   };
@@ -109,13 +128,14 @@ export function buildAggregatePage(
   sourceAnalyses: SourceAnalysis[],
   sourceHashes: Record<string, string>,
   schemaHash: string,
-  confidence = 0.72
+  confidence = 0.72,
+  relatedOutputs: GraphPage[] = []
 ): { page: GraphPage; content: string } {
   const slug = slugify(name);
   const relativePath = pagePathFor(kind, slug);
   const pageId = `${kind}:${slug}`;
   const sourceIds = sourceAnalyses.map((item) => item.sourceId);
-  const otherPages = sourceAnalyses.map((item) => `source:${item.sourceId}`);
+  const otherPages = [...sourceAnalyses.map((item) => `source:${item.sourceId}`), ...relatedOutputs.map((page) => page.id)];
   const summary = descriptions.find(Boolean) ?? `${kind} aggregated from ${sourceIds.length} source(s).`;
   const frontmatter = {
     page_id: pageId,
@@ -150,6 +170,8 @@ export function buildAggregatePage(
         .filter((claim) => claim.text.toLowerCase().includes(name.toLowerCase()))
         .map((claim) => `- ${claim.text} [source:${claim.citation}]`)
     ),
+    "",
+    ...relatedOutputsSection(relatedOutputs),
     ""
   ].join("\n");
 
@@ -165,7 +187,10 @@ export function buildAggregatePage(
       confidence,
       backlinks: otherPages,
       schemaHash,
-      sourceHashes
+      sourceHashes,
+      relatedPageIds: relatedOutputs.map((page) => page.id),
+      relatedNodeIds: [],
+      relatedSourceIds: []
     },
     content: matter.stringify(body, frontmatter)
   };
@@ -175,6 +200,7 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string): string {
   const sources = pages.filter((page) => page.kind === "source");
   const concepts = pages.filter((page) => page.kind === "concept");
   const entities = pages.filter((page) => page.kind === "entity");
+  const outputs = pages.filter((page) => page.kind === "output");
 
   return [
     "---",
@@ -206,11 +232,15 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string): string {
     "## Entities",
     "",
     ...(entities.length ? entities.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No entities yet."]),
+    "",
+    "## Outputs",
+    "",
+    ...(outputs.length ? outputs.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No saved outputs yet."]),
     ""
   ].join("\n");
 }
 
-export function buildSectionIndex(kind: "sources" | "concepts" | "entities", pages: GraphPage[], schemaHash: string): string {
+export function buildSectionIndex(kind: "sources" | "concepts" | "entities" | "outputs", pages: GraphPage[], schemaHash: string): string {
   const title = kind.charAt(0).toUpperCase() + kind.slice(1);
   return matter.stringify(
     [`# ${title}`, "", ...pages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`), ""].join("\n"),
@@ -231,46 +261,163 @@ export function buildSectionIndex(kind: "sources" | "concepts" | "entities", pag
   );
 }
 
-export function buildOutputPage(
-  question: string,
-  answer: string,
-  citations: string[],
-  schemaHash: string
-): { page: GraphPage; content: string } {
-  const slug = slugify(question);
+export function buildOutputPage(input: {
+  title?: string;
+  question: string;
+  answer: string;
+  citations: string[];
+  schemaHash: string;
+  relatedPageIds?: string[];
+  relatedNodeIds?: string[];
+  relatedSourceIds?: string[];
+  origin: OutputOrigin;
+  slug?: string;
+}): { page: GraphPage; content: string } {
+  const slug = input.slug ?? slugify(input.question);
   const pageId = `output:${slug}`;
   const pathValue = pagePathFor("output", slug);
+  const relatedPageIds = input.relatedPageIds ?? [];
+  const relatedNodeIds = input.relatedNodeIds ?? [];
+  const relatedSourceIds = input.relatedSourceIds ?? input.citations;
+  const backlinks = [...new Set([...relatedPageIds, ...relatedSourceIds.map((sourceId) => `source:${sourceId}`)])];
   const frontmatter = {
     page_id: pageId,
     kind: "output",
-    title: question,
+    title: input.title ?? input.question,
     tags: ["output"],
-    source_ids: citations,
-    node_ids: [],
+    source_ids: input.citations,
+    node_ids: relatedNodeIds,
     freshness: "fresh" satisfies Freshness,
     confidence: 0.74,
     updated_at: new Date().toISOString(),
-    backlinks: citations.map((sourceId) => `source:${sourceId}`),
-    schema_hash: schemaHash,
-    source_hashes: {}
+    backlinks,
+    schema_hash: input.schemaHash,
+    source_hashes: {},
+    related_page_ids: relatedPageIds,
+    related_node_ids: relatedNodeIds,
+    related_source_ids: relatedSourceIds,
+    origin: input.origin,
+    question: input.question
   };
 
   return {
     page: {
       id: pageId,
       path: pathValue,
-      title: question,
+      title: input.title ?? input.question,
       kind: "output",
-      sourceIds: citations,
-      nodeIds: [],
+      sourceIds: input.citations,
+      nodeIds: relatedNodeIds,
       freshness: "fresh",
       confidence: 0.74,
-      backlinks: citations.map((sourceId) => `source:${sourceId}`),
-      schemaHash,
-      sourceHashes: {}
+      backlinks,
+      schemaHash: input.schemaHash,
+      sourceHashes: {},
+      relatedPageIds,
+      relatedNodeIds,
+      relatedSourceIds,
+      origin: input.origin,
+      question: input.question
     },
     content: matter.stringify(
-      [`# ${question}`, "", answer, "", "## Citations", "", ...citations.map((citation) => `- [source:${citation}]`), ""].join("\n"),
+      [
+        `# ${input.title ?? input.question}`,
+        "",
+        input.answer,
+        "",
+        "## Related Pages",
+        "",
+        ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
+        "",
+        "## Citations",
+        "",
+        ...input.citations.map((citation) => `- [source:${citation}]`),
+        ""
+      ].join("\n"),
+      frontmatter
+    )
+  };
+}
+
+export function buildExploreHubPage(input: {
+  question: string;
+  stepPages: GraphPage[];
+  followUpQuestions: string[];
+  citations: string[];
+  schemaHash: string;
+  slug?: string;
+}): { page: GraphPage; content: string } {
+  const slug = input.slug ?? `explore-${slugify(input.question)}`;
+  const pageId = `output:${slug}`;
+  const pathValue = pagePathFor("output", slug);
+  const relatedPageIds = input.stepPages.map((page) => page.id);
+  const relatedSourceIds = [...new Set(input.citations)];
+  const relatedNodeIds = [...new Set(input.stepPages.flatMap((page) => page.nodeIds))];
+  const backlinks = [...new Set([...relatedPageIds, ...relatedSourceIds.map((sourceId) => `source:${sourceId}`)])];
+  const title = `Explore: ${input.question}`;
+
+  const frontmatter = {
+    page_id: pageId,
+    kind: "output",
+    title,
+    tags: ["output", "explore"],
+    source_ids: relatedSourceIds,
+    node_ids: relatedNodeIds,
+    freshness: "fresh" satisfies Freshness,
+    confidence: 0.76,
+    updated_at: new Date().toISOString(),
+    backlinks,
+    schema_hash: input.schemaHash,
+    source_hashes: {},
+    related_page_ids: relatedPageIds,
+    related_node_ids: relatedNodeIds,
+    related_source_ids: relatedSourceIds,
+    origin: "explore" satisfies OutputOrigin,
+    question: input.question
+  };
+
+  return {
+    page: {
+      id: pageId,
+      path: pathValue,
+      title,
+      kind: "output",
+      sourceIds: relatedSourceIds,
+      nodeIds: relatedNodeIds,
+      freshness: "fresh",
+      confidence: 0.76,
+      backlinks,
+      schemaHash: input.schemaHash,
+      sourceHashes: {},
+      relatedPageIds,
+      relatedNodeIds,
+      relatedSourceIds,
+      origin: "explore",
+      question: input.question
+    },
+    content: matter.stringify(
+      [
+        `# ${title}`,
+        "",
+        "## Root Question",
+        "",
+        input.question,
+        "",
+        "## Steps",
+        "",
+        ...(input.stepPages.length ? input.stepPages.map((page) => `- ${pageLink(page)}`) : ["- No steps recorded."]),
+        "",
+        "## Follow-Up Questions",
+        "",
+        ...(input.followUpQuestions.length
+          ? input.followUpQuestions.map((question) => `- ${question}`)
+          : ["- No follow-up questions generated."]),
+        "",
+        "## Citations",
+        "",
+        ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
+        ""
+      ].join("\n"),
       frontmatter
     )
   };
