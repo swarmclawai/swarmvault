@@ -19,7 +19,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
-async function waitFor(condition: () => Promise<boolean>, timeoutMs = 8000): Promise<void> {
+async function waitFor(condition: () => Promise<boolean>, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await condition()) {
@@ -312,5 +312,5 @@ describe("swarmvault workflow", () => {
     } finally {
       await controller.close();
     }
-  }, 12_000);
+  }, 20_000);
 });

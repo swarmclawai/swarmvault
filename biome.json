@@ -36,6 +36,7 @@
       "**/*.jsx",
       "**/*.json",
       "!**/dist",
+      "!.live-smoke-artifacts",
       "!node_modules",
       "!.next",
       "!out",

@@ -12,6 +12,9 @@
     "format": "biome format --write .",
     "typecheck": "pnpm -r typecheck",
     "check": "biome check . && pnpm -r typecheck",
+    "live:smoke:heuristic": "node ./scripts/live-smoke.mjs --lane heuristic",
+    "live:smoke:ollama": "node ./scripts/live-smoke.mjs --lane ollama",
+    "live:smoke:openai": "node ./scripts/live-smoke.mjs --lane openai",
     "prepare": "lefthook install"
   },
   "devDependencies": {

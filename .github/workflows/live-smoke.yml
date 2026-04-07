@@ -1,0 +1,152 @@
+name: Live Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published @swarmvaultai/cli version to test
+        required: false
+        type: string
+      lane:
+        description: Which live-smoke lane to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - heuristic
+          - ollama
+          - openai
+  release:
+    types: [published]
+  schedule:
+    - cron: "0 8 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  heuristic:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.lane == 'all' || github.event.inputs.lane == 'heuristic'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve published version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json','utf8')).version")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run heuristic live smoke
+        run: pnpm live:smoke:heuristic -- --version "$SWARMVAULT_LIVE_SMOKE_VERSION"
+
+      - name: Upload heuristic smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-smoke-heuristic
+          path: .live-smoke-artifacts/
+          if-no-files-found: ignore
+
+  openai:
+    if: |
+      (github.event_name != 'schedule') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.lane == 'all' || github.event.inputs.lane == 'openai') &&
+      secrets.OPENAI_API_KEY != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve published version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json','utf8')).version")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run OpenAI live smoke
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SWARMVAULT_OPENAI_MODEL: gpt-4.1-mini
+        run: pnpm live:smoke:openai -- --version "$SWARMVAULT_LIVE_SMOKE_VERSION"
+
+      - name: Upload OpenAI smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-smoke-openai
+          path: .live-smoke-artifacts/
+          if-no-files-found: ignore
+
+  ollama:
+    if: |
+      (github.event_name != 'schedule') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.lane == 'all' || github.event.inputs.lane == 'ollama') &&
+      secrets.OLLAMA_API_KEY != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve published version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json','utf8')).version")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run Ollama live smoke
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          SWARMVAULT_OLLAMA_MODEL: gpt-oss:20b-cloud
+          SWARMVAULT_OLLAMA_BASE_URL: https://ollama.com/v1
+          SWARMVAULT_OLLAMA_API_STYLE: chat
+        run: pnpm live:smoke:ollama -- --version "$SWARMVAULT_LIVE_SMOKE_VERSION"
+
+      - name: Upload Ollama smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-smoke-ollama
+          path: .live-smoke-artifacts/
+          if-no-files-found: ignore

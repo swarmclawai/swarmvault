@@ -16,6 +16,16 @@ pnpm test
 pnpm build
 ```
 
+For published-package live smoke checks:
+
+```bash
+pnpm live:smoke:heuristic
+pnpm live:smoke:ollama
+OPENAI_API_KEY=... pnpm live:smoke:openai
+```
+
+See [docs/live-testing.md](./docs/live-testing.md) for the full live-testing workflow and manual checklist.
+
 ## Pull Requests
 
 - Keep changes scoped and intentional

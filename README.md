@@ -228,6 +228,16 @@ pnpm test
 pnpm build
 ```
 
+Live smoke checks for the published package:
+
+```bash
+pnpm live:smoke:heuristic
+pnpm live:smoke:ollama
+OPENAI_API_KEY=... pnpm live:smoke:openai
+```
+
+See [docs/live-testing.md](./docs/live-testing.md) for the published-package smoke flow, CI workflow, and the manual live checklist.
+
 ## Links
 
 - Website: https://www.swarmvault.ai

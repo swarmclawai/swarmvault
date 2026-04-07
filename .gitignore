@@ -12,3 +12,4 @@ wiki/
 state/
 agent/
 packages/viewer/dist/
+.live-smoke-artifacts/
