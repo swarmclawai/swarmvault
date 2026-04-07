@@ -2,15 +2,19 @@
 
 ## Unreleased
 
-- Added lifecycle metadata on generated pages, including `status`, `created_at`, `updated_at`, `compiled_from`, and `managed_by`
-- Added a human-only `wiki/insights/` area that SwarmVault indexes into search and query without rewriting
-- Added canonical markdown session artifacts in `state/sessions/` for compile, query, explore, lint, and watch runs
-- Expanded MCP resources with session listing and per-session reads
-- Updated OSS docs and site docs for lifecycle metadata, insights, sessions, and workspace layout
+Nothing yet.
+
+## 0.1.6
+
+- Added a reviewable compile flow with `compile --approve`, `review list|show|accept|reject`, `candidate list|promote|archive`, and matching viewer/server approval and candidate queues
+- Added JS/TS code-aware ingestion with parser-backed module analysis, `wiki/code/` module pages, module and symbol graph nodes, and code relations such as imports, exports, defines, calls, extends, and implements
+- Added project-aware vault organization with `projects` config, layered root-plus-project schemas, `project_ids` metadata, `wiki/projects/` rollups, project-aware search and viewer filters, and expanded Obsidian workspace defaults
+- Added richer graph workspace behavior with local search and page APIs, standalone `graph export --html`, backlink and related-page preview navigation, and embedded-data exports for offline sharing
+- Updated the OSS docs, package READMEs, live-testing docs, and the public site docs to reflect the current review, code-ingestion, project-schema, graph-workspace, and Obsidian workflows
 
 ## 0.1.5
 
-- Added a compounding output loop with immediate output-page indexing for `query --save`
+- Added a save-first compounding output loop with immediate output-page indexing for `query`
 - Added `swarmvault explore` for save-first multi-step research flows and hub-page generation
 - Added advisory `lint --deep` plus optional `lint --deep --web` evidence gathering through pluggable web-search adapters
 - Added output relationship metadata and compile-time `Related Outputs` sections on source, concept, and entity pages

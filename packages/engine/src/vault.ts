@@ -4,6 +4,7 @@ import matter from "gray-matter";
 import { z } from "zod";
 import { installConfiguredAgents } from "./agents.js";
 import { analysisSignature, analyzeSource } from "./analysis.js";
+import { modulePageTitle, resolveCodeImportSourceId } from "./code-analysis.js";
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { runDeepLint } from "./deep-lint.js";
@@ -13,41 +14,67 @@ import {
   buildAggregatePage,
   buildExploreHubPage,
   buildIndexPage,
+  buildModulePage,
   buildOutputPage,
+  buildProjectIndex,
+  buildProjectsIndex,
   buildSectionIndex,
   buildSourcePage,
+  candidatePagePathFor,
   type ManagedGraphPageMetadata,
   type ManagedPageMetadata
 } from "./markdown.js";
 import { loadSavedOutputPages, relatedOutputsForPage, resolveUniqueOutputSlug } from "./outputs.js";
-import { loadExistingManagedPageState, loadInsightPages } from "./pages.js";
+import { loadExistingManagedPageState, loadInsightPages, parseStoredPage } from "./pages.js";
 import { getProviderForTask } from "./providers/registry.js";
-import { buildSchemaPrompt, loadVaultSchema } from "./schema.js";
+import {
+  buildSchemaPrompt,
+  composeVaultSchema,
+  getEffectiveSchema,
+  type LoadedVaultSchemas,
+  loadVaultSchemas,
+  schemaCategoryLabels
+} from "./schema.js";
 import { rebuildSearchIndex, searchPages } from "./search.js";
 import type {
+  ApprovalDetail,
+  ApprovalEntry,
+  ApprovalManifest,
+  ApprovalSummary,
+  CandidateRecord,
+  CompileOptions,
   CompileResult,
   CompileState,
+  ExploreOptions,
   ExploreResult,
   ExploreStepResult,
   GraphArtifact,
   GraphEdge,
   GraphNode,
   GraphPage,
+  InitOptions,
   LintFinding,
   LintOptions,
+  OutputFormat,
   PageManager,
   PageStatus,
+  QueryOptions,
   QueryResult,
+  ReviewActionResult,
   SearchResult,
   SourceAnalysis,
-  SourceManifest
+  SourceManifest,
+  VaultConfig
 } from "./types.js";
 import {
   ensureDir,
   fileExists,
+  listFilesRecursive,
   normalizeWhitespace,
   readJsonFile,
+  sha256,
   slugify,
+  toPosix,
   truncate,
   uniqueBy,
   writeFileIfChanged,
@@ -60,14 +87,299 @@ type QueryExecutionResult = {
   relatedPageIds: string[];
   relatedNodeIds: string[];
   relatedSourceIds: string[];
+  schemaHash: string;
+  projectIds: string[];
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
   };
 };
 
+type ProjectEntry = {
+  id: string;
+  roots: string[];
+  schemaPath?: string;
+};
+
+type CandidateHistoryEntry = NonNullable<CompileState["candidateHistory"][string]>;
+type ManagedPageRecord = {
+  page: GraphPage;
+  content: string;
+};
+
 function uniqueStrings(values: string[]): string[] {
   return uniqueBy(values.filter(Boolean), (value) => value);
+}
+
+function normalizeOutputFormat(format: OutputFormat | undefined): OutputFormat {
+  return format === "report" || format === "slides" ? format : "markdown";
+}
+
+function outputFormatInstruction(format: OutputFormat): string {
+  switch (format) {
+    case "report":
+      return "Return a concise markdown report with a title, a brief summary, key findings, and cited evidence.";
+    case "slides":
+      return "Return Marp-compatible markdown slide content with short slide titles, `---` separators, and cited evidence. Do not include YAML frontmatter.";
+    default:
+      return "Return concise markdown grounded in the provided context with cited evidence.";
+  }
+}
+
+function normalizeProjectRoot(root: string): string {
+  const normalized = toPosix(path.posix.normalize(root.replace(/\\/g, "/")))
+    .replace(/^\.\/+/, "")
+    .replace(/\/+$/, "");
+  return normalized;
+}
+
+function projectEntries(config: VaultConfig): ProjectEntry[] {
+  return Object.entries(config.projects ?? {})
+    .map(([id, project]) => ({
+      id,
+      roots: uniqueStrings(project.roots.map(normalizeProjectRoot)).filter(Boolean),
+      schemaPath: project.schemaPath
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function projectConfigHash(config: VaultConfig): string {
+  return sha256(
+    JSON.stringify(
+      projectEntries(config).map((project) => ({
+        id: project.id,
+        roots: project.roots,
+        schemaPath: project.schemaPath ?? null
+      }))
+    )
+  );
+}
+
+function manifestPathForProject(rootDir: string, manifest: SourceManifest): string {
+  const rawPath = manifest.originalPath ?? manifest.storedPath;
+  if (!rawPath) {
+    return toPosix(manifest.storedPath);
+  }
+  if (!path.isAbsolute(rawPath)) {
+    return normalizeProjectRoot(rawPath);
+  }
+  const relative = toPosix(path.relative(rootDir, rawPath));
+  return relative.startsWith("..") ? toPosix(rawPath) : normalizeProjectRoot(relative);
+}
+
+function prefixMatches(value: string, prefix: string): boolean {
+  return value === prefix || value.startsWith(`${prefix}/`);
+}
+
+function resolveSourceProjectId(rootDir: string, manifest: SourceManifest, config: VaultConfig): string | null {
+  const comparablePath = manifestPathForProject(rootDir, manifest);
+  let best: { id: string; length: number } | null = null;
+  for (const project of projectEntries(config)) {
+    for (const root of project.roots) {
+      if (!root || !prefixMatches(comparablePath, root)) {
+        continue;
+      }
+      if (!best || root.length > best.length || (root.length === best.length && project.id.localeCompare(best.id) < 0)) {
+        best = { id: project.id, length: root.length };
+      }
+    }
+  }
+  return best?.id ?? null;
+}
+
+function resolveSourceProjects(rootDir: string, manifests: SourceManifest[], config: VaultConfig): Record<string, string | null> {
+  return Object.fromEntries(manifests.map((manifest) => [manifest.sourceId, resolveSourceProjectId(rootDir, manifest, config)]));
+}
+
+function scopedProjectIdsFromSources(sourceIds: string[], sourceProjects: Record<string, string | null>): string[] {
+  const projectIds = uniqueStrings(sourceIds.map((sourceId) => sourceProjects[sourceId] ?? "").filter(Boolean));
+  return projectIds.length === 1 ? projectIds : [];
+}
+
+function schemaProjectIdsFromPages(pageIds: string[], pageMap: Map<string, GraphPage>): string[] {
+  return uniqueStrings(
+    pageIds
+      .flatMap((pageId) => pageMap.get(pageId)?.projectIds ?? [])
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right))
+  );
+}
+
+function categoryTagsForSchema(schema: { content: string }, texts: string[]): string[] {
+  const haystack = normalizeWhitespace(texts.filter(Boolean).join(" ")).toLowerCase();
+  if (!haystack) {
+    return [];
+  }
+  return uniqueStrings(
+    schemaCategoryLabels({ path: "", hash: "", content: schema.content })
+      .filter((label) => haystack.includes(label.toLowerCase()))
+      .map((label) => `category/${slugify(label)}`)
+  ).slice(0, 3);
+}
+
+function effectiveHashForProject(schemas: LoadedVaultSchemas, projectId: string | null): string {
+  return getEffectiveSchema(schemas, projectId).hash;
+}
+
+function previousGlobalSchemaHash(previousState: CompileState | null | undefined): string {
+  return (
+    previousState?.effectiveSchemaHashes?.global ??
+    (previousState as { schemaHash?: string } | null)?.schemaHash ??
+    previousState?.rootSchemaHash ??
+    ""
+  );
+}
+
+function previousProjectSchemaHash(previousState: CompileState | null | undefined, projectId: string | null): string {
+  if (!projectId) {
+    return previousGlobalSchemaHash(previousState);
+  }
+  return (
+    previousState?.effectiveSchemaHashes?.projects?.[projectId] ??
+    previousState?.projectSchemaHashes?.[projectId] ??
+    previousGlobalSchemaHash(previousState)
+  );
+}
+
+function expectedSchemaHashForPage(
+  page: GraphPage,
+  schemas: LoadedVaultSchemas,
+  pageMap: Map<string, GraphPage>,
+  sourceProjects: Record<string, string | null>
+): string {
+  if (page.kind === "source" || page.kind === "module" || page.kind === "concept" || page.kind === "entity") {
+    return effectiveHashForProject(schemas, scopedProjectIdsFromSources(page.sourceIds, sourceProjects)[0] ?? null);
+  }
+  if (page.kind === "output") {
+    const projectIds = schemaProjectIdsFromPages(page.relatedPageIds, pageMap);
+    if (projectIds.length) {
+      return composeVaultSchema(
+        schemas.root,
+        projectIds
+          .map((projectId) => schemas.projects[projectId])
+          .filter((schema): schema is NonNullable<typeof schema> => Boolean(schema?.hash))
+      ).hash;
+    }
+    return effectiveHashForProject(
+      schemas,
+      scopedProjectIdsFromSources(page.relatedSourceIds.length ? page.relatedSourceIds : page.sourceIds, sourceProjects)[0] ?? null
+    );
+  }
+  if (page.path === "projects/index.md" || page.kind === "insight") {
+    return schemas.effective.global.hash;
+  }
+  if (page.path.startsWith("projects/") && page.path.endsWith("/index.md")) {
+    const projectId = page.projectIds[0] ?? page.path.split("/")[1] ?? null;
+    return effectiveHashForProject(schemas, projectId);
+  }
+  return schemas.effective.global.hash;
+}
+
+function formatHeuristicAnswer(
+  question: string,
+  excerpts: string[],
+  rawExcerpts: string[],
+  searchResults: SearchResult[],
+  format: OutputFormat
+): string {
+  switch (format) {
+    case "report":
+      return [
+        `# Report: ${question}`,
+        "",
+        "## Summary",
+        "",
+        searchResults.length
+          ? `The vault surfaces ${searchResults.length} relevant page(s) for this question.`
+          : "No relevant pages found yet.",
+        "",
+        "## Relevant Pages",
+        "",
+        ...(searchResults.length ? searchResults.map((result) => `- ${result.title} (${result.path})`) : ["- None found."]),
+        "",
+        "## Evidence",
+        "",
+        ...(excerpts.length ? excerpts : ["No wiki evidence available yet."]),
+        ...(rawExcerpts.length ? ["", "## Raw Sources", "", ...rawExcerpts] : []),
+        ""
+      ].join("\n");
+    case "slides":
+      return [
+        `# ${question}`,
+        "",
+        searchResults.length ? `- ${searchResults.length} relevant page(s) found` : "- No relevant pages found yet",
+        "---",
+        "",
+        "# Key Pages",
+        "",
+        ...(searchResults.length ? searchResults.map((result) => `- ${result.title}`) : ["- None found."]),
+        ...(rawExcerpts.length
+          ? [
+              "---",
+              "",
+              "# Raw Sources",
+              "",
+              ...rawExcerpts.map((excerpt) => `- ${truncate(normalizeWhitespace(excerpt.replace(/^#.*\n/, "")), 140)}`)
+            ]
+          : []),
+        ""
+      ].join("\n");
+    default:
+      return [
+        `Question: ${question}`,
+        "",
+        "Relevant pages:",
+        ...searchResults.map((result) => `- ${result.title} (${result.path})`),
+        "",
+        excerpts.length ? excerpts.join("\n\n") : "No relevant pages found yet.",
+        ...(rawExcerpts.length ? ["", "Raw source material:", "", ...rawExcerpts] : [])
+      ].join("\n");
+  }
+}
+
+function jaccardSimilarity(left: string[], right: string[]): number {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  const union = new Set([...leftSet, ...rightSet]);
+  if (union.size === 0) {
+    return 1;
+  }
+  const intersection = [...leftSet].filter((item) => rightSet.has(item));
+  return intersection.length / union.size;
+}
+
+function shouldPromoteCandidate(previous: CandidateHistoryEntry | undefined, sourceIds: string[]): boolean {
+  return Boolean(previous && previous.status === "candidate" && jaccardSimilarity(previous.sourceIds, sourceIds) >= 0.5);
+}
+
+function activeAggregatePath(kind: "concept" | "entity", slug: string): string {
+  return kind === "entity" ? `entities/${slug}.md` : `concepts/${slug}.md`;
+}
+
+function approvalSummary(manifest: ApprovalManifest): ApprovalSummary {
+  return {
+    approvalId: manifest.approvalId,
+    createdAt: manifest.createdAt,
+    entryCount: manifest.entries.length,
+    pendingCount: manifest.entries.filter((entry) => entry.status === "pending").length,
+    acceptedCount: manifest.entries.filter((entry) => entry.status === "accepted").length,
+    rejectedCount: manifest.entries.filter((entry) => entry.status === "rejected").length
+  };
+}
+
+function pageSlug(page: Pick<GraphPage, "id">): string {
+  return page.id.includes(":") ? page.id.slice(page.id.indexOf(":") + 1) : slugify(page.id);
+}
+
+function candidateActivePath(page: Pick<GraphPage, "kind" | "id">): string {
+  if (page.kind !== "concept" && page.kind !== "entity") {
+    throw new Error(`Only concept and entity candidates can be promoted: ${page.id}`);
+  }
+  return activeAggregatePath(page.kind, pageSlug(page));
+}
+
+function buildCommunityId(seed: string, index: number): string {
+  return `community:${slugify(seed) || `cluster-${index + 1}`}`;
 }
 
 function pageHashes(pages: Array<{ page: GraphPage; contentHash: string }>): Record<string, string> {
@@ -81,17 +393,32 @@ async function buildManagedGraphPage(
     managedBy: PageManager;
     confidence: number;
     compiledFrom: string[];
+    statePathCandidates?: string[];
   },
   build: (metadata: ManagedGraphPageMetadata) => { page: GraphPage; content: string }
 ): Promise<{ page: GraphPage; content: string }> {
   const existingContent = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : null;
-  const existing = await loadExistingManagedPageState(absolutePath, {
+  let existing = await loadExistingManagedPageState(absolutePath, {
     status: defaults.status ?? "active",
     managedBy: defaults.managedBy
   });
+  let usedFallbackState = false;
+  if (!existingContent && defaults.statePathCandidates?.length) {
+    for (const candidatePath of defaults.statePathCandidates) {
+      if (candidatePath === absolutePath || !(await fileExists(candidatePath))) {
+        continue;
+      }
+      existing = await loadExistingManagedPageState(candidatePath, {
+        status: defaults.status ?? "active",
+        managedBy: defaults.managedBy
+      });
+      usedFallbackState = true;
+      break;
+    }
+  }
 
   let metadata: ManagedGraphPageMetadata = {
-    status: existing.status,
+    status: usedFallbackState && defaults.status ? defaults.status : existing.status,
     createdAt: existing.createdAt,
     updatedAt: existing.updatedAt,
     compiledFrom: defaults.compiledFrom,
@@ -117,17 +444,32 @@ async function buildManagedContent(
     status?: PageStatus;
     managedBy: PageManager;
     compiledFrom: string[];
+    statePathCandidates?: string[];
   },
   build: (metadata: ManagedPageMetadata) => string
 ): Promise<string> {
   const existingContent = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : null;
-  const existing = await loadExistingManagedPageState(absolutePath, {
+  let existing = await loadExistingManagedPageState(absolutePath, {
     status: defaults.status ?? "active",
     managedBy: defaults.managedBy
   });
+  let usedFallbackState = false;
+  if (!existingContent && defaults.statePathCandidates?.length) {
+    for (const candidatePath of defaults.statePathCandidates) {
+      if (candidatePath === absolutePath || !(await fileExists(candidatePath))) {
+        continue;
+      }
+      existing = await loadExistingManagedPageState(candidatePath, {
+        status: defaults.status ?? "active",
+        managedBy: defaults.managedBy
+      });
+      usedFallbackState = true;
+      break;
+    }
+  }
 
   let metadata: ManagedPageMetadata = {
-    status: existing.status,
+    status: usedFallbackState && defaults.status ? defaults.status : existing.status,
     createdAt: existing.createdAt,
     updatedAt: existing.updatedAt,
     compiledFrom: defaults.compiledFrom,
@@ -150,7 +492,119 @@ function indexCompiledFrom(pages: GraphPage[]): string[] {
   return uniqueStrings(pages.flatMap((page) => page.sourceIds));
 }
 
-function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pages: GraphPage[]): GraphArtifact {
+function deriveGraphMetrics(
+  nodes: GraphNode[],
+  edges: GraphEdge[]
+): {
+  nodes: GraphNode[];
+  communities: GraphArtifact["communities"];
+} {
+  const adjacency = new Map<string, Set<string>>();
+  const connect = (left: string, right: string) => {
+    if (!adjacency.has(left)) {
+      adjacency.set(left, new Set());
+    }
+    adjacency.get(left)?.add(right);
+  };
+
+  for (const edge of edges) {
+    connect(edge.source, edge.target);
+    connect(edge.target, edge.source);
+  }
+
+  const nonSourceNodes = nodes.filter((node) => node.type !== "source");
+  for (let index = 0; index < nonSourceNodes.length; index++) {
+    const left = nonSourceNodes[index];
+    for (let cursor = index + 1; cursor < nonSourceNodes.length; cursor++) {
+      const right = nonSourceNodes[cursor];
+      if (left.sourceIds.some((sourceId) => right.sourceIds.includes(sourceId))) {
+        connect(left.id, right.id);
+        connect(right.id, left.id);
+      }
+    }
+  }
+
+  const communityMap = new Map<string, string>();
+  const communities: Array<{ id: string; label: string; nodeIds: string[] }> = [];
+  const visited = new Set<string>();
+
+  for (const node of nonSourceNodes) {
+    if (visited.has(node.id)) {
+      continue;
+    }
+    const queue = [node.id];
+    const memberIds: string[] = [];
+    visited.add(node.id);
+
+    while (queue.length) {
+      const current = queue.shift() as string;
+      memberIds.push(current);
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (!visited.has(neighbor) && nodes.find((candidate) => candidate.id === neighbor)?.type !== "source") {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    const labelSeed = nodes.find((candidate) => candidate.id === memberIds[0])?.label ?? `cluster-${communities.length + 1}`;
+    const communityId = buildCommunityId(labelSeed, communities.length);
+    communities.push({
+      id: communityId,
+      label: labelSeed,
+      nodeIds: memberIds.sort((left, right) => left.localeCompare(right))
+    });
+    for (const memberId of memberIds) {
+      communityMap.set(memberId, communityId);
+    }
+  }
+
+  const degreeMap = new Map<string, number>();
+  for (const node of nodes) {
+    degreeMap.set(node.id, adjacency.get(node.id)?.size ?? 0);
+  }
+
+  const degreeValues = nodes
+    .filter((node) => node.type !== "source")
+    .map((node) => degreeMap.get(node.id) ?? 0)
+    .sort((left, right) => right - left);
+  const godNodeThreshold = degreeValues[Math.max(0, Math.floor(degreeValues.length * 0.1) - 1)] ?? 0;
+
+  const nextNodes = nodes.map((node) => {
+    const neighborCommunities = new Set(
+      [...(adjacency.get(node.id) ?? [])]
+        .map((neighborId) => communityMap.get(neighborId) ?? communityMap.get(node.id))
+        .filter((communityId): communityId is string => Boolean(communityId))
+    );
+    const degree = degreeMap.get(node.id) ?? 0;
+    const bridgeScore = node.type === "source" ? neighborCommunities.size : Math.max(0, neighborCommunities.size - 1);
+    const inferredCommunityId =
+      communityMap.get(node.id) ??
+      [...(adjacency.get(node.id) ?? [])]
+        .map((neighborId) => communityMap.get(neighborId))
+        .find((communityId): communityId is string => Boolean(communityId));
+
+    return {
+      ...node,
+      communityId: inferredCommunityId,
+      degree,
+      bridgeScore,
+      isGodNode: node.type !== "source" && degree >= godNodeThreshold && degree > 0
+    };
+  });
+
+  return {
+    nodes: nextNodes,
+    communities
+  };
+}
+
+function buildGraph(
+  manifests: SourceManifest[],
+  analyses: SourceAnalysis[],
+  pages: GraphPage[],
+  sourceProjects: Record<string, string | null>
+): GraphArtifact {
   const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
     id: `source:${manifest.sourceId}`,
     type: "source",
@@ -158,12 +612,28 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
     pageId: `source:${manifest.sourceId}`,
     freshness: "fresh",
     confidence: 1,
-    sourceIds: [manifest.sourceId]
+    sourceIds: [manifest.sourceId],
+    projectIds: scopedProjectIdsFromSources([manifest.sourceId], sourceProjects),
+    language: manifest.language
   }));
 
   const conceptMap = new Map<string, GraphNode>();
   const entityMap = new Map<string, GraphNode>();
+  const moduleMap = new Map<string, GraphNode>();
+  const symbolMap = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
+  const edgesById = new Set<string>();
+
+  const pushEdge = (edge: GraphEdge) => {
+    if (edgesById.has(edge.id)) {
+      return;
+    }
+    edgesById.add(edge.id);
+    edges.push(edge);
+  };
+
+  const manifestsById = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
+  const analysesBySourceId = new Map(analyses.map((analysis) => [analysis.sourceId, analysis]));
 
   for (const analysis of analyses) {
     for (const concept of analysis.concepts) {
@@ -176,9 +646,10 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
         pageId: `concept:${slugify(concept.name)}`,
         freshness: "fresh",
         confidence: nodeConfidence(sourceIds.length),
-        sourceIds
+        sourceIds,
+        projectIds: scopedProjectIdsFromSources(sourceIds, sourceProjects)
       });
-      edges.push({
+      pushEdge({
         id: `${analysis.sourceId}->${concept.id}`,
         source: `source:${analysis.sourceId}`,
         target: concept.id,
@@ -199,9 +670,10 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
         pageId: `entity:${slugify(entity.name)}`,
         freshness: "fresh",
         confidence: nodeConfidence(sourceIds.length),
-        sourceIds
+        sourceIds,
+        projectIds: scopedProjectIdsFromSources(sourceIds, sourceProjects)
       });
-      edges.push({
+      pushEdge({
         id: `${analysis.sourceId}->${entity.id}`,
         source: `source:${analysis.sourceId}`,
         target: entity.id,
@@ -210,6 +682,166 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
         confidence: edgeConfidence(analysis.claims, entity.name),
         provenance: [analysis.sourceId]
       });
+    }
+
+    if (analysis.code) {
+      const manifest = manifestsById.get(analysis.sourceId);
+      if (!manifest) {
+        continue;
+      }
+
+      const moduleId = analysis.code.moduleId;
+      moduleMap.set(moduleId, {
+        id: moduleId,
+        type: "module",
+        label: modulePageTitle(manifest),
+        pageId: moduleId,
+        freshness: "fresh",
+        confidence: 1,
+        sourceIds: [analysis.sourceId],
+        projectIds: scopedProjectIdsFromSources([analysis.sourceId], sourceProjects),
+        language: analysis.code.language,
+        moduleId
+      });
+
+      pushEdge({
+        id: `source:${analysis.sourceId}->${moduleId}:contains_code`,
+        source: `source:${analysis.sourceId}`,
+        target: moduleId,
+        relation: "contains_code",
+        status: "extracted",
+        confidence: 1,
+        provenance: [analysis.sourceId]
+      });
+
+      for (const symbol of analysis.code.symbols) {
+        symbolMap.set(symbol.id, {
+          id: symbol.id,
+          type: "symbol",
+          label: symbol.name,
+          pageId: moduleId,
+          freshness: "fresh",
+          confidence: symbol.exported ? 0.88 : 0.74,
+          sourceIds: [analysis.sourceId],
+          projectIds: scopedProjectIdsFromSources([analysis.sourceId], sourceProjects),
+          language: analysis.code.language,
+          moduleId,
+          symbolKind: symbol.kind
+        });
+
+        pushEdge({
+          id: `${moduleId}->${symbol.id}:defines`,
+          source: moduleId,
+          target: symbol.id,
+          relation: "defines",
+          status: "extracted",
+          confidence: 1,
+          provenance: [analysis.sourceId]
+        });
+
+        if (symbol.exported) {
+          pushEdge({
+            id: `${moduleId}->${symbol.id}:exports`,
+            source: moduleId,
+            target: symbol.id,
+            relation: "exports",
+            status: "extracted",
+            confidence: 1,
+            provenance: [analysis.sourceId]
+          });
+        }
+      }
+
+      const symbolIdsByName = new Map(analysis.code.symbols.map((symbol) => [symbol.name, symbol.id]));
+      const importedSymbolIdsByName = new Map<string, string>();
+      for (const codeImport of analysis.code.imports.filter((item) => !item.isExternal)) {
+        const targetSourceId = resolveCodeImportSourceId(manifest, codeImport.specifier, manifests);
+        const targetAnalysis = targetSourceId ? analysesBySourceId.get(targetSourceId) : undefined;
+        if (!targetSourceId || !targetAnalysis?.code) {
+          continue;
+        }
+
+        for (const importedSymbol of codeImport.importedSymbols) {
+          const [rawExportedName, rawLocalName] = importedSymbol.split(/\s+as\s+/i);
+          const exportedName = (rawExportedName ?? "").trim();
+          const localName = (rawLocalName ?? rawExportedName ?? "").trim();
+          if (!exportedName || !localName) {
+            continue;
+          }
+          const targetSymbol = targetAnalysis.code.symbols.find((symbol) => symbol.name === exportedName && symbol.exported);
+          if (targetSymbol) {
+            importedSymbolIdsByName.set(localName, targetSymbol.id);
+          }
+        }
+      }
+
+      for (const symbol of analysis.code.symbols) {
+        for (const targetName of symbol.calls) {
+          const targetId = symbolIdsByName.get(targetName);
+          if (!targetId || targetId === symbol.id) {
+            continue;
+          }
+          pushEdge({
+            id: `${symbol.id}->${targetId}:calls`,
+            source: symbol.id,
+            target: targetId,
+            relation: "calls",
+            status: "extracted",
+            confidence: 1,
+            provenance: [analysis.sourceId]
+          });
+        }
+
+        for (const targetName of symbol.extends) {
+          const targetId = symbolIdsByName.get(targetName) ?? importedSymbolIdsByName.get(targetName);
+          if (!targetId) {
+            continue;
+          }
+          pushEdge({
+            id: `${symbol.id}->${targetId}:extends`,
+            source: symbol.id,
+            target: targetId,
+            relation: "extends",
+            status: "extracted",
+            confidence: 1,
+            provenance: [analysis.sourceId]
+          });
+        }
+
+        for (const targetName of symbol.implements) {
+          const targetId = symbolIdsByName.get(targetName) ?? importedSymbolIdsByName.get(targetName);
+          if (!targetId) {
+            continue;
+          }
+          pushEdge({
+            id: `${symbol.id}->${targetId}:implements`,
+            source: symbol.id,
+            target: targetId,
+            relation: "implements",
+            status: "extracted",
+            confidence: 1,
+            provenance: [analysis.sourceId]
+          });
+        }
+      }
+
+      for (const codeImport of analysis.code.imports) {
+        const targetSourceId = resolveCodeImportSourceId(manifest, codeImport.specifier, manifests);
+        if (!targetSourceId) {
+          continue;
+        }
+
+        const targetModuleId = `module:${targetSourceId}`;
+        pushEdge({
+          id: `${moduleId}->${targetModuleId}:${codeImport.reExport ? "exports" : "imports"}:${codeImport.specifier}`,
+          source: moduleId,
+          target: targetModuleId,
+          relation: codeImport.reExport ? "exports" : "imports",
+          status: "extracted",
+          confidence: 1,
+          provenance: [analysis.sourceId, targetSourceId]
+        });
+      }
     }
   }
 
@@ -241,7 +873,7 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
           continue;
         }
         conflictEdgeKeys.add(edgeKey);
-        edges.push({
+        pushEdge({
           id: `conflict:${positiveClaim.claim.id}->${negativeClaim.claim.id}`,
           source: `source:${positiveClaim.sourceId}`,
           target: `source:${negativeClaim.sourceId}`,
@@ -254,10 +886,14 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
     }
   }
 
+  const graphNodes = [...sourceNodes, ...moduleMap.values(), ...symbolMap.values(), ...conceptMap.values(), ...entityMap.values()];
+  const metrics = deriveGraphMetrics(graphNodes, edges);
+
   return {
     generatedAt: new Date().toISOString(),
-    nodes: [...sourceNodes, ...conceptMap.values(), ...entityMap.values()],
+    nodes: metrics.nodes,
     edges,
+    communities: metrics.communities,
     sources: manifests,
     pages
   };
@@ -305,6 +941,7 @@ function emptyGraphPage(input: {
   title: string;
   kind: GraphPage["kind"];
   sourceIds: string[];
+  projectIds?: string[];
   nodeIds: string[];
   schemaHash: string;
   sourceHashes: Record<string, string>;
@@ -321,6 +958,7 @@ function emptyGraphPage(input: {
     title: input.title,
     kind: input.kind,
     sourceIds: input.sourceIds,
+    projectIds: input.projectIds ?? [],
     nodeIds: input.nodeIds,
     freshness: "fresh",
     status: input.status ?? "active",
@@ -353,20 +991,661 @@ async function requiredCompileArtifactsExist(paths: Awaited<ReturnType<typeof lo
     paths.searchDbPath,
     path.join(paths.wikiDir, "index.md"),
     path.join(paths.wikiDir, "sources", "index.md"),
+    path.join(paths.wikiDir, "code", "index.md"),
     path.join(paths.wikiDir, "concepts", "index.md"),
     path.join(paths.wikiDir, "entities", "index.md"),
-    path.join(paths.wikiDir, "outputs", "index.md")
+    path.join(paths.wikiDir, "outputs", "index.md"),
+    path.join(paths.wikiDir, "projects", "index.md"),
+    path.join(paths.wikiDir, "candidates", "index.md")
   ];
 
   const checks = await Promise.all(requiredPaths.map((filePath) => fileExists(filePath)));
   return checks.every(Boolean);
 }
 
-async function refreshIndexesAndSearch(rootDir: string, schemaHash: string, pages: GraphPage[]): Promise<void> {
-  const { paths } = await loadVaultConfig(rootDir);
-  await ensureDir(path.join(paths.wikiDir, "outputs"));
+async function loadCachedAnalyses(
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  manifests: SourceManifest[]
+): Promise<SourceAnalysis[]> {
+  return Promise.all(
+    manifests.map(async (manifest) => {
+      const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
+      if (!cached) {
+        throw new Error(`Missing cached analysis for ${manifest.sourceId}. Run \`swarmvault compile\` first.`);
+      }
+      return cached;
+    })
+  );
+}
+
+function approvalManifestPath(paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"], approvalId: string): string {
+  return path.join(paths.approvalsDir, approvalId, "manifest.json");
+}
+
+function approvalGraphPath(paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"], approvalId: string): string {
+  return path.join(paths.approvalsDir, approvalId, "state", "graph.json");
+}
+
+async function readApprovalManifest(
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  approvalId: string
+): Promise<ApprovalManifest> {
+  const manifest = await readJsonFile<ApprovalManifest>(approvalManifestPath(paths, approvalId));
+  if (!manifest) {
+    throw new Error(`Approval bundle not found: ${approvalId}`);
+  }
+  return manifest;
+}
+
+async function writeApprovalManifest(
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  manifest: ApprovalManifest
+): Promise<void> {
+  await fs.writeFile(approvalManifestPath(paths, manifest.approvalId), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+async function buildApprovalEntries(
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  changedFiles: Array<{ relativePath: string; content: string }>,
+  deletedPaths: string[],
+  previousGraph: GraphArtifact | null,
+  graph: GraphArtifact
+): Promise<ApprovalEntry[]> {
+  const previousPagesById = new Map((previousGraph?.pages ?? []).map((page) => [page.id, page]));
+  const previousPagesByPath = new Map((previousGraph?.pages ?? []).map((page) => [page.path, page]));
+  const nextPagesByPath = new Map(graph.pages.map((page) => [page.path, page]));
+  const handledDeletedPaths = new Set<string>();
+  const entries: ApprovalEntry[] = [];
+
+  for (const file of changedFiles.sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
+    const nextPage = nextPagesByPath.get(file.relativePath);
+    if (!nextPage) {
+      continue;
+    }
+    const previousPage = previousPagesById.get(nextPage.id);
+    const currentExists = await fileExists(path.join(paths.wikiDir, file.relativePath));
+    if (previousPage && previousPage.path !== nextPage.path) {
+      entries.push({
+        pageId: nextPage.id,
+        title: nextPage.title,
+        kind: nextPage.kind,
+        changeType: "promote",
+        status: "pending",
+        sourceIds: nextPage.sourceIds,
+        nextPath: nextPage.path,
+        previousPath: previousPage.path
+      });
+      handledDeletedPaths.add(previousPage.path);
+      continue;
+    }
+
+    entries.push({
+      pageId: nextPage.id,
+      title: nextPage.title,
+      kind: nextPage.kind,
+      changeType: previousPage || currentExists ? "update" : "create",
+      status: "pending",
+      sourceIds: nextPage.sourceIds,
+      nextPath: nextPage.path,
+      previousPath: previousPage?.path
+    });
+  }
+
+  for (const deletedPath of deletedPaths.sort((left, right) => left.localeCompare(right))) {
+    if (handledDeletedPaths.has(deletedPath)) {
+      continue;
+    }
+    const previousPage = previousPagesByPath.get(deletedPath);
+    entries.push({
+      pageId: previousPage?.id ?? `page:${slugify(deletedPath)}`,
+      title: previousPage?.title ?? path.basename(deletedPath, ".md"),
+      kind: previousPage?.kind ?? "index",
+      changeType: "delete",
+      status: "pending",
+      sourceIds: previousPage?.sourceIds ?? [],
+      previousPath: deletedPath
+    });
+  }
+
+  return uniqueBy(entries, (entry) => `${entry.pageId}:${entry.changeType}:${entry.nextPath ?? ""}:${entry.previousPath ?? ""}`);
+}
+
+async function stageApprovalBundle(
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  changedFiles: Array<{ relativePath: string; content: string }>,
+  deletedPaths: string[],
+  previousGraph: GraphArtifact | null,
+  graph: GraphArtifact
+): Promise<{ approvalId: string; approvalDir: string }> {
+  const approvalId = `compile-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const approvalDir = path.join(paths.approvalsDir, approvalId);
+  await ensureDir(approvalDir);
+  await ensureDir(path.join(approvalDir, "wiki"));
+  await ensureDir(path.join(approvalDir, "state"));
+
+  for (const file of changedFiles) {
+    const targetPath = path.join(approvalDir, "wiki", file.relativePath);
+    await ensureDir(path.dirname(targetPath));
+    await fs.writeFile(targetPath, file.content, "utf8");
+  }
+
+  await fs.writeFile(path.join(approvalDir, "state", "graph.json"), JSON.stringify(graph, null, 2), "utf8");
+  await writeApprovalManifest(paths, {
+    approvalId,
+    createdAt: new Date().toISOString(),
+    entries: await buildApprovalEntries(paths, changedFiles, deletedPaths, previousGraph, graph)
+  });
+
+  return { approvalId, approvalDir };
+}
+
+async function syncVaultArtifacts(
+  rootDir: string,
+  input: {
+    schemas: LoadedVaultSchemas;
+    manifests: SourceManifest[];
+    analyses: SourceAnalysis[];
+    sourceProjects: Record<string, string | null>;
+    outputPages: GraphPage[];
+    insightPages: GraphPage[];
+    outputHashes: Record<string, string>;
+    insightHashes: Record<string, string>;
+    previousState: CompileState | null;
+    approve?: boolean;
+  }
+): Promise<{
+  graph: GraphArtifact;
+  allPages: GraphPage[];
+  changedPages: string[];
+  promotedPageIds: string[];
+  candidatePageCount: number;
+  staged: boolean;
+  approvalId?: string;
+  approvalDir?: string;
+}> {
+  const { config, paths } = await loadVaultConfig(rootDir);
+  const previousGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const globalSchemaHash = input.schemas.effective.global.hash;
+  const changedPages: string[] = [];
+  const promotedPageIds: string[] = [];
+  const candidateHistory: CompileState["candidateHistory"] = {};
+  const records: ManagedPageRecord[] = [];
+
+  for (const manifest of input.manifests) {
+    const analysis = input.analyses.find((item) => item.sourceId === manifest.sourceId);
+    if (!analysis) {
+      continue;
+    }
+    const sourceProjectIds = scopedProjectIdsFromSources([manifest.sourceId], input.sourceProjects);
+    const sourceSchemaHash = effectiveHashForProject(input.schemas, sourceProjectIds[0] ?? null);
+    const sourceCategoryTags = categoryTagsForSchema(getEffectiveSchema(input.schemas, sourceProjectIds[0] ?? null), [
+      analysis.title,
+      analysis.summary,
+      ...analysis.concepts.map((item) => item.description),
+      ...analysis.entities.map((item) => item.description)
+    ]);
+
+    const modulePreview = analysis.code
+      ? emptyGraphPage({
+          id: analysis.code.moduleId,
+          path: `code/${manifest.sourceId}.md`,
+          title: modulePageTitle(manifest),
+          kind: "module",
+          sourceIds: [manifest.sourceId],
+          projectIds: sourceProjectIds,
+          nodeIds: [analysis.code.moduleId, ...analysis.code.symbols.map((symbol) => symbol.id)],
+          schemaHash: sourceSchemaHash,
+          sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+          confidence: 1
+        })
+      : null;
+    const preview = emptyGraphPage({
+      id: `source:${manifest.sourceId}`,
+      path: `sources/${manifest.sourceId}.md`,
+      title: analysis.title,
+      kind: "source",
+      sourceIds: [manifest.sourceId],
+      projectIds: sourceProjectIds,
+      nodeIds: [
+        `source:${manifest.sourceId}`,
+        ...analysis.concepts.map((item) => item.id),
+        ...analysis.entities.map((item) => item.id),
+        ...(analysis.code ? [analysis.code.moduleId, ...analysis.code.symbols.map((symbol) => symbol.id)] : [])
+      ],
+      schemaHash: sourceSchemaHash,
+      sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+      confidence: 1
+    });
+    const sourceRecord = await buildManagedGraphPage(
+      path.join(paths.wikiDir, preview.path),
+      {
+        managedBy: "system",
+        confidence: 1,
+        compiledFrom: [manifest.sourceId]
+      },
+      (metadata) =>
+        buildSourcePage(
+          manifest,
+          analysis,
+          sourceSchemaHash,
+          metadata,
+          relatedOutputsForPage(preview, input.outputPages),
+          modulePreview ?? undefined,
+          {
+            projectIds: sourceProjectIds,
+            extraTags: sourceCategoryTags
+          }
+        )
+    );
+    records.push(sourceRecord);
+
+    if (modulePreview && analysis.code) {
+      const localModules = analysis.code.imports
+        .map((codeImport) => {
+          const resolvedSourceId = resolveCodeImportSourceId(manifest, codeImport.specifier, input.manifests);
+          if (!resolvedSourceId) {
+            return null;
+          }
+          const targetManifest = input.manifests.find((item) => item.sourceId === resolvedSourceId);
+          if (!targetManifest) {
+            return null;
+          }
+          return {
+            specifier: codeImport.specifier,
+            sourceId: resolvedSourceId,
+            reExport: codeImport.reExport,
+            page: {
+              id: `module:${resolvedSourceId}`,
+              path: `code/${resolvedSourceId}.md`,
+              title: modulePageTitle(targetManifest)
+            }
+          };
+        })
+        .filter(
+          (item): item is { specifier: string; sourceId: string; reExport: boolean; page: Pick<GraphPage, "id" | "path" | "title"> } =>
+            Boolean(item)
+        );
+
+      records.push(
+        await buildManagedGraphPage(
+          path.join(paths.wikiDir, modulePreview.path),
+          {
+            managedBy: "system",
+            confidence: 1,
+            compiledFrom: [manifest.sourceId]
+          },
+          (metadata) =>
+            buildModulePage({
+              manifest,
+              analysis,
+              schemaHash: sourceSchemaHash,
+              metadata,
+              sourcePage: sourceRecord.page,
+              localModules,
+              relatedOutputs: relatedOutputsForPage(modulePreview, input.outputPages),
+              projectIds: sourceProjectIds,
+              extraTags: sourceCategoryTags
+            })
+        )
+      );
+    }
+  }
+
+  for (const kind of ["concepts", "entities"] as const) {
+    for (const aggregate of aggregateItems(input.analyses, kind)) {
+      const itemKind = kind === "concepts" ? "concept" : "entity";
+      const slug = slugify(aggregate.name);
+      const pageId = `${itemKind}:${slug}`;
+      const sourceIds = uniqueStrings(aggregate.sourceAnalyses.map((item) => item.sourceId));
+      const projectIds = scopedProjectIdsFromSources(sourceIds, input.sourceProjects);
+      const schemaHash = effectiveHashForProject(input.schemas, projectIds[0] ?? null);
+      const previousEntry = input.previousState?.candidateHistory?.[pageId];
+      const promoted = previousEntry?.status === "active" || shouldPromoteCandidate(previousEntry, sourceIds);
+      const relativePath = promoted ? activeAggregatePath(itemKind, slug) : candidatePagePathFor(itemKind, slug);
+      const fallbackPaths = [
+        path.join(paths.wikiDir, activeAggregatePath(itemKind, slug)),
+        path.join(paths.wikiDir, candidatePagePathFor(itemKind, slug))
+      ];
+      const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
+      const preview = emptyGraphPage({
+        id: pageId,
+        path: relativePath,
+        title: aggregate.name,
+        kind: itemKind,
+        sourceIds,
+        projectIds,
+        nodeIds: [pageId],
+        schemaHash,
+        sourceHashes: aggregate.sourceHashes,
+        confidence,
+        status: promoted ? "active" : "candidate"
+      });
+      const pageRecord = await buildManagedGraphPage(
+        path.join(paths.wikiDir, relativePath),
+        {
+          status: promoted ? "active" : "candidate",
+          managedBy: "system",
+          confidence,
+          compiledFrom: sourceIds,
+          statePathCandidates: fallbackPaths
+        },
+        (metadata) =>
+          buildAggregatePage(
+            itemKind,
+            aggregate.name,
+            aggregate.descriptions,
+            aggregate.sourceAnalyses,
+            aggregate.sourceHashes,
+            schemaHash,
+            metadata,
+            relativePath,
+            relatedOutputsForPage(preview, input.outputPages),
+            {
+              projectIds,
+              extraTags: categoryTagsForSchema(getEffectiveSchema(input.schemas, projectIds[0] ?? null), [
+                aggregate.name,
+                ...aggregate.descriptions,
+                ...aggregate.sourceAnalyses.map((item) => item.summary)
+              ])
+            }
+          )
+      );
+      if (promoted && previousEntry?.status === "candidate") {
+        promotedPageIds.push(pageId);
+      }
+      candidateHistory[pageId] = {
+        sourceIds,
+        status: promoted ? "active" : "candidate"
+      };
+      records.push(pageRecord);
+    }
+  }
+
+  const compiledPages = records.map((record) => record.page);
+  const allPages = [...compiledPages, ...input.outputPages, ...input.insightPages];
+  const graph = buildGraph(input.manifests, input.analyses, allPages, input.sourceProjects);
+  const activeConceptPages = allPages.filter((page) => page.kind === "concept" && page.status !== "candidate");
+  const activeEntityPages = allPages.filter((page) => page.kind === "entity" && page.status !== "candidate");
+  const modulePages = allPages.filter((page) => page.kind === "module");
+  const candidatePages = allPages.filter((page) => page.status === "candidate");
+  const configuredProjects = projectEntries(config);
+  const projectIndexRefs = configuredProjects.map((project) =>
+    emptyGraphPage({
+      id: `project:${project.id}:index`,
+      path: `projects/${project.id}/index.md`,
+      title: `Project: ${project.id}`,
+      kind: "index",
+      sourceIds: [],
+      projectIds: [project.id],
+      nodeIds: [],
+      schemaHash: effectiveHashForProject(input.schemas, project.id),
+      sourceHashes: {},
+      confidence: 1
+    })
+  );
+
+  records.push({
+    page: emptyGraphPage({
+      id: "projects:index",
+      path: "projects/index.md",
+      title: "Projects",
+      kind: "index",
+      sourceIds: [],
+      projectIds: [],
+      nodeIds: [],
+      schemaHash: globalSchemaHash,
+      sourceHashes: {},
+      confidence: 1
+    }),
+    content: await buildManagedContent(
+      path.join(paths.wikiDir, "projects", "index.md"),
+      {
+        managedBy: "system",
+        compiledFrom: indexCompiledFrom(projectIndexRefs)
+      },
+      (metadata) => buildProjectsIndex(projectIndexRefs, globalSchemaHash, metadata)
+    )
+  });
+
+  for (const project of configuredProjects) {
+    const projectIndexRef = projectIndexRefs.find((page) => page.projectIds.includes(project.id));
+    if (!projectIndexRef) {
+      continue;
+    }
+    const sections = {
+      sources: allPages.filter((page) => page.kind === "source" && page.projectIds.includes(project.id)),
+      code: allPages.filter((page) => page.kind === "module" && page.projectIds.includes(project.id)),
+      concepts: allPages.filter((page) => page.kind === "concept" && page.status !== "candidate" && page.projectIds.includes(project.id)),
+      entities: allPages.filter((page) => page.kind === "entity" && page.status !== "candidate" && page.projectIds.includes(project.id)),
+      outputs: allPages.filter((page) => page.kind === "output" && page.projectIds.includes(project.id)),
+      candidates: allPages.filter((page) => page.status === "candidate" && page.projectIds.includes(project.id))
+    } as const;
+    records.push({
+      page: projectIndexRef,
+      content: await buildManagedContent(
+        path.join(paths.wikiDir, projectIndexRef.path),
+        {
+          managedBy: "system",
+          compiledFrom: indexCompiledFrom(Object.values(sections).flat())
+        },
+        (metadata) =>
+          buildProjectIndex({
+            projectId: project.id,
+            schemaHash: effectiveHashForProject(input.schemas, project.id),
+            metadata,
+            sections
+          })
+      )
+    });
+  }
+
+  records.push({
+    page: emptyGraphPage({
+      id: "index",
+      path: "index.md",
+      title: "SwarmVault Index",
+      kind: "index",
+      sourceIds: [],
+      projectIds: [],
+      nodeIds: [],
+      schemaHash: globalSchemaHash,
+      sourceHashes: {},
+      confidence: 1
+    }),
+    content: await buildManagedContent(
+      path.join(paths.wikiDir, "index.md"),
+      {
+        managedBy: "system",
+        compiledFrom: indexCompiledFrom(allPages)
+      },
+      (metadata) => buildIndexPage(allPages, globalSchemaHash, metadata, projectIndexRefs)
+    )
+  });
+
+  for (const [relativePath, kind, pages] of [
+    ["sources/index.md", "sources", allPages.filter((page) => page.kind === "source")],
+    ["code/index.md", "code", modulePages],
+    ["concepts/index.md", "concepts", activeConceptPages],
+    ["entities/index.md", "entities", activeEntityPages],
+    ["outputs/index.md", "outputs", allPages.filter((page) => page.kind === "output")],
+    ["candidates/index.md", "candidates", candidatePages]
+  ] as const) {
+    records.push({
+      page: emptyGraphPage({
+        id: `${kind}:index`,
+        path: relativePath,
+        title: kind,
+        kind: "index",
+        sourceIds: [],
+        projectIds: [],
+        nodeIds: [],
+        schemaHash: globalSchemaHash,
+        sourceHashes: {},
+        confidence: 1
+      }),
+      content: await buildManagedContent(
+        path.join(paths.wikiDir, relativePath),
+        {
+          managedBy: "system",
+          compiledFrom: indexCompiledFrom(pages)
+        },
+        (metadata) => buildSectionIndex(kind, pages, globalSchemaHash, metadata)
+      )
+    });
+  }
+
+  const nextPagePaths = new Set(records.map((record) => record.page.path));
+  const obsoleteGraphPaths = (previousGraph?.pages ?? [])
+    .filter((page) => page.kind !== "output" && page.kind !== "insight")
+    .map((page) => page.path)
+    .filter((relativePath) => !nextPagePaths.has(relativePath));
+  const existingProjectIndexPaths = (await listFilesRecursive(paths.projectsDir))
+    .filter((absolutePath) => absolutePath.endsWith(".md"))
+    .map((absolutePath) => toPosix(path.relative(paths.wikiDir, absolutePath)))
+    .filter((relativePath) => !nextPagePaths.has(relativePath));
+  const obsoletePaths = uniqueStrings([...obsoleteGraphPaths, ...existingProjectIndexPaths]);
+
+  const changedFiles: Array<{ relativePath: string; content: string }> = [];
+  for (const record of records) {
+    const absolutePath = path.join(paths.wikiDir, record.page.path);
+    const current = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : null;
+    if (current !== record.content) {
+      changedPages.push(record.page.path);
+      changedFiles.push({ relativePath: record.page.path, content: record.content });
+    }
+  }
+  changedPages.push(...obsoletePaths.filter((relativePath) => !changedPages.includes(relativePath)));
+
+  if (input.approve) {
+    const approval = await stageApprovalBundle(paths, changedFiles, obsoletePaths, previousGraph ?? null, graph);
+    return {
+      graph,
+      allPages,
+      changedPages,
+      promotedPageIds,
+      candidatePageCount: candidatePages.length,
+      staged: true,
+      approvalId: approval.approvalId,
+      approvalDir: approval.approvalDir
+    };
+  }
+
+  const writeChanges: string[] = [];
+  for (const record of records) {
+    await writePage(paths.wikiDir, record.page.path, record.content, writeChanges);
+  }
+  for (const relativePath of obsoletePaths) {
+    await fs.rm(path.join(paths.wikiDir, relativePath), { force: true });
+  }
+
+  await writeJsonFile(paths.graphPath, graph);
+  await writeJsonFile(paths.compileStatePath, {
+    generatedAt: graph.generatedAt,
+    rootSchemaHash: input.schemas.root.hash,
+    projectSchemaHashes: Object.fromEntries(
+      Object.keys(input.schemas.projects)
+        .sort((left, right) => left.localeCompare(right))
+        .map((projectId) => [projectId, input.schemas.projects[projectId]?.hash ?? ""])
+    ),
+    effectiveSchemaHashes: {
+      global: input.schemas.effective.global.hash,
+      projects: Object.fromEntries(
+        Object.keys(input.schemas.effective.projects)
+          .sort((left, right) => left.localeCompare(right))
+          .map((projectId) => [projectId, input.schemas.effective.projects[projectId]?.hash ?? input.schemas.effective.global.hash])
+      )
+    },
+    projectConfigHash: projectConfigHash(config),
+    analyses: Object.fromEntries(input.analyses.map((analysis) => [analysis.sourceId, analysisSignature(analysis)])),
+    sourceHashes: Object.fromEntries(input.manifests.map((manifest) => [manifest.sourceId, manifest.contentHash])),
+    sourceProjects: input.sourceProjects,
+    outputHashes: input.outputHashes,
+    insightHashes: input.insightHashes,
+    candidateHistory
+  } satisfies CompileState);
+  await rebuildSearchIndex(paths.searchDbPath, allPages, paths.wikiDir);
+
+  return {
+    graph,
+    allPages,
+    changedPages: uniqueStrings([...changedPages, ...writeChanges]),
+    promotedPageIds,
+    candidatePageCount: candidatePages.length,
+    staged: false
+  };
+}
+
+async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Promise<void> {
+  const { config, paths } = await loadVaultConfig(rootDir);
+  const schemas = await loadVaultSchemas(rootDir);
+  const globalSchemaHash = schemas.effective.global.hash;
+  const configuredProjects = projectEntries(config);
+  const projectIndexRefs = configuredProjects.map((project) =>
+    emptyGraphPage({
+      id: `project:${project.id}:index`,
+      path: `projects/${project.id}/index.md`,
+      title: `Project: ${project.id}`,
+      kind: "index",
+      sourceIds: [],
+      projectIds: [project.id],
+      nodeIds: [],
+      schemaHash: effectiveHashForProject(schemas, project.id),
+      sourceHashes: {},
+      confidence: 1
+    })
+  );
+  await Promise.all([
+    ensureDir(path.join(paths.wikiDir, "sources")),
+    ensureDir(path.join(paths.wikiDir, "code")),
+    ensureDir(path.join(paths.wikiDir, "concepts")),
+    ensureDir(path.join(paths.wikiDir, "entities")),
+    ensureDir(path.join(paths.wikiDir, "outputs")),
+    ensureDir(path.join(paths.wikiDir, "projects")),
+    ensureDir(path.join(paths.wikiDir, "candidates"))
+  ]);
+  const projectsIndexPath = path.join(paths.wikiDir, "projects", "index.md");
+  await writeFileIfChanged(
+    projectsIndexPath,
+    await buildManagedContent(
+      projectsIndexPath,
+      {
+        managedBy: "system",
+        compiledFrom: indexCompiledFrom(projectIndexRefs)
+      },
+      (metadata) => buildProjectsIndex(projectIndexRefs, globalSchemaHash, metadata)
+    )
+  );
+
+  for (const project of configuredProjects) {
+    const sections = {
+      sources: pages.filter((page) => page.kind === "source" && page.projectIds.includes(project.id)),
+      code: pages.filter((page) => page.kind === "module" && page.projectIds.includes(project.id)),
+      concepts: pages.filter((page) => page.kind === "concept" && page.status !== "candidate" && page.projectIds.includes(project.id)),
+      entities: pages.filter((page) => page.kind === "entity" && page.status !== "candidate" && page.projectIds.includes(project.id)),
+      outputs: pages.filter((page) => page.kind === "output" && page.projectIds.includes(project.id)),
+      candidates: pages.filter((page) => page.status === "candidate" && page.projectIds.includes(project.id))
+    } as const;
+    const absolutePath = path.join(paths.wikiDir, "projects", project.id, "index.md");
+    await writeFileIfChanged(
+      absolutePath,
+      await buildManagedContent(
+        absolutePath,
+        {
+          managedBy: "system",
+          compiledFrom: indexCompiledFrom(Object.values(sections).flat())
+        },
+        (metadata) =>
+          buildProjectIndex({
+            projectId: project.id,
+            schemaHash: effectiveHashForProject(schemas, project.id),
+            metadata,
+            sections
+          })
+      )
+    );
+  }
+
   const rootIndexPath = path.join(paths.wikiDir, "index.md");
-  const outputsIndexPath = path.join(paths.wikiDir, "outputs", "index.md");
   await writeFileIfChanged(
     rootIndexPath,
     await buildManagedContent(
@@ -375,48 +1654,52 @@ async function refreshIndexesAndSearch(rootDir: string, schemaHash: string, page
         managedBy: "system",
         compiledFrom: indexCompiledFrom(pages)
       },
-      (metadata) => buildIndexPage(pages, schemaHash, metadata)
+      (metadata) => buildIndexPage(pages, globalSchemaHash, metadata, projectIndexRefs)
     )
   );
-  await writeFileIfChanged(
-    outputsIndexPath,
-    await buildManagedContent(
-      outputsIndexPath,
-      {
-        managedBy: "system",
-        compiledFrom: indexCompiledFrom(pages.filter((page) => page.kind === "output"))
-      },
-      (metadata) =>
-        buildSectionIndex(
-          "outputs",
-          pages.filter((page) => page.kind === "output"),
-          schemaHash,
-          metadata
-        )
-    )
-  );
-  await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
-}
 
-async function upsertGraphPages(rootDir: string, pages: GraphPage[]): Promise<void> {
-  const { paths } = await loadVaultConfig(rootDir);
-  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
-  const manifests = await listManifests(rootDir);
-  const nonOutputPages = graph?.pages.filter((page) => page.kind !== "output") ?? [];
-  const nextGraph: GraphArtifact = {
-    generatedAt: new Date().toISOString(),
-    nodes: graph?.nodes ?? [],
-    edges: graph?.edges ?? [],
-    sources: graph?.sources ?? manifests,
-    pages: [...nonOutputPages, ...pages]
-  };
-  await writeJsonFile(paths.graphPath, nextGraph);
+  for (const [relativePath, kind, sectionPages] of [
+    ["sources/index.md", "sources", pages.filter((page) => page.kind === "source")],
+    ["code/index.md", "code", pages.filter((page) => page.kind === "module")],
+    ["concepts/index.md", "concepts", pages.filter((page) => page.kind === "concept" && page.status !== "candidate")],
+    ["entities/index.md", "entities", pages.filter((page) => page.kind === "entity" && page.status !== "candidate")],
+    ["outputs/index.md", "outputs", pages.filter((page) => page.kind === "output")],
+    ["candidates/index.md", "candidates", pages.filter((page) => page.status === "candidate")]
+  ] as const) {
+    const absolutePath = path.join(paths.wikiDir, relativePath);
+    await writeFileIfChanged(
+      absolutePath,
+      await buildManagedContent(
+        absolutePath,
+        {
+          managedBy: "system",
+          compiledFrom: indexCompiledFrom(sectionPages)
+        },
+        (metadata) => buildSectionIndex(kind, sectionPages, globalSchemaHash, metadata)
+      )
+    );
+  }
+
+  const existingProjectIndexPaths = (await listFilesRecursive(paths.projectsDir))
+    .filter((absolutePath) => absolutePath.endsWith(".md"))
+    .map((absolutePath) => toPosix(path.relative(paths.wikiDir, absolutePath)));
+  const allowedProjectIndexPaths = new Set([
+    "projects/index.md",
+    ...configuredProjects.map((project) => `projects/${project.id}/index.md`)
+  ]);
+  await Promise.all(
+    existingProjectIndexPaths
+      .filter((relativePath) => !allowedProjectIndexPaths.has(relativePath))
+      .map((relativePath) => fs.rm(path.join(paths.wikiDir, relativePath), { force: true }))
+  );
+
+  await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
 }
 
 async function persistOutputPage(
   rootDir: string,
   input: Omit<Parameters<typeof buildOutputPage>[0], "metadata">
-): Promise<{ page: GraphPage; savedTo: string }> {
+): Promise<{ page: GraphPage; savedPath: string }> {
   const { paths } = await loadVaultConfig(rootDir);
   const slug = await resolveUniqueOutputSlug(paths.wikiDir, input.slug ?? slugify(input.question));
   const now = new Date().toISOString();
@@ -435,22 +1718,13 @@ async function persistOutputPage(
   const absolutePath = path.join(paths.wikiDir, output.page.path);
   await ensureDir(path.dirname(absolutePath));
   await fs.writeFile(absolutePath, output.content, "utf8");
-
-  const storedOutputs = await loadSavedOutputPages(paths.wikiDir);
-  const storedInsights = await loadInsightPages(paths.wikiDir);
-  const outputPages = storedOutputs.map((page) => page.page);
-  await upsertGraphPages(rootDir, outputPages);
-
-  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
-  await refreshIndexesAndSearch(rootDir, input.schemaHash, graph?.pages ?? [...outputPages, ...storedInsights.map((page) => page.page)]);
-
-  return { page: output.page, savedTo: absolutePath };
+  return { page: output.page, savedPath: absolutePath };
 }
 
 async function persistExploreHub(
   rootDir: string,
   input: Omit<Parameters<typeof buildExploreHubPage>[0], "metadata">
-): Promise<{ page: GraphPage; savedTo: string }> {
+): Promise<{ page: GraphPage; savedPath: string }> {
   const { paths } = await loadVaultConfig(rootDir);
   const slug = await resolveUniqueOutputSlug(paths.wikiDir, input.slug ?? `explore-${slugify(input.question)}`);
   const now = new Date().toISOString();
@@ -469,28 +1743,24 @@ async function persistExploreHub(
   const absolutePath = path.join(paths.wikiDir, hub.page.path);
   await ensureDir(path.dirname(absolutePath));
   await fs.writeFile(absolutePath, hub.content, "utf8");
-
-  const storedOutputs = await loadSavedOutputPages(paths.wikiDir);
-  const storedInsights = await loadInsightPages(paths.wikiDir);
-  const outputPages = storedOutputs.map((page) => page.page);
-  await upsertGraphPages(rootDir, outputPages);
-
-  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
-  await refreshIndexesAndSearch(rootDir, input.schemaHash, graph?.pages ?? [...outputPages, ...storedInsights.map((page) => page.page)]);
-
-  return { page: hub.page, savedTo: absolutePath };
+  return { page: hub.page, savedPath: absolutePath };
 }
 
-async function executeQuery(rootDir: string, question: string): Promise<QueryExecutionResult> {
+async function executeQuery(rootDir: string, question: string, format: OutputFormat): Promise<QueryExecutionResult> {
   const { paths } = await loadVaultConfig(rootDir);
-  const schema = await loadVaultSchema(rootDir);
+  const schemas = await loadVaultSchemas(rootDir);
   const provider = await getProviderForTask(rootDir, "queryProvider");
   if (!(await fileExists(paths.searchDbPath)) || !(await fileExists(paths.graphPath))) {
-    await compileVault(rootDir);
+    await compileVault(rootDir, {});
   }
 
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   const pageMap = new Map((graph?.pages ?? []).map((page) => [page.id, page]));
+  const sourceProjects = Object.fromEntries(
+    (graph?.pages ?? [])
+      .filter((page) => page.kind === "source" && page.sourceIds.length)
+      .map((page) => [page.sourceIds[0], page.projectIds[0] ?? null])
+  );
   const searchResults = searchPages(paths.searchDbPath, question, 5);
   const excerpts = await Promise.all(
     searchResults.map(async (result) => {
@@ -517,6 +1787,14 @@ async function executeQuery(rootDir: string, question: string): Promise<QueryExe
     relatedPageIds.flatMap((pageId) => pageMap.get(pageId)?.sourceIds ?? []),
     (item) => item
   );
+  const schemaProjectIds = schemaProjectIdsFromPages(relatedPageIds, pageMap);
+  const querySchema = composeVaultSchema(
+    schemas.root,
+    schemaProjectIds
+      .map((projectId) => schemas.projects[projectId])
+      .filter((schema): schema is NonNullable<typeof schema> => Boolean(schema?.hash))
+  );
+  const pageProjectIds = scopedProjectIdsFromSources(relatedSourceIds, sourceProjects);
 
   const manifests = await listManifests(rootDir);
   const rawExcerpts: string[] = [];
@@ -534,15 +1812,7 @@ async function executeQuery(rootDir: string, question: string): Promise<QueryExe
   let answer: string;
   let usage: QueryExecutionResult["usage"];
   if (provider.type === "heuristic") {
-    answer = [
-      `Question: ${question}`,
-      "",
-      "Relevant pages:",
-      ...searchResults.map((result) => `- ${result.title} (${result.path})`),
-      "",
-      excerpts.length ? excerpts.join("\n\n") : "No relevant pages found yet.",
-      ...(rawExcerpts.length ? ["", "Raw source material:", "", ...rawExcerpts] : [])
-    ].join("\n");
+    answer = formatHeuristicAnswer(question, excerpts, rawExcerpts, searchResults, format);
   } else {
     const context = [
       "Wiki context:",
@@ -551,8 +1821,11 @@ async function executeQuery(rootDir: string, question: string): Promise<QueryExe
     ].join("\n\n");
     const response = await provider.generateText({
       system: buildSchemaPrompt(
-        schema,
-        "Answer using the provided context. Prefer raw source material over wiki summaries when they differ. Cite source IDs."
+        querySchema,
+        [
+          "Answer using the provided context. Prefer raw source material over wiki summaries when they differ. Cite source IDs.",
+          outputFormatInstruction(format)
+        ].join(" ")
       ),
       prompt: `Question: ${question}\n\n${context}`
     });
@@ -566,13 +1839,15 @@ async function executeQuery(rootDir: string, question: string): Promise<QueryExe
     relatedPageIds,
     relatedNodeIds,
     relatedSourceIds,
+    schemaHash: querySchema.hash,
+    projectIds: pageProjectIds,
     usage
   };
 }
 
 async function generateFollowUpQuestions(rootDir: string, question: string, answer: string): Promise<string[]> {
   const provider = await getProviderForTask(rootDir, "queryProvider");
-  const schema = await loadVaultSchema(rootDir);
+  const schema = (await loadVaultSchemas(rootDir)).effective.global;
 
   if (provider.type === "heuristic") {
     return uniqueBy(
@@ -598,7 +1873,419 @@ async function generateFollowUpQuestions(rootDir: string, question: string, answ
   return uniqueBy(response.questions, (item) => item).filter((item) => item !== question);
 }
 
-export async function initVault(rootDir: string): Promise<void> {
+async function refreshVaultAfterOutputSave(rootDir: string): Promise<void> {
+  const { config, paths } = await loadVaultConfig(rootDir);
+  const schemas = await loadVaultSchemas(rootDir);
+  const manifests = await listManifests(rootDir);
+  const sourceProjects = resolveSourceProjects(rootDir, manifests, config);
+  const analyses = manifests.length ? await loadCachedAnalyses(paths, manifests) : [];
+  const storedOutputs = await loadSavedOutputPages(paths.wikiDir);
+  const storedInsights = await loadInsightPages(paths.wikiDir);
+  await syncVaultArtifacts(rootDir, {
+    schemas,
+    manifests,
+    analyses,
+    sourceProjects,
+    outputPages: storedOutputs.map((page) => page.page),
+    insightPages: storedInsights.map((page) => page.page),
+    outputHashes: pageHashes(storedOutputs),
+    insightHashes: pageHashes(storedInsights),
+    previousState: await readJsonFile<CompileState>(paths.compileStatePath),
+    approve: false
+  });
+}
+
+function resolveApprovalTargets(manifest: ApprovalManifest, targets: string[]): ApprovalEntry[] {
+  const pendingEntries = manifest.entries.filter((entry) => entry.status === "pending");
+  if (!targets.length) {
+    return pendingEntries;
+  }
+
+  const resolved = pendingEntries.filter(
+    (entry) =>
+      targets.includes(entry.pageId) ||
+      (entry.nextPath ? targets.includes(entry.nextPath) : false) ||
+      (entry.previousPath ? targets.includes(entry.previousPath) : false)
+  );
+  if (!resolved.length) {
+    throw new Error(`No pending approval entries matched: ${targets.join(", ")}`);
+  }
+  return uniqueBy(resolved, (entry) => `${entry.pageId}:${entry.nextPath ?? ""}:${entry.previousPath ?? ""}`);
+}
+
+function emptyCompileState(): CompileState {
+  return {
+    generatedAt: new Date().toISOString(),
+    rootSchemaHash: "",
+    projectSchemaHashes: {},
+    effectiveSchemaHashes: {
+      global: "",
+      projects: {}
+    },
+    projectConfigHash: "",
+    analyses: {},
+    sourceHashes: {},
+    sourceProjects: {},
+    outputHashes: {},
+    insightHashes: {},
+    candidateHistory: {}
+  };
+}
+
+function updateCandidateHistory(compileState: CompileState, page: GraphPage | null, deleted = false): void {
+  if (!page || (page.kind !== "concept" && page.kind !== "entity")) {
+    return;
+  }
+  if (deleted) {
+    delete compileState.candidateHistory[page.id];
+    return;
+  }
+  compileState.candidateHistory[page.id] = {
+    sourceIds: page.sourceIds,
+    status: page.status === "candidate" ? "candidate" : "active"
+  };
+}
+
+function sortGraphPages(pages: GraphPage[]): GraphPage[] {
+  return [...pages].sort((left, right) => left.path.localeCompare(right.path) || left.title.localeCompare(right.title));
+}
+
+export async function listApprovals(rootDir: string): Promise<ApprovalSummary[]> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const manifests = await Promise.all(
+    (await fs.readdir(paths.approvalsDir, { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        try {
+          return await readApprovalManifest(paths, entry.name);
+        } catch {
+          return null;
+        }
+      })
+  );
+
+  return manifests
+    .filter((manifest): manifest is ApprovalManifest => Boolean(manifest))
+    .map(approvalSummary)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+export async function readApproval(rootDir: string, approvalId: string): Promise<ApprovalDetail> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const manifest = await readApprovalManifest(paths, approvalId);
+  const details = await Promise.all(
+    manifest.entries.map(async (entry) => {
+      const currentPath = entry.previousPath ?? entry.nextPath;
+      const currentContent = currentPath
+        ? await fs.readFile(path.join(paths.wikiDir, currentPath), "utf8").catch(() => undefined)
+        : undefined;
+      const stagedContent = entry.nextPath
+        ? await fs.readFile(path.join(paths.approvalsDir, approvalId, "wiki", entry.nextPath), "utf8").catch(() => undefined)
+        : undefined;
+      return {
+        ...entry,
+        currentContent,
+        stagedContent
+      };
+    })
+  );
+
+  return {
+    ...approvalSummary(manifest),
+    entries: details
+  };
+}
+
+export async function acceptApproval(rootDir: string, approvalId: string, targets: string[] = []): Promise<ReviewActionResult> {
+  const startedAt = new Date().toISOString();
+  const { paths } = await loadVaultConfig(rootDir);
+  const manifest = await readApprovalManifest(paths, approvalId);
+  const selectedEntries = resolveApprovalTargets(manifest, targets);
+  const bundleGraph = await readJsonFile<GraphArtifact>(approvalGraphPath(paths, approvalId));
+  const currentGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const basePages =
+    currentGraph?.pages ??
+    (bundleGraph?.pages ?? []).filter((page) => page.kind === "index" || page.kind === "output" || page.kind === "insight");
+  let nextPages = [...basePages];
+  const compileState = (await readJsonFile<CompileState>(paths.compileStatePath)) ?? emptyCompileState();
+
+  for (const entry of selectedEntries) {
+    if (entry.changeType !== "delete") {
+      if (!entry.nextPath) {
+        throw new Error(`Approval entry ${entry.pageId} is missing a staged path.`);
+      }
+      const stagedAbsolutePath = path.join(paths.approvalsDir, approvalId, "wiki", entry.nextPath);
+      const stagedContent = await fs.readFile(stagedAbsolutePath, "utf8");
+      const targetAbsolutePath = path.join(paths.wikiDir, entry.nextPath);
+      await ensureDir(path.dirname(targetAbsolutePath));
+      await fs.writeFile(targetAbsolutePath, stagedContent, "utf8");
+
+      if (entry.changeType === "promote" && entry.previousPath) {
+        await fs.rm(path.join(paths.wikiDir, entry.previousPath), { force: true });
+      }
+
+      const nextPage =
+        bundleGraph?.pages.find((page) => page.id === entry.pageId && page.path === entry.nextPath) ??
+        parseStoredPage(entry.nextPath, stagedContent);
+      nextPages = nextPages.filter(
+        (page) => page.id !== entry.pageId && page.path !== entry.nextPath && (!entry.previousPath || page.path !== entry.previousPath)
+      );
+      nextPages.push(nextPage);
+      updateCandidateHistory(compileState, nextPage);
+    } else {
+      if (entry.previousPath) {
+        await fs.rm(path.join(paths.wikiDir, entry.previousPath), { force: true });
+      }
+      const deletedPage = nextPages.find((page) => page.id === entry.pageId || page.path === entry.previousPath) ?? null;
+      nextPages = nextPages.filter((page) => page.id !== entry.pageId && page.path !== entry.previousPath);
+      updateCandidateHistory(compileState, deletedPage, true);
+    }
+    entry.status = "accepted";
+  }
+
+  const nextGraph: GraphArtifact = {
+    generatedAt: new Date().toISOString(),
+    nodes: currentGraph?.nodes ?? bundleGraph?.nodes ?? [],
+    edges: currentGraph?.edges ?? bundleGraph?.edges ?? [],
+    sources: currentGraph?.sources ?? bundleGraph?.sources ?? [],
+    pages: sortGraphPages(nextPages)
+  };
+  compileState.generatedAt = nextGraph.generatedAt;
+
+  await writeJsonFile(paths.graphPath, nextGraph);
+  await writeJsonFile(paths.compileStatePath, compileState);
+  await refreshIndexesAndSearch(rootDir, nextGraph.pages);
+  await writeApprovalManifest(paths, manifest);
+  await recordSession(rootDir, {
+    operation: "review",
+    title: `Accepted review entries from ${approvalId}`,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    success: true,
+    relatedPageIds: selectedEntries.map((entry) => entry.pageId),
+    changedPages: selectedEntries.flatMap((entry) =>
+      [entry.nextPath, entry.previousPath].filter((value): value is string => Boolean(value))
+    ),
+    lines: selectedEntries.map((entry) => `accepted=${entry.pageId}`)
+  });
+
+  return {
+    ...approvalSummary(manifest),
+    updatedEntries: selectedEntries.map((entry) => entry.pageId)
+  };
+}
+
+export async function rejectApproval(rootDir: string, approvalId: string, targets: string[] = []): Promise<ReviewActionResult> {
+  const startedAt = new Date().toISOString();
+  const { paths } = await loadVaultConfig(rootDir);
+  const manifest = await readApprovalManifest(paths, approvalId);
+  const selectedEntries = resolveApprovalTargets(manifest, targets);
+  for (const entry of selectedEntries) {
+    entry.status = "rejected";
+  }
+  await writeApprovalManifest(paths, manifest);
+  await recordSession(rootDir, {
+    operation: "review",
+    title: `Rejected review entries from ${approvalId}`,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    success: true,
+    relatedPageIds: selectedEntries.map((entry) => entry.pageId),
+    changedPages: [],
+    lines: selectedEntries.map((entry) => `rejected=${entry.pageId}`)
+  });
+
+  return {
+    ...approvalSummary(manifest),
+    updatedEntries: selectedEntries.map((entry) => entry.pageId)
+  };
+}
+
+export async function listCandidates(rootDir: string): Promise<CandidateRecord[]> {
+  const pages = await listPages(rootDir);
+  return pages
+    .filter(
+      (page): page is GraphPage & { kind: "concept" | "entity" } =>
+        page.status === "candidate" && (page.kind === "concept" || page.kind === "entity")
+    )
+    .map((page) => ({
+      pageId: page.id,
+      title: page.title,
+      kind: page.kind,
+      path: page.path,
+      activePath: candidateActivePath(page),
+      sourceIds: page.sourceIds,
+      createdAt: page.createdAt,
+      updatedAt: page.updatedAt
+    }))
+    .sort((left, right) => left.title.localeCompare(right.title));
+}
+
+function resolveCandidateTarget(pages: GraphPage[], target: string): GraphPage {
+  const candidate = pages.find((page) => page.status === "candidate" && (page.id === target || page.path === target));
+  if (!candidate || (candidate.kind !== "concept" && candidate.kind !== "entity")) {
+    throw new Error(`Candidate not found: ${target}`);
+  }
+  return candidate;
+}
+
+export async function promoteCandidate(rootDir: string, target: string): Promise<CandidateRecord> {
+  const startedAt = new Date().toISOString();
+  const { paths } = await loadVaultConfig(rootDir);
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const candidate = resolveCandidateTarget(graph?.pages ?? [], target);
+  const raw = await fs.readFile(path.join(paths.wikiDir, candidate.path), "utf8");
+  const parsed = matter(raw);
+  const nextUpdatedAt = new Date().toISOString();
+  const nextContent = matter.stringify(parsed.content, {
+    ...parsed.data,
+    status: "active",
+    updated_at: nextUpdatedAt,
+    tags: uniqueStrings([candidate.kind, ...((Array.isArray(parsed.data.tags) ? parsed.data.tags : []) as string[])]).filter(
+      (tag) => tag !== "candidate"
+    )
+  });
+  const nextPath = candidateActivePath(candidate);
+  const nextAbsolutePath = path.join(paths.wikiDir, nextPath);
+  await ensureDir(path.dirname(nextAbsolutePath));
+  await fs.writeFile(nextAbsolutePath, nextContent, "utf8");
+  await fs.rm(path.join(paths.wikiDir, candidate.path), { force: true });
+
+  const nextPage = parseStoredPage(nextPath, nextContent, { createdAt: candidate.createdAt, updatedAt: nextUpdatedAt });
+  const nextPages = sortGraphPages(
+    (graph?.pages ?? []).filter((page) => page.id !== candidate.id && page.path !== candidate.path).concat(nextPage)
+  );
+  const nextGraph: GraphArtifact = {
+    generatedAt: nextUpdatedAt,
+    nodes: graph?.nodes ?? [],
+    edges: graph?.edges ?? [],
+    sources: graph?.sources ?? [],
+    pages: nextPages
+  };
+  const compileState = (await readJsonFile<CompileState>(paths.compileStatePath)) ?? emptyCompileState();
+  compileState.generatedAt = nextUpdatedAt;
+  updateCandidateHistory(compileState, nextPage);
+
+  await writeJsonFile(paths.graphPath, nextGraph);
+  await writeJsonFile(paths.compileStatePath, compileState);
+  await refreshIndexesAndSearch(rootDir, nextPages);
+  await recordSession(rootDir, {
+    operation: "candidate",
+    title: `Promoted ${candidate.id}`,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    success: true,
+    relatedPageIds: [candidate.id],
+    changedPages: [candidate.path, nextPath],
+    lines: [`promoted=${candidate.id}`]
+  });
+
+  return {
+    pageId: nextPage.id,
+    title: nextPage.title,
+    kind: nextPage.kind as "concept" | "entity",
+    path: nextPage.path,
+    activePath: nextPage.path,
+    sourceIds: nextPage.sourceIds,
+    createdAt: nextPage.createdAt,
+    updatedAt: nextPage.updatedAt
+  };
+}
+
+export async function archiveCandidate(rootDir: string, target: string): Promise<CandidateRecord> {
+  const startedAt = new Date().toISOString();
+  const { paths } = await loadVaultConfig(rootDir);
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const candidate = resolveCandidateTarget(graph?.pages ?? [], target);
+  await fs.rm(path.join(paths.wikiDir, candidate.path), { force: true });
+
+  const nextPages = sortGraphPages((graph?.pages ?? []).filter((page) => page.id !== candidate.id && page.path !== candidate.path));
+  const nextGraph: GraphArtifact = {
+    generatedAt: new Date().toISOString(),
+    nodes: graph?.nodes ?? [],
+    edges: graph?.edges ?? [],
+    sources: graph?.sources ?? [],
+    pages: nextPages
+  };
+  const compileState = (await readJsonFile<CompileState>(paths.compileStatePath)) ?? emptyCompileState();
+  compileState.generatedAt = nextGraph.generatedAt;
+  updateCandidateHistory(compileState, candidate, true);
+
+  await writeJsonFile(paths.graphPath, nextGraph);
+  await writeJsonFile(paths.compileStatePath, compileState);
+  await refreshIndexesAndSearch(rootDir, nextPages);
+  await recordSession(rootDir, {
+    operation: "candidate",
+    title: `Archived ${candidate.id}`,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    success: true,
+    relatedPageIds: [candidate.id],
+    changedPages: [candidate.path],
+    lines: [`archived=${candidate.id}`]
+  });
+
+  return {
+    pageId: candidate.id,
+    title: candidate.title,
+    kind: candidate.kind as "concept" | "entity",
+    path: candidate.path,
+    activePath: candidateActivePath(candidate),
+    sourceIds: candidate.sourceIds,
+    createdAt: candidate.createdAt,
+    updatedAt: candidate.updatedAt
+  };
+}
+
+async function ensureObsidianWorkspace(rootDir: string): Promise<void> {
+  const { config } = await loadVaultConfig(rootDir);
+  const obsidianDir = path.join(rootDir, ".obsidian");
+  const projectIds = projectEntries(config).map((project) => project.id);
+  await ensureDir(obsidianDir);
+  await Promise.all([
+    writeJsonFile(path.join(obsidianDir, "app.json"), {
+      alwaysUpdateLinks: true,
+      newFileLocation: "folder",
+      newFileFolderPath: "wiki/insights",
+      useMarkdownLinks: false,
+      attachmentFolderPath: "raw/assets"
+    }),
+    writeJsonFile(path.join(obsidianDir, "core-plugins.json"), [
+      "file-explorer",
+      "global-search",
+      "switcher",
+      "graph",
+      "backlink",
+      "outgoing-link",
+      "tag-pane",
+      "page-preview"
+    ]),
+    writeJsonFile(path.join(obsidianDir, "graph.json"), {
+      "collapse-filter": false,
+      search: "",
+      showTags: true,
+      showAttachments: false,
+      hideUnresolved: false,
+      colorGroups: projectIds.map((projectId, index) => ({
+        query: `tag:#project/${projectId}`,
+        color: ["#0ea5e9", "#22c55e", "#f59e0b", "#fb7185", "#8b5cf6", "#14b8a6"][index % 6]
+      })),
+      localJumps: false
+    }),
+    writeJsonFile(path.join(obsidianDir, "workspace.json"), {
+      active: "root",
+      lastOpenFiles: ["wiki/index.md", "wiki/projects/index.md", "wiki/candidates/index.md", "wiki/insights/index.md"],
+      left: {
+        collapsed: false
+      },
+      right: {
+        collapsed: false
+      }
+    })
+  ]);
+}
+
+export async function initVault(rootDir: string, options: InitOptions = {}): Promise<void> {
   const { paths } = await initWorkspace(rootDir);
   await installConfiguredAgents(rootDir);
   const insightsIndexPath = path.join(paths.wikiDir, "insights", "index.md");
@@ -621,6 +2308,7 @@ export async function initVault(rootDir: string): Promise<void> {
         title: "Insights",
         tags: ["index", "insights"],
         source_ids: [],
+        project_ids: [],
         node_ids: [],
         freshness: "fresh",
         status: "active",
@@ -635,14 +2323,62 @@ export async function initVault(rootDir: string): Promise<void> {
       }
     )
   );
+  await writeFileIfChanged(
+    path.join(paths.wikiDir, "projects", "index.md"),
+    matter.stringify(["# Projects", "", "- Run `swarmvault compile` to build project rollups.", ""].join("\n"), {
+      page_id: "projects:index",
+      kind: "index",
+      title: "Projects",
+      tags: ["index", "projects"],
+      source_ids: [],
+      project_ids: [],
+      node_ids: [],
+      freshness: "fresh",
+      status: "active",
+      confidence: 1,
+      created_at: now,
+      updated_at: now,
+      compiled_from: [],
+      managed_by: "system",
+      backlinks: [],
+      schema_hash: "",
+      source_hashes: {}
+    })
+  );
+  await writeFileIfChanged(
+    path.join(paths.wikiDir, "candidates", "index.md"),
+    matter.stringify(["# Candidates", "", "- Run `swarmvault compile` to stage candidate pages.", ""].join("\n"), {
+      page_id: "candidates:index",
+      kind: "index",
+      title: "Candidates",
+      tags: ["index", "candidates"],
+      source_ids: [],
+      project_ids: [],
+      node_ids: [],
+      freshness: "fresh",
+      status: "active",
+      confidence: 1,
+      created_at: now,
+      updated_at: now,
+      compiled_from: [],
+      managed_by: "system",
+      backlinks: [],
+      schema_hash: "",
+      source_hashes: {}
+    })
+  );
+  if (options.obsidian) {
+    await ensureObsidianWorkspace(rootDir);
+  }
 }
 
-export async function compileVault(rootDir: string): Promise<CompileResult> {
+export async function compileVault(rootDir: string, options: CompileOptions = {}): Promise<CompileResult> {
   const startedAt = new Date().toISOString();
-  const { paths } = await initWorkspace(rootDir);
-  const schema = await loadVaultSchema(rootDir);
+  const { config, paths } = await initWorkspace(rootDir);
+  const schemas = await loadVaultSchemas(rootDir);
   const provider = await getProviderForTask(rootDir, "compileProvider");
   const manifests = await listManifests(rootDir);
+  const sourceProjects = resolveSourceProjects(rootDir, manifests, config);
   const storedOutputPages = await loadSavedOutputPages(paths.wikiDir);
   const storedInsightPages = await loadInsightPages(paths.wikiDir);
   const outputPages = storedOutputPages.map((page) => page.page);
@@ -651,9 +2387,18 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
   const currentInsightHashes = pageHashes(storedInsightPages);
 
   const previousState = await readJsonFile<CompileState>(paths.compileStatePath);
-  const schemaChanged = !previousState || previousState.schemaHash !== schema.hash;
+  const rootSchemaChanged = !previousState || previousState.rootSchemaHash !== schemas.root.hash;
+  const effectiveSchemaChanged =
+    !previousState ||
+    previousGlobalSchemaHash(previousState) !== schemas.effective.global.hash ||
+    uniqueStrings([...Object.keys(previousState?.effectiveSchemaHashes?.projects ?? {}), ...Object.keys(schemas.effective.projects)]).some(
+      (projectId) => previousProjectSchemaHash(previousState, projectId) !== effectiveHashForProject(schemas, projectId)
+    );
+  const nextProjectConfigHash = projectConfigHash(config);
+  const projectConfigChanged = !previousState || previousState.projectConfigHash !== nextProjectConfigHash;
   const previousSourceHashes = previousState?.sourceHashes ?? {};
   const previousAnalyses = previousState?.analyses ?? {};
+  const previousSourceProjects = previousState?.sourceProjects ?? {};
   const previousOutputHashes = previousState?.outputHashes ?? {};
   const previousInsightHashes = previousState?.insightHashes ?? {};
   const currentSourceIds = new Set(manifests.map((item) => item.sourceId));
@@ -663,20 +2408,35 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
   const outputsChanged = !recordsEqual(currentOutputHashes, previousOutputHashes);
   const insightsChanged = !recordsEqual(currentInsightHashes, previousInsightHashes);
   const artifactsExist = await requiredCompileArtifactsExist(paths);
+  const pendingCandidatePromotion = Object.values(previousState?.candidateHistory ?? {}).some((entry) => entry.status === "candidate");
 
   const dirty: SourceManifest[] = [];
   const clean: SourceManifest[] = [];
   for (const manifest of manifests) {
     const hashChanged = previousSourceHashes[manifest.sourceId] !== manifest.contentHash;
     const noAnalysis = !previousAnalyses[manifest.sourceId];
-    if (schemaChanged || hashChanged || noAnalysis) {
+    const projectId = sourceProjects[manifest.sourceId] ?? null;
+    const projectChanged = (previousSourceProjects[manifest.sourceId] ?? null) !== projectId;
+    const effectiveHashChanged = previousProjectSchemaHash(previousState, projectId) !== effectiveHashForProject(schemas, projectId);
+    if (hashChanged || noAnalysis || projectChanged || effectiveHashChanged) {
       dirty.push(manifest);
     } else {
       clean.push(manifest);
     }
   }
 
-  if (dirty.length === 0 && !schemaChanged && !sourcesChanged && !outputsChanged && !insightsChanged && artifactsExist) {
+  if (
+    dirty.length === 0 &&
+    !rootSchemaChanged &&
+    !effectiveSchemaChanged &&
+    !projectConfigChanged &&
+    !sourcesChanged &&
+    !outputsChanged &&
+    !insightsChanged &&
+    !pendingCandidatePromotion &&
+    artifactsExist &&
+    !options.approve
+  ) {
     const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
     await recordSession(rootDir, {
       operation: "compile",
@@ -695,20 +2455,31 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
         `clean=${manifests.length}`,
         `outputs=${outputPages.length}`,
         `insights=${insightPages.length}`,
-        `schema=${schema.hash.slice(0, 12)}`
+        `schema=${schemas.effective.global.hash.slice(0, 12)}`
       ]
     });
     return {
       graphPath: paths.graphPath,
       pageCount: graph?.pages.length ?? outputPages.length + insightPages.length,
       changedPages: [],
-      sourceCount: manifests.length
+      sourceCount: manifests.length,
+      staged: false,
+      promotedPageIds: [],
+      candidatePageCount: (graph?.pages ?? []).filter((page) => page.status === "candidate").length
     };
   }
 
   const [dirtyAnalyses, cleanAnalyses] = await Promise.all([
     Promise.all(
-      dirty.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema))
+      dirty.map(async (manifest) =>
+        analyzeSource(
+          manifest,
+          await readExtractedText(rootDir, manifest),
+          provider,
+          paths,
+          getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
+        )
+      )
     ),
     Promise.all(
       clean.map(async (manifest) => {
@@ -716,234 +2487,43 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
         if (cached) {
           return cached;
         }
-        return analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema);
+        return analyzeSource(
+          manifest,
+          await readExtractedText(rootDir, manifest),
+          provider,
+          paths,
+          getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
+        );
       })
     )
   ]);
 
   const analyses = [...dirtyAnalyses, ...cleanAnalyses];
-  const changedPages: string[] = [];
-  const compiledPages: GraphPage[] = [];
 
   await Promise.all([
     ensureDir(path.join(paths.wikiDir, "sources")),
+    ensureDir(path.join(paths.wikiDir, "code")),
     ensureDir(path.join(paths.wikiDir, "concepts")),
     ensureDir(path.join(paths.wikiDir, "entities")),
     ensureDir(path.join(paths.wikiDir, "outputs")),
-    ensureDir(path.join(paths.wikiDir, "insights"))
+    ensureDir(path.join(paths.wikiDir, "projects")),
+    ensureDir(path.join(paths.wikiDir, "insights")),
+    ensureDir(path.join(paths.wikiDir, "candidates")),
+    ensureDir(path.join(paths.wikiDir, "candidates", "concepts")),
+    ensureDir(path.join(paths.wikiDir, "candidates", "entities"))
   ]);
-
-  for (const manifest of manifests) {
-    const analysis = analyses.find((item) => item.sourceId === manifest.sourceId);
-    if (!analysis) {
-      continue;
-    }
-
-    const preview = emptyGraphPage({
-      id: `source:${manifest.sourceId}`,
-      path: `sources/${manifest.sourceId}.md`,
-      title: analysis.title,
-      kind: "source",
-      sourceIds: [manifest.sourceId],
-      nodeIds: [`source:${manifest.sourceId}`, ...analysis.concepts.map((item) => item.id), ...analysis.entities.map((item) => item.id)],
-      schemaHash: schema.hash,
-      sourceHashes: { [manifest.sourceId]: manifest.contentHash },
-      confidence: 1
-    });
-    const absolutePath = path.join(paths.wikiDir, preview.path);
-    const sourcePage = await buildManagedGraphPage(
-      absolutePath,
-      {
-        managedBy: "system",
-        confidence: 1,
-        compiledFrom: [manifest.sourceId]
-      },
-      (metadata) => buildSourcePage(manifest, analysis, schema.hash, metadata, relatedOutputsForPage(preview, outputPages))
-    );
-    compiledPages.push(sourcePage.page);
-    await writePage(paths.wikiDir, sourcePage.page.path, sourcePage.content, changedPages);
-  }
-
-  for (const aggregate of aggregateItems(analyses, "concepts")) {
-    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
-    const preview = emptyGraphPage({
-      id: `concept:${slugify(aggregate.name)}`,
-      path: `concepts/${slugify(aggregate.name)}.md`,
-      title: aggregate.name,
-      kind: "concept",
-      sourceIds: aggregate.sourceAnalyses.map((item) => item.sourceId),
-      nodeIds: [`concept:${slugify(aggregate.name)}`],
-      schemaHash: schema.hash,
-      sourceHashes: aggregate.sourceHashes,
-      confidence
-    });
-    const absolutePath = path.join(paths.wikiDir, preview.path);
-    const page = await buildManagedGraphPage(
-      absolutePath,
-      {
-        managedBy: "system",
-        confidence,
-        compiledFrom: uniqueStrings(aggregate.sourceAnalyses.map((item) => item.sourceId))
-      },
-      (metadata) =>
-        buildAggregatePage(
-          "concept",
-          aggregate.name,
-          aggregate.descriptions,
-          aggregate.sourceAnalyses,
-          aggregate.sourceHashes,
-          schema.hash,
-          metadata,
-          relatedOutputsForPage(preview, outputPages)
-        )
-    );
-    compiledPages.push(page.page);
-    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
-  }
-
-  for (const aggregate of aggregateItems(analyses, "entities")) {
-    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
-    const preview = emptyGraphPage({
-      id: `entity:${slugify(aggregate.name)}`,
-      path: `entities/${slugify(aggregate.name)}.md`,
-      title: aggregate.name,
-      kind: "entity",
-      sourceIds: aggregate.sourceAnalyses.map((item) => item.sourceId),
-      nodeIds: [`entity:${slugify(aggregate.name)}`],
-      schemaHash: schema.hash,
-      sourceHashes: aggregate.sourceHashes,
-      confidence
-    });
-    const absolutePath = path.join(paths.wikiDir, preview.path);
-    const page = await buildManagedGraphPage(
-      absolutePath,
-      {
-        managedBy: "system",
-        confidence,
-        compiledFrom: uniqueStrings(aggregate.sourceAnalyses.map((item) => item.sourceId))
-      },
-      (metadata) =>
-        buildAggregatePage(
-          "entity",
-          aggregate.name,
-          aggregate.descriptions,
-          aggregate.sourceAnalyses,
-          aggregate.sourceHashes,
-          schema.hash,
-          metadata,
-          relatedOutputsForPage(preview, outputPages)
-        )
-    );
-    compiledPages.push(page.page);
-    await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
-  }
-
-  const allPages = [...compiledPages, ...outputPages, ...insightPages];
-  const graph = buildGraph(manifests, analyses, allPages);
-  await writeJsonFile(paths.graphPath, graph);
-  await writeJsonFile(paths.compileStatePath, {
-    generatedAt: graph.generatedAt,
-    schemaHash: schema.hash,
-    analyses: Object.fromEntries(analyses.map((analysis) => [analysis.sourceId, analysisSignature(analysis)])),
-    sourceHashes: Object.fromEntries(manifests.map((manifest) => [manifest.sourceId, manifest.contentHash])),
+  const sync = await syncVaultArtifacts(rootDir, {
+    schemas,
+    manifests,
+    analyses,
+    sourceProjects,
+    outputPages,
+    insightPages,
     outputHashes: currentOutputHashes,
-    insightHashes: currentInsightHashes
-  } satisfies CompileState);
-
-  const rootIndexPath = path.join(paths.wikiDir, "index.md");
-  await writePage(
-    paths.wikiDir,
-    "index.md",
-    await buildManagedContent(
-      rootIndexPath,
-      {
-        managedBy: "system",
-        compiledFrom: indexCompiledFrom(allPages)
-      },
-      (metadata) => buildIndexPage(allPages, schema.hash, metadata)
-    ),
-    changedPages
-  );
-  await writePage(
-    paths.wikiDir,
-    "sources/index.md",
-    await buildManagedContent(
-      path.join(paths.wikiDir, "sources", "index.md"),
-      {
-        managedBy: "system",
-        compiledFrom: indexCompiledFrom(allPages.filter((page) => page.kind === "source"))
-      },
-      (metadata) =>
-        buildSectionIndex(
-          "sources",
-          allPages.filter((page) => page.kind === "source"),
-          schema.hash,
-          metadata
-        )
-    ),
-    changedPages
-  );
-  await writePage(
-    paths.wikiDir,
-    "concepts/index.md",
-    await buildManagedContent(
-      path.join(paths.wikiDir, "concepts", "index.md"),
-      {
-        managedBy: "system",
-        compiledFrom: indexCompiledFrom(allPages.filter((page) => page.kind === "concept"))
-      },
-      (metadata) =>
-        buildSectionIndex(
-          "concepts",
-          allPages.filter((page) => page.kind === "concept"),
-          schema.hash,
-          metadata
-        )
-    ),
-    changedPages
-  );
-  await writePage(
-    paths.wikiDir,
-    "entities/index.md",
-    await buildManagedContent(
-      path.join(paths.wikiDir, "entities", "index.md"),
-      {
-        managedBy: "system",
-        compiledFrom: indexCompiledFrom(allPages.filter((page) => page.kind === "entity"))
-      },
-      (metadata) =>
-        buildSectionIndex(
-          "entities",
-          allPages.filter((page) => page.kind === "entity"),
-          schema.hash,
-          metadata
-        )
-    ),
-    changedPages
-  );
-  await writePage(
-    paths.wikiDir,
-    "outputs/index.md",
-    await buildManagedContent(
-      path.join(paths.wikiDir, "outputs", "index.md"),
-      {
-        managedBy: "system",
-        compiledFrom: indexCompiledFrom(allPages.filter((page) => page.kind === "output"))
-      },
-      (metadata) =>
-        buildSectionIndex(
-          "outputs",
-          allPages.filter((page) => page.kind === "output"),
-          schema.hash,
-          metadata
-        )
-    ),
-    changedPages
-  );
-
-  if (changedPages.length > 0 || outputsChanged || insightsChanged || !artifactsExist) {
-    await rebuildSearchIndex(paths.searchDbPath, allPages, paths.wikiDir);
-  }
+    insightHashes: currentInsightHashes,
+    previousState,
+    approve: options.approve
+  });
 
   await recordSession(rootDir, {
     operation: "compile",
@@ -953,53 +2533,67 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
     providerId: provider.id,
     success: true,
     relatedSourceIds: manifests.map((manifest) => manifest.sourceId),
-    relatedPageIds: allPages.map((page) => page.id),
-    changedPages,
+    relatedPageIds: sync.allPages.map((page) => page.id),
+    changedPages: sync.changedPages,
     lines: [
       `provider=${provider.id}`,
-      `pages=${allPages.length}`,
+      `pages=${sync.allPages.length}`,
       `dirty=${dirty.length}`,
       `clean=${clean.length}`,
       `outputs=${outputPages.length}`,
       `insights=${insightPages.length}`,
-      `schema=${schema.hash.slice(0, 12)}`
+      `candidates=${sync.candidatePageCount}`,
+      `promoted=${sync.promotedPageIds.length}`,
+      `staged=${sync.staged}`,
+      `schema=${schemas.effective.global.hash.slice(0, 12)}`
     ]
   });
 
   return {
     graphPath: paths.graphPath,
-    pageCount: allPages.length,
-    changedPages,
-    sourceCount: manifests.length
+    pageCount: sync.allPages.length,
+    changedPages: sync.changedPages,
+    sourceCount: manifests.length,
+    staged: sync.staged,
+    approvalId: sync.approvalId,
+    approvalDir: sync.approvalDir,
+    promotedPageIds: sync.promotedPageIds,
+    candidatePageCount: sync.candidatePageCount
   };
 }
 
-export async function queryVault(rootDir: string, question: string, save = false): Promise<QueryResult> {
+export async function queryVault(rootDir: string, options: QueryOptions): Promise<QueryResult> {
   const startedAt = new Date().toISOString();
-  const schema = await loadVaultSchema(rootDir);
-  const query = await executeQuery(rootDir, question);
-  let savedTo: string | undefined;
+  const save = options.save ?? true;
+  const outputFormat = normalizeOutputFormat(options.format);
+  const schemas = await loadVaultSchemas(rootDir);
+  const query = await executeQuery(rootDir, options.question, outputFormat);
+  let savedPath: string | undefined;
   let savedPageId: string | undefined;
 
   if (save) {
     const saved = await persistOutputPage(rootDir, {
-      question,
+      question: options.question,
       answer: query.answer,
       citations: query.citations,
-      schemaHash: schema.hash,
+      schemaHash: query.schemaHash,
+      outputFormat,
       relatedPageIds: query.relatedPageIds,
       relatedNodeIds: query.relatedNodeIds,
       relatedSourceIds: query.relatedSourceIds,
+      projectIds: query.projectIds,
+      extraTags: categoryTagsForSchema(getEffectiveSchema(schemas, query.projectIds[0] ?? null), [options.question, query.answer]),
       origin: "query"
     });
-    savedTo = saved.savedTo;
+    await refreshVaultAfterOutputSave(rootDir);
+    savedPath = saved.savedPath;
     savedPageId = saved.page.id;
   }
 
   const provider = await getProviderForTask(rootDir, "queryProvider");
   await recordSession(rootDir, {
     operation: "query",
-    title: question,
+    title: options.question,
     startedAt,
     finishedAt: new Date().toISOString(),
     providerId: provider.id,
@@ -1009,23 +2603,32 @@ export async function queryVault(rootDir: string, question: string, save = false
     relatedNodeIds: query.relatedNodeIds,
     citations: query.citations,
     tokenUsage: query.usage,
-    lines: [`citations=${query.citations.join(",") || "none"}`, `saved=${Boolean(savedTo)}`, `rawSources=${query.relatedSourceIds.length}`]
+    lines: [
+      `citations=${query.citations.join(",") || "none"}`,
+      `saved=${Boolean(savedPath)}`,
+      `format=${outputFormat}`,
+      `rawSources=${query.relatedSourceIds.length}`
+    ]
   });
 
   return {
     answer: query.answer,
-    savedTo,
+    savedPath,
     savedPageId,
     citations: query.citations,
     relatedPageIds: query.relatedPageIds,
     relatedNodeIds: query.relatedNodeIds,
-    relatedSourceIds: query.relatedSourceIds
+    relatedSourceIds: query.relatedSourceIds,
+    outputFormat,
+    saved: Boolean(savedPath)
   };
 }
 
-export async function exploreVault(rootDir: string, question: string, steps = 3): Promise<ExploreResult> {
+export async function exploreVault(rootDir: string, options: ExploreOptions): Promise<ExploreResult> {
   const startedAt = new Date().toISOString();
-  const schema = await loadVaultSchema(rootDir);
+  const stepLimit = Math.max(1, options.steps ?? 3);
+  const outputFormat = normalizeOutputFormat(options.format);
+  const schemas = await loadVaultSchemas(rootDir);
   const stepResults: ExploreStepResult[] = [];
   const stepPages: GraphPage[] = [];
   const visited = new Set<string>();
@@ -1037,16 +2640,16 @@ export async function exploreVault(rootDir: string, question: string, steps = 3)
     inputTokens: 0,
     outputTokens: 0
   };
-  let currentQuestion = question;
+  let currentQuestion = options.question;
 
-  for (let step = 1; step <= Math.max(1, steps); step++) {
+  for (let step = 1; step <= stepLimit; step++) {
     const normalizedQuestion = normalizeWhitespace(currentQuestion).toLowerCase();
     if (!normalizedQuestion || visited.has(normalizedQuestion)) {
       break;
     }
 
     visited.add(normalizedQuestion);
-    const query = await executeQuery(rootDir, currentQuestion);
+    const query = await executeQuery(rootDir, currentQuestion, outputFormat);
     query.relatedPageIds.forEach((pageId) => {
       relatedPageIds.add(pageId);
     });
@@ -1063,12 +2666,15 @@ export async function exploreVault(rootDir: string, question: string, steps = 3)
       question: currentQuestion,
       answer: query.answer,
       citations: query.citations,
-      schemaHash: schema.hash,
+      schemaHash: query.schemaHash,
+      outputFormat,
       relatedPageIds: query.relatedPageIds,
       relatedNodeIds: query.relatedNodeIds,
       relatedSourceIds: query.relatedSourceIds,
+      projectIds: query.projectIds,
+      extraTags: categoryTagsForSchema(getEffectiveSchema(schemas, query.projectIds[0] ?? null), [currentQuestion, query.answer]),
       origin: "explore",
-      slug: `explore-${slugify(question)}-step-${step}`
+      slug: `explore-${slugify(options.question)}-step-${step}`
     });
 
     const followUpQuestions = await generateFollowUpQuestions(rootDir, currentQuestion, query.answer);
@@ -1076,10 +2682,11 @@ export async function exploreVault(rootDir: string, question: string, steps = 3)
       step,
       question: currentQuestion,
       answer: query.answer,
-      savedTo: saved.savedTo,
+      savedPath: saved.savedPath,
       savedPageId: saved.page.id,
       citations: query.citations,
-      followUpQuestions
+      followUpQuestions,
+      outputFormat
     });
     stepPages.push(saved.page);
     suggestedQuestions.push(...followUpQuestions);
@@ -1096,18 +2703,30 @@ export async function exploreVault(rootDir: string, question: string, steps = 3)
     (item) => item
   );
   const hub = await persistExploreHub(rootDir, {
-    question,
+    question: options.question,
     stepPages,
     followUpQuestions: uniqueBy(suggestedQuestions, (item) => item),
     citations: allCitations,
-    schemaHash: schema.hash,
-    slug: `explore-${slugify(question)}`
+    schemaHash: composeVaultSchema(
+      schemas.root,
+      uniqueStrings(stepPages.flatMap((page) => page.projectIds).sort((left, right) => left.localeCompare(right)))
+        .map((projectId) => schemas.projects[projectId])
+        .filter((schema): schema is NonNullable<typeof schema> => Boolean(schema?.hash))
+    ).hash,
+    outputFormat,
+    projectIds: scopedProjectIdsFromSources(
+      allCitations,
+      Object.fromEntries(stepPages.flatMap((page) => page.sourceIds.map((sourceId) => [sourceId, page.projectIds[0] ?? null])))
+    ),
+    extraTags: categoryTagsForSchema(schemas.effective.global, [options.question, ...stepResults.map((step) => step.answer)]),
+    slug: `explore-${slugify(options.question)}`
   });
+  await refreshVaultAfterOutputSave(rootDir);
 
   const provider = await getProviderForTask(rootDir, "queryProvider");
   await recordSession(rootDir, {
     operation: "explore",
-    title: question,
+    title: options.question,
     startedAt,
     finishedAt: new Date().toISOString(),
     providerId: provider.id,
@@ -1123,23 +2742,24 @@ export async function exploreVault(rootDir: string, question: string, steps = 3)
             outputTokens: tokenUsage.outputTokens
           }
         : undefined,
-    lines: [`steps=${stepResults.length}`, `hub=${hub.page.id}`, `citations=${allCitations.join(",") || "none"}`]
+    lines: [`steps=${stepResults.length}`, `hub=${hub.page.id}`, `format=${outputFormat}`, `citations=${allCitations.join(",") || "none"}`]
   });
 
   return {
-    rootQuestion: question,
-    hubPath: hub.savedTo,
+    rootQuestion: options.question,
+    hubPath: hub.savedPath,
     hubPageId: hub.page.id,
     stepCount: stepResults.length,
     steps: stepResults,
-    suggestedQuestions: uniqueBy(suggestedQuestions, (item) => item)
+    suggestedQuestions: uniqueBy(suggestedQuestions, (item) => item),
+    outputFormat
   };
 }
 
 export async function searchVault(rootDir: string, query: string, limit = 5): Promise<SearchResult[]> {
   const { paths } = await loadVaultConfig(rootDir);
   if (!(await fileExists(paths.searchDbPath))) {
-    await compileVault(rootDir);
+    await compileVault(rootDir, {});
   }
 
   return searchPages(paths.searchDbPath, query, limit);
@@ -1210,10 +2830,12 @@ function structuralLintFindings(
   _rootDir: string,
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
   graph: GraphArtifact,
-  schemaHash: string,
-  manifests: SourceManifest[]
+  schemas: LoadedVaultSchemas,
+  manifests: SourceManifest[],
+  sourceProjects: Record<string, string | null>
 ): Promise<LintFinding[]> {
   const manifestMap = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
+  const pageMap = new Map(graph.pages.map((page) => [page.id, page]));
   return Promise.all(
     graph.pages.map(async (page) => {
       const findings: LintFinding[] = [];
@@ -1222,7 +2844,7 @@ function structuralLintFindings(
         return findings;
       }
 
-      if (page.schemaHash !== schemaHash) {
+      if (page.schemaHash !== expectedSchemaHashForPage(page, schemas, pageMap, sourceProjects)) {
         findings.push({
           severity: "warning",
           code: "stale_page",
@@ -1284,9 +2906,10 @@ export async function lintVault(rootDir: string, options: LintOptions = {}): Pro
     throw new Error("`--web` can only be used together with `--deep`.");
   }
 
-  const { paths } = await loadVaultConfig(rootDir);
-  const schema = await loadVaultSchema(rootDir);
+  const { config, paths } = await loadVaultConfig(rootDir);
+  const schemas = await loadVaultSchemas(rootDir);
   const manifests = await listManifests(rootDir);
+  const sourceProjects = resolveSourceProjects(rootDir, manifests, config);
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
 
   if (!graph) {
@@ -1309,7 +2932,7 @@ export async function lintVault(rootDir: string, options: LintOptions = {}): Pro
     return findings;
   }
 
-  const findings = await structuralLintFindings(rootDir, paths, graph, schema.hash, manifests);
+  const findings = await structuralLintFindings(rootDir, paths, graph, schemas, manifests, sourceProjects);
   if (options.deep) {
     findings.push(...(await runDeepLint(rootDir, findings, { web: options.web })));
   }
@@ -1338,7 +2961,7 @@ export async function bootstrapDemo(rootDir: string, input?: string): Promise<{ 
   }
 
   const manifest = await ingestInput(rootDir, input);
-  const compile = await compileVault(rootDir);
+  const compile = await compileVault(rootDir, {});
   return {
     manifestId: manifest.sourceId,
     compile

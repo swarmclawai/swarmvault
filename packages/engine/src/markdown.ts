@@ -1,6 +1,17 @@
 import matter from "gray-matter";
-import type { Freshness, GraphPage, OutputOrigin, PageKind, PageManager, PageStatus, SourceAnalysis, SourceManifest } from "./types.js";
-import { slugify } from "./utils.js";
+import { modulePageTitle } from "./code-analysis.js";
+import type {
+  Freshness,
+  GraphPage,
+  OutputFormat,
+  OutputOrigin,
+  PageKind,
+  PageManager,
+  PageStatus,
+  SourceAnalysis,
+  SourceManifest
+} from "./types.js";
+import { slugify, uniqueBy } from "./utils.js";
 
 export interface ManagedPageMetadata {
   status: PageStatus;
@@ -14,10 +25,29 @@ export interface ManagedGraphPageMetadata extends ManagedPageMetadata {
   confidence: number;
 }
 
+export interface GeneratedPageDecorations {
+  projectIds?: string[];
+  extraTags?: string[];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return uniqueBy(values.filter(Boolean), (value) => value);
+}
+
+function decoratedTags(baseTags: string[], decorations?: GeneratedPageDecorations): string[] {
+  return uniqueStrings([
+    ...baseTags,
+    ...(decorations?.projectIds ?? []).map((projectId) => `project/${projectId}`),
+    ...(decorations?.extraTags ?? [])
+  ]);
+}
+
 function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
   switch (kind) {
     case "source":
       return `sources/${slug}.md`;
+    case "module":
+      return `code/${slug}.md`;
     case "concept":
       return `concepts/${slug}.md`;
     case "entity":
@@ -27,6 +57,10 @@ function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
     default:
       return `${slug}.md`;
   }
+}
+
+export function candidatePagePathFor(kind: "concept" | "entity", slug: string): string {
+  return kind === "entity" ? `candidates/entities/${slug}.md` : `candidates/concepts/${slug}.md`;
 }
 
 function pageLink(page: Pick<GraphPage, "path" | "title">): string {
@@ -46,14 +80,23 @@ export function buildSourcePage(
   analysis: SourceAnalysis,
   schemaHash: string,
   metadata: ManagedGraphPageMetadata,
-  relatedOutputs: GraphPage[] = []
+  relatedOutputs: GraphPage[] = [],
+  modulePage?: GraphPage,
+  decorations?: GeneratedPageDecorations
 ): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
-  const nodeIds = [`source:${manifest.sourceId}`, ...analysis.concepts.map((item) => item.id), ...analysis.entities.map((item) => item.id)];
+  const moduleNodeIds = analysis.code ? [analysis.code.moduleId, ...analysis.code.symbols.map((symbol) => symbol.id)] : [];
+  const nodeIds = [
+    `source:${manifest.sourceId}`,
+    ...analysis.concepts.map((item) => item.id),
+    ...analysis.entities.map((item) => item.id),
+    ...moduleNodeIds
+  ];
   const backlinks = [
     ...analysis.concepts.map((item) => `concept:${slugify(item.name)}`),
     ...analysis.entities.map((item) => `entity:${slugify(item.name)}`),
+    ...(modulePage ? [modulePage.id] : []),
     ...relatedOutputs.map((page) => page.id)
   ];
 
@@ -61,8 +104,9 @@ export function buildSourcePage(
     page_id: pageId,
     kind: "source",
     title: analysis.title,
-    tags: ["source"],
+    tags: decoratedTags(analysis.code ? ["source", "code"] : ["source"], decorations),
     source_ids: [manifest.sourceId],
+    project_ids: decorations?.projectIds ?? [],
     node_ids: nodeIds,
     freshness: "fresh" satisfies Freshness,
     status: metadata.status,
@@ -88,6 +132,18 @@ export function buildSourcePage(
     "",
     analysis.summary,
     "",
+    ...(analysis.code
+      ? [
+          "## Code Module",
+          "",
+          `- Language: \`${analysis.code.language}\``,
+          modulePage ? `- Module Page: [[${modulePage.path.replace(/\.md$/, "")}|${modulePage.title}]]` : "- Module Page: Not generated.",
+          `- Exports: ${analysis.code.exports.length ? analysis.code.exports.join(", ") : "None detected."}`,
+          `- Symbols: ${analysis.code.symbols.length ? analysis.code.symbols.map((symbol) => symbol.name).join(", ") : "None detected."}`,
+          analysis.code.diagnostics.length ? `- Diagnostics: ${analysis.code.diagnostics.length}` : "- Diagnostics: None.",
+          ""
+        ]
+      : []),
     "## Concepts",
     "",
     ...(analysis.concepts.length
@@ -123,6 +179,7 @@ export function buildSourcePage(
       title: analysis.title,
       kind: "source",
       sourceIds: [manifest.sourceId],
+      projectIds: decorations?.projectIds ?? [],
       nodeIds,
       freshness: "fresh",
       status: metadata.status,
@@ -130,9 +187,176 @@ export function buildSourcePage(
       backlinks,
       schemaHash,
       sourceHashes: { [manifest.sourceId]: manifest.contentHash },
-      relatedPageIds: relatedOutputs.map((page) => page.id),
-      relatedNodeIds: [],
+      relatedPageIds: [...(modulePage ? [modulePage.id] : []), ...relatedOutputs.map((page) => page.id)],
+      relatedNodeIds: moduleNodeIds,
       relatedSourceIds: [],
+      createdAt: metadata.createdAt,
+      updatedAt: metadata.updatedAt,
+      compiledFrom: metadata.compiledFrom,
+      managedBy: metadata.managedBy
+    },
+    content: matter.stringify(body, frontmatter)
+  };
+}
+
+export function buildModulePage(input: {
+  manifest: SourceManifest;
+  analysis: SourceAnalysis;
+  schemaHash: string;
+  metadata: ManagedGraphPageMetadata;
+  sourcePage: GraphPage;
+  localModules: Array<{ specifier: string; sourceId: string; page: Pick<GraphPage, "id" | "path" | "title">; reExport: boolean }>;
+  relatedOutputs?: GraphPage[];
+  projectIds?: string[];
+  extraTags?: string[];
+}): { page: GraphPage; content: string } {
+  const code = input.analysis.code;
+  if (!code) {
+    throw new Error(`Cannot build a module page without code analysis for ${input.manifest.sourceId}.`);
+  }
+
+  const { manifest, analysis, schemaHash, metadata, sourcePage } = input;
+  const relativePath = pagePathFor("module", manifest.sourceId);
+  const pageId = code.moduleId;
+  const title = modulePageTitle(manifest);
+  const nodeIds = [code.moduleId, ...code.symbols.map((symbol) => symbol.id)];
+  const localModuleBacklinks = input.localModules.map((moduleRef) => moduleRef.page.id);
+  const relatedOutputs = input.relatedOutputs ?? [];
+  const backlinks = uniqueStrings([sourcePage.id, ...localModuleBacklinks, ...relatedOutputs.map((page) => page.id)]);
+
+  const importsSection = code.imports.length
+    ? code.imports.map((item) => {
+        const localModule = input.localModules.find(
+          (moduleRef) => moduleRef.specifier === item.specifier && moduleRef.reExport === item.reExport
+        );
+        const importedBits = [
+          item.defaultImport ? `default \`${item.defaultImport}\`` : "",
+          item.namespaceImport ? `namespace \`${item.namespaceImport}\`` : "",
+          item.importedSymbols.length ? `named ${item.importedSymbols.map((symbol) => `\`${symbol}\``).join(", ")}` : ""
+        ].filter(Boolean);
+        const importTarget = localModule
+          ? `[[${localModule.page.path.replace(/\.md$/, "")}|${localModule.page.title}]]`
+          : `\`${item.specifier}\``;
+        const mode = item.reExport ? "re-exports from" : "imports";
+        const suffix = importedBits.length ? ` (${importedBits.join("; ")})` : "";
+        return `- ${mode} ${importTarget}${suffix}`;
+      })
+    : ["- No imports detected."];
+
+  const exportsSection = code.exports.length ? code.exports.map((item) => `- \`${item}\``) : ["- No exports detected."];
+  const symbolsSection = code.symbols.length
+    ? code.symbols.map(
+        (symbol) =>
+          `- \`${symbol.name}\` (${symbol.kind}${symbol.exported ? ", exported" : ""}): ${symbol.signature || "No signature recorded."}`
+      )
+    : ["- No top-level symbols detected."];
+  const inheritanceSection = code.symbols.flatMap((symbol) => [
+    ...symbol.extends.map((item) => `- \`${symbol.name}\` extends \`${item}\``),
+    ...symbol.implements.map((item) => `- \`${symbol.name}\` implements \`${item}\``)
+  ]);
+  const callsSection = code.symbols.flatMap((symbol) => symbol.calls.map((target) => `- \`${symbol.name}\` calls \`${target}\``));
+  const diagnosticsSection = code.diagnostics.length
+    ? code.diagnostics.map(
+        (diagnostic) => `- ${diagnostic.category} TS${diagnostic.code} at ${diagnostic.line}:${diagnostic.column}: ${diagnostic.message}`
+      )
+    : ["- No parser diagnostics."];
+
+  const frontmatter = {
+    page_id: pageId,
+    kind: "module",
+    title,
+    tags: decoratedTags(["module", "code", code.language], { projectIds: input.projectIds, extraTags: input.extraTags }),
+    source_ids: [manifest.sourceId],
+    project_ids: input.projectIds ?? [],
+    node_ids: nodeIds,
+    freshness: "fresh" satisfies Freshness,
+    status: metadata.status,
+    confidence: metadata.confidence,
+    created_at: metadata.createdAt,
+    updated_at: metadata.updatedAt,
+    compiled_from: metadata.compiledFrom,
+    managed_by: metadata.managedBy,
+    backlinks,
+    schema_hash: schemaHash,
+    source_hashes: {
+      [manifest.sourceId]: manifest.contentHash
+    },
+    related_page_ids: uniqueStrings([sourcePage.id, ...localModuleBacklinks, ...relatedOutputs.map((page) => page.id)]),
+    related_node_ids: [],
+    related_source_ids: uniqueStrings([
+      manifest.sourceId,
+      ...input.localModules.map((moduleRef) => moduleRef.sourceId),
+      ...relatedOutputs.flatMap((page) => page.sourceIds)
+    ]),
+    language: code.language
+  };
+
+  const body = [
+    `# ${title}`,
+    "",
+    `Source ID: \`${manifest.sourceId}\``,
+    `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
+    `Language: \`${code.language}\``,
+    `Source Page: [[${sourcePage.path.replace(/\.md$/, "")}|${sourcePage.title}]]`,
+    "",
+    "## Summary",
+    "",
+    analysis.summary,
+    "",
+    "## Imports",
+    "",
+    ...importsSection,
+    "",
+    "## Exports",
+    "",
+    ...exportsSection,
+    "",
+    "## Symbols",
+    "",
+    ...symbolsSection,
+    "",
+    "## External Dependencies",
+    "",
+    ...(code.dependencies.length ? code.dependencies.map((dependency) => `- \`${dependency}\``) : ["- No external dependencies detected."]),
+    "",
+    "## Inheritance",
+    "",
+    ...(inheritanceSection.length ? inheritanceSection : ["- No inheritance relationships detected."]),
+    "",
+    "## Calls",
+    "",
+    ...(callsSection.length ? callsSection : ["- No direct same-module call edges detected."]),
+    "",
+    "## Diagnostics",
+    "",
+    ...diagnosticsSection,
+    "",
+    ...relatedOutputsSection(relatedOutputs),
+    ""
+  ].join("\n");
+
+  return {
+    page: {
+      id: pageId,
+      path: relativePath,
+      title,
+      kind: "module",
+      sourceIds: [manifest.sourceId],
+      projectIds: input.projectIds ?? [],
+      nodeIds,
+      freshness: "fresh",
+      status: metadata.status,
+      confidence: metadata.confidence,
+      backlinks,
+      schemaHash,
+      sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+      relatedPageIds: uniqueStrings([sourcePage.id, ...localModuleBacklinks, ...relatedOutputs.map((page) => page.id)]),
+      relatedNodeIds: [],
+      relatedSourceIds: uniqueStrings([
+        manifest.sourceId,
+        ...input.localModules.map((moduleRef) => moduleRef.sourceId),
+        ...relatedOutputs.flatMap((page) => page.sourceIds)
+      ]),
       createdAt: metadata.createdAt,
       updatedAt: metadata.updatedAt,
       compiledFrom: metadata.compiledFrom,
@@ -150,10 +374,11 @@ export function buildAggregatePage(
   sourceHashes: Record<string, string>,
   schemaHash: string,
   metadata: ManagedGraphPageMetadata,
-  relatedOutputs: GraphPage[] = []
+  relativePath: string,
+  relatedOutputs: GraphPage[] = [],
+  decorations?: GeneratedPageDecorations
 ): { page: GraphPage; content: string } {
   const slug = slugify(name);
-  const relativePath = pagePathFor(kind, slug);
   const pageId = `${kind}:${slug}`;
   const sourceIds = sourceAnalyses.map((item) => item.sourceId);
   const otherPages = [...sourceAnalyses.map((item) => `source:${item.sourceId}`), ...relatedOutputs.map((page) => page.id)];
@@ -162,8 +387,9 @@ export function buildAggregatePage(
     page_id: pageId,
     kind,
     title: name,
-    tags: [kind],
+    tags: decoratedTags(metadata.status === "candidate" ? [kind, "candidate"] : [kind], decorations),
     source_ids: sourceIds,
+    project_ids: decorations?.projectIds ?? [],
     node_ids: [pageId],
     freshness: "fresh" satisfies Freshness,
     status: metadata.status,
@@ -207,6 +433,7 @@ export function buildAggregatePage(
       title: name,
       kind,
       sourceIds,
+      projectIds: decorations?.projectIds ?? [],
       nodeIds: [pageId],
       freshness: "fresh",
       status: metadata.status,
@@ -226,10 +453,17 @@ export function buildAggregatePage(
   };
 }
 
-export function buildIndexPage(pages: GraphPage[], schemaHash: string, metadata: ManagedPageMetadata): string {
+export function buildIndexPage(
+  pages: GraphPage[],
+  schemaHash: string,
+  metadata: ManagedPageMetadata,
+  projectPages: Pick<GraphPage, "path" | "title">[] = []
+): string {
   const sources = pages.filter((page) => page.kind === "source");
-  const concepts = pages.filter((page) => page.kind === "concept");
-  const entities = pages.filter((page) => page.kind === "entity");
+  const modules = pages.filter((page) => page.kind === "module");
+  const concepts = pages.filter((page) => page.kind === "concept" && page.status !== "candidate");
+  const entities = pages.filter((page) => page.kind === "entity" && page.status !== "candidate");
+  const candidates = pages.filter((page) => page.status === "candidate");
   const outputs = pages.filter((page) => page.kind === "output");
   const insights = pages.filter((page) => page.kind === "insight");
 
@@ -241,6 +475,7 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string, metadata:
     "tags:",
     "  - index",
     "source_ids: []",
+    "project_ids: []",
     "node_ids: []",
     "freshness: fresh",
     `status: ${metadata.status}`,
@@ -264,6 +499,10 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string, metadata:
     "",
     ...(concepts.length ? concepts.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No concepts yet."]),
     "",
+    "## Code Modules",
+    "",
+    ...(modules.length ? modules.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No code modules yet."]),
+    "",
     "## Entities",
     "",
     ...(entities.length ? entities.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No entities yet."]),
@@ -271,6 +510,18 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string, metadata:
     "## Outputs",
     "",
     ...(outputs.length ? outputs.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No saved outputs yet."]),
+    "",
+    "## Projects",
+    "",
+    ...(projectPages.length
+      ? projectPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+      : ["- No projects configured."]),
+    "",
+    "## Candidates",
+    "",
+    ...(candidates.length
+      ? candidates.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+      : ["- No candidates staged."]),
     "",
     "## Insights",
     "",
@@ -280,10 +531,11 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string, metadata:
 }
 
 export function buildSectionIndex(
-  kind: "sources" | "concepts" | "entities" | "outputs",
+  kind: "sources" | "code" | "concepts" | "entities" | "outputs" | "candidates",
   pages: GraphPage[],
   schemaHash: string,
-  metadata: ManagedPageMetadata
+  metadata: ManagedPageMetadata,
+  projectIds: string[] = []
 ): string {
   const title = kind.charAt(0).toUpperCase() + kind.slice(1);
   return matter.stringify(
@@ -292,8 +544,9 @@ export function buildSectionIndex(
       page_id: `${kind}:index`,
       kind: "index",
       title,
-      tags: ["index", kind],
+      tags: decoratedTags(["index", kind], { projectIds }),
       source_ids: [],
+      project_ids: projectIds,
       node_ids: [],
       freshness: "fresh" satisfies Freshness,
       status: metadata.status,
@@ -309,15 +562,120 @@ export function buildSectionIndex(
   );
 }
 
+export function buildProjectsIndex(projectPages: GraphPage[], schemaHash: string, metadata: ManagedPageMetadata): string {
+  return matter.stringify(
+    [
+      "# Projects",
+      "",
+      ...(projectPages.length
+        ? projectPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+        : ["- No projects configured."]),
+      ""
+    ].join("\n"),
+    {
+      page_id: "projects:index",
+      kind: "index",
+      title: "Projects",
+      tags: ["index", "projects"],
+      source_ids: [],
+      project_ids: [],
+      node_ids: [],
+      freshness: "fresh" satisfies Freshness,
+      status: metadata.status,
+      confidence: 1,
+      created_at: metadata.createdAt,
+      updated_at: metadata.updatedAt,
+      compiled_from: metadata.compiledFrom,
+      managed_by: metadata.managedBy,
+      backlinks: [],
+      schema_hash: schemaHash,
+      source_hashes: {}
+    }
+  );
+}
+
+export function buildProjectIndex(input: {
+  projectId: string;
+  schemaHash: string;
+  metadata: ManagedPageMetadata;
+  sections: Record<"sources" | "code" | "concepts" | "entities" | "outputs" | "candidates", GraphPage[]>;
+}): string {
+  const title = `Project: ${input.projectId}`;
+  return matter.stringify(
+    [
+      `# ${title}`,
+      "",
+      "## Sources",
+      "",
+      ...(input.sections.sources.length
+        ? input.sections.sources.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+        : ["- No sources yet."]),
+      "",
+      "## Code",
+      "",
+      ...(input.sections.code.length
+        ? input.sections.code.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+        : ["- No code pages yet."]),
+      "",
+      "## Concepts",
+      "",
+      ...(input.sections.concepts.length
+        ? input.sections.concepts.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+        : ["- No concept pages yet."]),
+      "",
+      "## Entities",
+      "",
+      ...(input.sections.entities.length
+        ? input.sections.entities.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+        : ["- No entity pages yet."]),
+      "",
+      "## Outputs",
+      "",
+      ...(input.sections.outputs.length
+        ? input.sections.outputs.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+        : ["- No output pages yet."]),
+      "",
+      "## Candidates",
+      "",
+      ...(input.sections.candidates.length
+        ? input.sections.candidates.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+        : ["- No candidate pages yet."]),
+      ""
+    ].join("\n"),
+    {
+      page_id: `project:${input.projectId}:index`,
+      kind: "index",
+      title,
+      tags: decoratedTags(["index", "projects"], { projectIds: [input.projectId] }),
+      source_ids: [],
+      project_ids: [input.projectId],
+      node_ids: [],
+      freshness: "fresh" satisfies Freshness,
+      status: input.metadata.status,
+      confidence: 1,
+      created_at: input.metadata.createdAt,
+      updated_at: input.metadata.updatedAt,
+      compiled_from: input.metadata.compiledFrom,
+      managed_by: input.metadata.managedBy,
+      backlinks: [],
+      schema_hash: input.schemaHash,
+      source_hashes: {}
+    }
+  );
+}
+
 export function buildOutputPage(input: {
   title?: string;
   question: string;
   answer: string;
   citations: string[];
   schemaHash: string;
+  outputFormat: OutputFormat;
   relatedPageIds?: string[];
   relatedNodeIds?: string[];
   relatedSourceIds?: string[];
+  projectIds?: string[];
+  extraTags?: string[];
   origin: OutputOrigin;
   slug?: string;
   metadata: ManagedGraphPageMetadata;
@@ -333,8 +691,9 @@ export function buildOutputPage(input: {
     page_id: pageId,
     kind: "output",
     title: input.title ?? input.question,
-    tags: ["output"],
+    tags: decoratedTags(["output"], { projectIds: input.projectIds, extraTags: input.extraTags }),
     source_ids: input.citations,
+    project_ids: input.projectIds ?? [],
     node_ids: relatedNodeIds,
     freshness: "fresh" satisfies Freshness,
     status: input.metadata.status,
@@ -350,7 +709,9 @@ export function buildOutputPage(input: {
     related_node_ids: relatedNodeIds,
     related_source_ids: relatedSourceIds,
     origin: input.origin,
-    question: input.question
+    question: input.question,
+    output_format: input.outputFormat,
+    ...(input.outputFormat === "slides" ? { marp: true } : {})
   };
 
   return {
@@ -360,6 +721,7 @@ export function buildOutputPage(input: {
       title: input.title ?? input.question,
       kind: "output",
       sourceIds: input.citations,
+      projectIds: input.projectIds ?? [],
       nodeIds: relatedNodeIds,
       freshness: "fresh",
       status: input.metadata.status,
@@ -375,23 +737,55 @@ export function buildOutputPage(input: {
       compiledFrom: input.metadata.compiledFrom,
       managedBy: input.metadata.managedBy,
       origin: input.origin,
-      question: input.question
+      question: input.question,
+      outputFormat: input.outputFormat
     },
     content: matter.stringify(
-      [
-        `# ${input.title ?? input.question}`,
-        "",
-        input.answer,
-        "",
-        "## Related Pages",
-        "",
-        ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
-        "",
-        "## Citations",
-        "",
-        ...input.citations.map((citation) => `- [source:${citation}]`),
-        ""
-      ].join("\n"),
+      (input.outputFormat === "slides"
+        ? [
+            input.answer,
+            "",
+            "---",
+            "",
+            "# Related Pages",
+            "",
+            ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
+            "",
+            "---",
+            "",
+            "# Citations",
+            "",
+            ...input.citations.map((citation) => `- [source:${citation}]`),
+            ""
+          ]
+        : input.outputFormat === "report"
+          ? [
+              input.answer,
+              "",
+              "## Related Pages",
+              "",
+              ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
+              "",
+              "## Citations",
+              "",
+              ...input.citations.map((citation) => `- [source:${citation}]`),
+              ""
+            ]
+          : [
+              `# ${input.title ?? input.question}`,
+              "",
+              input.answer,
+              "",
+              "## Related Pages",
+              "",
+              ...(relatedPageIds.length ? relatedPageIds.map((pageId) => `- \`${pageId}\``) : ["- None recorded."]),
+              "",
+              "## Citations",
+              "",
+              ...input.citations.map((citation) => `- [source:${citation}]`),
+              ""
+            ]
+      ).join("\n"),
       frontmatter
     )
   };
@@ -403,7 +797,10 @@ export function buildExploreHubPage(input: {
   followUpQuestions: string[];
   citations: string[];
   schemaHash: string;
+  outputFormat: OutputFormat;
   slug?: string;
+  projectIds?: string[];
+  extraTags?: string[];
   metadata: ManagedGraphPageMetadata;
 }): { page: GraphPage; content: string } {
   const slug = input.slug ?? `explore-${slugify(input.question)}`;
@@ -419,8 +816,9 @@ export function buildExploreHubPage(input: {
     page_id: pageId,
     kind: "output",
     title,
-    tags: ["output", "explore"],
+    tags: decoratedTags(["output", "explore"], { projectIds: input.projectIds, extraTags: input.extraTags }),
     source_ids: relatedSourceIds,
+    project_ids: input.projectIds ?? [],
     node_ids: relatedNodeIds,
     freshness: "fresh" satisfies Freshness,
     status: input.metadata.status,
@@ -436,7 +834,9 @@ export function buildExploreHubPage(input: {
     related_node_ids: relatedNodeIds,
     related_source_ids: relatedSourceIds,
     origin: "explore" satisfies OutputOrigin,
-    question: input.question
+    question: input.question,
+    output_format: input.outputFormat,
+    ...(input.outputFormat === "slides" ? { marp: true } : {})
   };
 
   return {
@@ -446,6 +846,7 @@ export function buildExploreHubPage(input: {
       title,
       kind: "output",
       sourceIds: relatedSourceIds,
+      projectIds: input.projectIds ?? [],
       nodeIds: relatedNodeIds,
       freshness: "fresh",
       status: input.metadata.status,
@@ -461,31 +862,58 @@ export function buildExploreHubPage(input: {
       compiledFrom: input.metadata.compiledFrom,
       managedBy: input.metadata.managedBy,
       origin: "explore",
-      question: input.question
+      question: input.question,
+      outputFormat: input.outputFormat
     },
     content: matter.stringify(
-      [
-        `# ${title}`,
-        "",
-        "## Root Question",
-        "",
-        input.question,
-        "",
-        "## Steps",
-        "",
-        ...(input.stepPages.length ? input.stepPages.map((page) => `- ${pageLink(page)}`) : ["- No steps recorded."]),
-        "",
-        "## Follow-Up Questions",
-        "",
-        ...(input.followUpQuestions.length
-          ? input.followUpQuestions.map((question) => `- ${question}`)
-          : ["- No follow-up questions generated."]),
-        "",
-        "## Citations",
-        "",
-        ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
-        ""
-      ].join("\n"),
+      (input.outputFormat === "slides"
+        ? [
+            `# ${title}`,
+            "",
+            `- Root question: ${input.question}`,
+            `- Steps: ${input.stepPages.length}`,
+            "---",
+            "",
+            "# Step Pages",
+            "",
+            ...(input.stepPages.length ? input.stepPages.map((page) => `- ${pageLink(page)}`) : ["- No steps recorded."]),
+            "---",
+            "",
+            "# Follow-Up Questions",
+            "",
+            ...(input.followUpQuestions.length
+              ? input.followUpQuestions.map((question) => `- ${question}`)
+              : ["- No follow-up questions generated."]),
+            "---",
+            "",
+            "# Citations",
+            "",
+            ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
+            ""
+          ]
+        : [
+            `# ${title}`,
+            "",
+            "## Root Question",
+            "",
+            input.question,
+            "",
+            "## Steps",
+            "",
+            ...(input.stepPages.length ? input.stepPages.map((page) => `- ${pageLink(page)}`) : ["- No steps recorded."]),
+            "",
+            "## Follow-Up Questions",
+            "",
+            ...(input.followUpQuestions.length
+              ? input.followUpQuestions.map((question) => `- ${question}`)
+              : ["- No follow-up questions generated."]),
+            "",
+            "## Citations",
+            "",
+            ...relatedSourceIds.map((citation) => `- [source:${citation}]`),
+            ""
+          ]
+      ).join("\n"),
       frontmatter
     )
   };

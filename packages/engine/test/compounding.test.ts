@@ -3,7 +3,24 @@ import os from "node:os";
 import path from "node:path";
 import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileVault, exploreVault, ingestInput, initVault, lintVault, queryVault, searchVault, watchVault } from "../src/index.js";
+import {
+  acceptApproval,
+  archiveCandidate,
+  compileVault,
+  exploreVault,
+  exportGraphHtml,
+  ingestInput,
+  initVault,
+  lintVault,
+  listApprovals,
+  listCandidates,
+  promoteCandidate,
+  queryVault,
+  readApproval,
+  rejectApproval,
+  searchVault,
+  watchVault
+} from "../src/index.js";
 
 const tempDirs: string[] = [];
 
@@ -58,13 +75,13 @@ describe("compounding loop", () => {
     const manifest = await ingestInput(rootDir, "note.md");
     await compileVault(rootDir);
 
-    const result = await queryVault(rootDir, "What does this vault say about durable graph artifacts?", true);
-    expect(result.savedTo).toBeTruthy();
+    const result = await queryVault(rootDir, { question: "What does this vault say about durable graph artifacts?" });
+    expect(result.savedPath).toBeTruthy();
     expect(result.savedPageId).toBeTruthy();
     expect(result.citations.length).toBeGreaterThan(0);
     expect(result.relatedPageIds.length).toBeGreaterThan(0);
 
-    const savedOutput = await fs.readFile(result.savedTo as string, "utf8");
+    const savedOutput = await fs.readFile(result.savedPath as string, "utf8");
     const parsedOutput = matter(savedOutput);
     expect(parsedOutput.data.source_ids).toContain(manifest.sourceId);
     expect(parsedOutput.data.related_page_ids).toContain(`source:${manifest.sourceId}`);
@@ -82,7 +99,6 @@ describe("compounding loop", () => {
     const searchResults = await searchVault(rootDir, "durable graph artifacts", 10);
     expect(searchResults.some((page) => page.pageId === result.savedPageId)).toBe(true);
 
-    await compileVault(rootDir);
     const sourcePage = await fs.readFile(path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`), "utf8");
     expect(sourcePage).toContain("## Related Outputs");
     expect(sourcePage).toContain(parsedOutput.data.title as string);
@@ -117,7 +133,7 @@ describe("compounding loop", () => {
     const searchResults = await searchVault(rootDir, "explicit session history", 10);
     expect(searchResults.some((page) => page.path === "insights/research-hypothesis.md")).toBe(true);
 
-    const query = await queryVault(rootDir, "What human insight is recorded about session history?");
+    const query = await queryVault(rootDir, { question: "What human insight is recorded about session history?", save: false });
     expect(query.relatedPageIds.some((pageId) => pageId.startsWith("insight:"))).toBe(true);
     expect(query.answer).toContain("Research Hypothesis");
 
@@ -136,10 +152,10 @@ describe("compounding loop", () => {
     await ingestInput(rootDir, "research.md");
     await compileVault(rootDir);
 
-    const result = await exploreVault(rootDir, "How does this vault work?", 2);
+    const result = await exploreVault(rootDir, { question: "How does this vault work?", steps: 2 });
     expect(result.stepCount).toBeGreaterThan(0);
     expect(result.stepCount).toBeLessThanOrEqual(2);
-    expect(result.steps.every((step) => step.savedTo.length > 0)).toBe(true);
+    expect(result.steps.every((step) => step.savedPath.length > 0)).toBe(true);
     await expect(fs.access(result.hubPath)).resolves.toBeUndefined();
 
     const hub = await fs.readFile(result.hubPath, "utf8");
@@ -314,5 +330,334 @@ describe("compounding loop", () => {
     const coverageFinding = findings.find((finding) => finding.code === "coverage_gap");
     expect(coverageFinding).toBeTruthy();
     expect(coverageFinding?.evidence?.[0]?.url).toBe("https://example.com/evidence");
+  });
+
+  it("stages candidate pages on first compile and promotes them on the next matching compile", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "candidate-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() {",
+        "      return { text: 'ok' };",
+        "    },",
+        "    async generateStructured() {",
+        "      return {",
+        "        title: 'Candidate Source',",
+        "        summary: 'Candidate summary.',",
+        "        concepts: [{ name: 'Candidate Concept', description: 'A recurring concept.' }],",
+        "        entities: [],",
+        "        claims: [{ text: 'Candidate claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'candidate-source' }],",
+        "        questions: []",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.candidateTest = {
+      type: "custom",
+      model: "candidate-test",
+      module: "./candidate-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "candidateTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await fs.writeFile(path.join(rootDir, "candidate.md"), "# Candidate\n\nCandidate content.", "utf8");
+    await ingestInput(rootDir, "candidate.md");
+
+    const first = await compileVault(rootDir);
+    expect(first.candidatePageCount).toBeGreaterThan(0);
+    await expect(fs.access(path.join(rootDir, "wiki", "candidates", "concepts", "candidate-concept.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "wiki", "concepts", "candidate-concept.md"))).rejects.toThrow();
+
+    const second = await compileVault(rootDir);
+    expect(second.promotedPageIds).toContain("concept:candidate-concept");
+    await expect(fs.access(path.join(rootDir, "wiki", "concepts", "candidate-concept.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "wiki", "candidates", "concepts", "candidate-concept.md"))).rejects.toThrow();
+
+    const promoted = matter(await fs.readFile(path.join(rootDir, "wiki", "concepts", "candidate-concept.md"), "utf8"));
+    expect(promoted.data.status).toBe("active");
+  });
+
+  it("stages approval bundles without mutating active wiki paths", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "candidate-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() {",
+        "      return { text: 'ok' };",
+        "    },",
+        "    async generateStructured() {",
+        "      return {",
+        "        title: 'Approval Source',",
+        "        summary: 'Approval summary.',",
+        "        concepts: [{ name: 'Approval Concept', description: 'Requires review.' }],",
+        "        entities: [],",
+        "        claims: [{ text: 'Approval claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'approval-source' }],",
+        "        questions: []",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.approvalTest = {
+      type: "custom",
+      model: "approval-test",
+      module: "./candidate-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "approvalTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await fs.writeFile(path.join(rootDir, "approval.md"), "# Approval\n\nApproval content.", "utf8");
+    await ingestInput(rootDir, "approval.md");
+    await compileVault(rootDir);
+
+    const staged = await compileVault(rootDir, { approve: true });
+    expect(staged.staged).toBe(true);
+    expect(staged.approvalDir).toBeTruthy();
+    await expect(fs.access(path.join(rootDir, "wiki", "concepts", "approval-concept.md"))).rejects.toThrow();
+    await expect(fs.access(path.join(staged.approvalDir as string, "wiki", "concepts", "approval-concept.md"))).resolves.toBeUndefined();
+  });
+
+  it("lists review bundles and applies accept or reject decisions per entry", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "candidate-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() {",
+        "      return { text: 'ok' };",
+        "    },",
+        "    async generateStructured() {",
+        "      return {",
+        "        title: 'Approval Source',",
+        "        summary: 'Approval summary.',",
+        "        concepts: [{ name: 'Approval Concept', description: 'Requires review.' }],",
+        "        entities: [],",
+        "        claims: [{ text: 'Approval claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'approval-source' }],",
+        "        questions: []",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.approvalTest = {
+      type: "custom",
+      model: "approval-test",
+      module: "./candidate-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "approvalTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await fs.writeFile(path.join(rootDir, "approval.md"), "# Approval\n\nApproval content.", "utf8");
+    await ingestInput(rootDir, "approval.md");
+    await compileVault(rootDir);
+
+    const staged = await compileVault(rootDir, { approve: true });
+    const approvals = await listApprovals(rootDir);
+    expect(approvals.some((approval) => approval.approvalId === staged.approvalId)).toBe(true);
+
+    const detail = await readApproval(rootDir, staged.approvalId as string);
+    const conceptEntry = detail.entries.find((entry) => entry.pageId === "concept:approval-concept");
+    expect(conceptEntry?.changeType).toBe("promote");
+    expect(conceptEntry?.stagedContent).toContain("Approval Concept");
+
+    const rejected = await rejectApproval(rootDir, staged.approvalId as string, ["concept:approval-concept"]);
+    expect(rejected.rejectedCount).toBe(1);
+
+    const stagedAgain = await compileVault(rootDir, { approve: true });
+    const accepted = await acceptApproval(rootDir, stagedAgain.approvalId as string);
+    expect(accepted.acceptedCount).toBeGreaterThan(0);
+
+    const after = await readApproval(rootDir, staged.approvalId as string);
+    expect(after.entries.find((entry) => entry.pageId === "concept:approval-concept")?.status).toBe("rejected");
+    await expect(fs.access(path.join(rootDir, "wiki", "concepts", "approval-concept.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "wiki", "candidates", "concepts", "approval-concept.md"))).rejects.toThrow();
+  });
+
+  it("supports manual candidate promotion and archival", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "candidate-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() {",
+        "      return { text: 'ok' };",
+        "    },",
+        "    async generateStructured() {",
+        "      return {",
+        "        title: 'Candidate Source',",
+        "        summary: 'Candidate summary.',",
+        "        concepts: [{ name: 'Candidate Concept', description: 'A recurring concept.' }],",
+        "        entities: [],",
+        "        claims: [{ text: 'Candidate claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'candidate-source' }],",
+        "        questions: []",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.candidateTest = {
+      type: "custom",
+      model: "candidate-test",
+      module: "./candidate-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "candidateTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await fs.writeFile(path.join(rootDir, "candidate.md"), "# Candidate\n\nCandidate content.", "utf8");
+    await ingestInput(rootDir, "candidate.md");
+
+    await compileVault(rootDir);
+    const initialCandidates = await listCandidates(rootDir);
+    expect(initialCandidates).toHaveLength(1);
+
+    const promoted = await promoteCandidate(rootDir, initialCandidates[0]?.pageId as string);
+    expect(promoted.path).toBe("concepts/candidate-concept.md");
+    await expect(fs.access(path.join(rootDir, "wiki", promoted.path))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "wiki", "candidates", "concepts", "candidate-concept.md"))).rejects.toThrow();
+    expect(await listCandidates(rootDir)).toHaveLength(0);
+  });
+
+  it("supports manual candidate archival", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "candidate-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() {",
+        "      return { text: 'ok' };",
+        "    },",
+        "    async generateStructured() {",
+        "      return {",
+        "        title: 'Candidate Source',",
+        "        summary: 'Candidate summary.',",
+        "        concepts: [{ name: 'Candidate Concept', description: 'A recurring concept.' }],",
+        "        entities: [],",
+        "        claims: [{ text: 'Candidate claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'candidate-source' }],",
+        "        questions: []",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.candidateTest = {
+      type: "custom",
+      model: "candidate-test",
+      module: "./candidate-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "candidateTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await fs.writeFile(path.join(rootDir, "candidate.md"), "# Candidate\n\nCandidate content.", "utf8");
+    await ingestInput(rootDir, "candidate.md");
+    await compileVault(rootDir);
+    const candidates = await listCandidates(rootDir);
+    expect(candidates).toHaveLength(1);
+
+    const archived = await archiveCandidate(rootDir, candidates[0]?.path as string);
+    expect(archived.pageId).toBe("concept:candidate-concept");
+    await expect(fs.access(path.join(rootDir, "wiki", "candidates", "concepts", "candidate-concept.md"))).rejects.toThrow();
+    expect(await listCandidates(rootDir)).toHaveLength(0);
+  });
+
+  it("writes slide-format outputs with marp metadata and exports the graph as standalone HTML", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(path.join(rootDir, "slides.md"), "# Slides\n\nGraphs and exports should be easy to share.", "utf8");
+    await ingestInput(rootDir, "slides.md");
+    await compileVault(rootDir);
+
+    const query = await queryVault(rootDir, { question: "Show this as slides", format: "slides" });
+    const saved = matter(await fs.readFile(query.savedPath as string, "utf8"));
+    expect(saved.data.output_format).toBe("slides");
+    expect(saved.data.marp).toBe(true);
+    expect(saved.content).toContain("---");
+
+    const exportPath = await exportGraphHtml(rootDir, path.join(rootDir, "exports", "graph.html"));
+    const exportedHtml = await fs.readFile(exportPath, "utf8");
+    expect(exportedHtml).toContain("__SWARMVAULT_EMBEDDED_DATA__");
+    expect(exportedHtml).toContain("SwarmVault Graph Export");
   });
 });

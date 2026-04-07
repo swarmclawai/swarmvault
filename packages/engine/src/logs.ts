@@ -5,7 +5,7 @@ import { initWorkspace } from "./config.js";
 import type { WatchRunRecord } from "./types.js";
 import { appendJsonLine, ensureDir, fileExists, slugify, writeFileIfChanged } from "./utils.js";
 
-type SessionOperation = "compile" | "query" | "explore" | "lint" | "watch";
+type SessionOperation = "compile" | "query" | "explore" | "lint" | "watch" | "review" | "candidate";
 
 export interface SessionRecordInput {
   operation: SessionOperation;

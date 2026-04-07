@@ -11,7 +11,7 @@ import type { GraphArtifact } from "./types.js";
 import { fileExists, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
 import { compileVault, getWorkspaceInfo, lintVault, listPages, queryVault, readPage, searchVault } from "./vault.js";
 
-const SERVER_VERSION = "0.1.5";
+const SERVER_VERSION = "0.1.6";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -84,11 +84,16 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
       description: "Ask a question against the compiled vault and optionally save the answer.",
       inputSchema: {
         question: z.string().min(1).describe("Question to ask the vault"),
-        save: z.boolean().optional().describe("Persist the answer to wiki/outputs")
+        save: z.boolean().optional().describe("Persist the answer to wiki/outputs"),
+        format: z.enum(["markdown", "report", "slides"]).optional().describe("Output format")
       }
     },
-    async ({ question, save }) => {
-      const result = await queryVault(rootDir, question, save ?? false);
+    async ({ question, save, format }) => {
+      const result = await queryVault(rootDir, {
+        question,
+        save: save ?? true,
+        format
+      });
       return asToolText(result);
     }
   );
@@ -110,10 +115,13 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
   server.registerTool(
     "compile_vault",
     {
-      description: "Compile source manifests into wiki pages, graph data, and search index."
+      description: "Compile source manifests into wiki pages, graph data, and search index.",
+      inputSchema: {
+        approve: z.boolean().optional().describe("Stage a review bundle without applying active page changes")
+      }
     },
-    async () => {
-      const result = await compileVault(rootDir);
+    async ({ approve }) => {
+      const result = await compileVault(rootDir, { approve: approve ?? false });
       return asToolText(result);
     }
   );

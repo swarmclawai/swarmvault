@@ -8,13 +8,19 @@ export const providerTypeSchema = z.enum(["heuristic", "openai", "ollama", "anth
 
 export type ProviderType = z.infer<typeof providerTypeSchema>;
 
-export type PageKind = "index" | "source" | "concept" | "entity" | "output" | "insight";
+export type PageKind = "index" | "source" | "module" | "concept" | "entity" | "output" | "insight";
 export type Freshness = "fresh" | "stale";
 export type ClaimStatus = "extracted" | "inferred" | "conflicted" | "stale";
 export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore";
+export type OutputFormat = "markdown" | "report" | "slides";
 export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
+export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
+export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
+export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "binary" | "code";
+export type CodeLanguage = "javascript" | "jsx" | "typescript" | "tsx";
+export type CodeSymbolKind = "function" | "class" | "interface" | "type_alias" | "enum" | "variable";
 
 export const webSearchProviderTypeSchema = z.enum(["http-json", "custom"]);
 
@@ -107,6 +113,13 @@ export interface VaultConfig {
   viewer: {
     port: number;
   };
+  projects?: Record<
+    string,
+    {
+      roots: string[];
+      schemaPath?: string;
+    }
+  >;
   agents: Array<"codex" | "claude" | "cursor">;
   webSearch?: {
     providers: Record<string, WebSearchProviderConfig>;
@@ -123,6 +136,10 @@ export interface ResolvedPaths {
   rawSourcesDir: string;
   rawAssetsDir: string;
   wikiDir: string;
+  projectsDir: string;
+  candidatesDir: string;
+  candidateConceptsDir: string;
+  candidateEntitiesDir: string;
   stateDir: string;
   agentDir: string;
   inboxDir: string;
@@ -135,6 +152,7 @@ export interface ResolvedPaths {
   compileStatePath: string;
   jobsLogPath: string;
   sessionsDir: string;
+  approvalsDir: string;
   configPath: string;
 }
 
@@ -148,7 +166,8 @@ export interface SourceManifest {
   sourceId: string;
   title: string;
   originType: "file" | "url";
-  sourceKind: "markdown" | "text" | "pdf" | "image" | "html" | "binary";
+  sourceKind: SourceKind;
+  language?: CodeLanguage;
   originalPath?: string;
   url?: string;
   storedPath: string;
@@ -175,6 +194,45 @@ export interface SourceClaim {
   citation: string;
 }
 
+export interface CodeImport {
+  specifier: string;
+  importedSymbols: string[];
+  defaultImport?: string;
+  namespaceImport?: string;
+  isTypeOnly?: boolean;
+  isExternal: boolean;
+  reExport: boolean;
+}
+
+export interface CodeDiagnostic {
+  code: number;
+  category: "warning" | "error" | "message" | "suggestion";
+  message: string;
+  line: number;
+  column: number;
+}
+
+export interface CodeSymbol {
+  id: string;
+  name: string;
+  kind: CodeSymbolKind;
+  signature: string;
+  exported: boolean;
+  calls: string[];
+  extends: string[];
+  implements: string[];
+}
+
+export interface CodeAnalysis {
+  moduleId: string;
+  language: CodeLanguage;
+  imports: CodeImport[];
+  dependencies: string[];
+  symbols: CodeSymbol[];
+  exports: string[];
+  diagnostics: CodeDiagnostic[];
+}
+
 export interface SourceAnalysis {
   sourceId: string;
   sourceHash: string;
@@ -185,17 +243,26 @@ export interface SourceAnalysis {
   entities: AnalyzedTerm[];
   claims: SourceClaim[];
   questions: string[];
+  code?: CodeAnalysis;
   producedAt: string;
 }
 
 export interface GraphNode {
   id: string;
-  type: "source" | "concept" | "entity";
+  type: "source" | "concept" | "entity" | "module" | "symbol";
   label: string;
   pageId?: string;
   freshness?: Freshness;
   confidence?: number;
   sourceIds: string[];
+  projectIds: string[];
+  language?: CodeLanguage;
+  moduleId?: string;
+  symbolKind?: CodeSymbolKind;
+  communityId?: string;
+  degree?: number;
+  bridgeScore?: number;
+  isGodNode?: boolean;
 }
 
 export interface GraphEdge {
@@ -214,6 +281,7 @@ export interface GraphPage {
   title: string;
   kind: PageKind;
   sourceIds: string[];
+  projectIds: string[];
   nodeIds: string[];
   freshness: Freshness;
   status: PageStatus;
@@ -230,14 +298,78 @@ export interface GraphPage {
   managedBy: PageManager;
   origin?: OutputOrigin;
   question?: string;
+  outputFormat?: OutputFormat;
 }
 
 export interface GraphArtifact {
   generatedAt: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  communities?: Array<{
+    id: string;
+    label: string;
+    nodeIds: string[];
+  }>;
   sources: SourceManifest[];
   pages: GraphPage[];
+}
+
+export interface ApprovalEntry {
+  pageId: string;
+  title: string;
+  kind: PageKind;
+  changeType: ApprovalChangeType;
+  status: ApprovalEntryStatus;
+  sourceIds: string[];
+  nextPath?: string;
+  previousPath?: string;
+}
+
+export interface ApprovalManifest {
+  approvalId: string;
+  createdAt: string;
+  entries: ApprovalEntry[];
+}
+
+export interface ApprovalSummary {
+  approvalId: string;
+  createdAt: string;
+  entryCount: number;
+  pendingCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+}
+
+export interface ApprovalEntryDetail extends ApprovalEntry {
+  currentContent?: string;
+  stagedContent?: string;
+}
+
+export interface ApprovalDetail extends ApprovalSummary {
+  entries: ApprovalEntryDetail[];
+}
+
+export interface ReviewActionResult extends ApprovalSummary {
+  updatedEntries: string[];
+}
+
+export interface CandidateRecord {
+  pageId: string;
+  title: string;
+  kind: "concept" | "entity";
+  path: string;
+  activePath: string;
+  sourceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CompileOptions {
+  approve?: boolean;
+}
+
+export interface InitOptions {
+  obsidian?: boolean;
 }
 
 export interface CompileResult {
@@ -245,6 +377,11 @@ export interface CompileResult {
   pageCount: number;
   changedPages: string[];
   sourceCount: number;
+  staged: boolean;
+  approvalId?: string;
+  approvalDir?: string;
+  promotedPageIds: string[];
+  candidatePageCount: number;
 }
 
 export interface SearchResult {
@@ -253,16 +390,27 @@ export interface SearchResult {
   title: string;
   snippet: string;
   rank: number;
+  kind?: PageKind;
+  status?: PageStatus;
+  projectIds: string[];
+}
+
+export interface QueryOptions {
+  question: string;
+  save?: boolean;
+  format?: OutputFormat;
 }
 
 export interface QueryResult {
   answer: string;
-  savedTo?: string;
+  savedPath?: string;
   savedPageId?: string;
   citations: string[];
   relatedPageIds: string[];
   relatedNodeIds: string[];
   relatedSourceIds: string[];
+  outputFormat: OutputFormat;
+  saved: boolean;
 }
 
 export interface LintFinding {
@@ -315,11 +463,25 @@ export interface WatchController {
 
 export interface CompileState {
   generatedAt: string;
-  schemaHash: string;
+  rootSchemaHash: string;
+  projectSchemaHashes: Record<string, string>;
+  effectiveSchemaHashes: {
+    global: string;
+    projects: Record<string, string>;
+  };
+  projectConfigHash: string;
   analyses: Record<string, string>;
   sourceHashes: Record<string, string>;
+  sourceProjects: Record<string, string | null>;
   outputHashes: Record<string, string>;
   insightHashes: Record<string, string>;
+  candidateHistory: Record<
+    string,
+    {
+      sourceIds: string[];
+      status: "candidate" | "active";
+    }
+  >;
 }
 
 export interface LintOptions {
@@ -327,14 +489,21 @@ export interface LintOptions {
   web?: boolean;
 }
 
+export interface ExploreOptions {
+  question: string;
+  steps?: number;
+  format?: OutputFormat;
+}
+
 export interface ExploreStepResult {
   step: number;
   question: string;
   answer: string;
-  savedTo: string;
+  savedPath: string;
   savedPageId: string;
   citations: string[];
   followUpQuestions: string[];
+  outputFormat: OutputFormat;
 }
 
 export interface ExploreResult {
@@ -344,4 +513,5 @@ export interface ExploreResult {
   stepCount: number;
   steps: ExploreStepResult[];
   suggestedQuestions: string[];
+  outputFormat: OutputFormat;
 }

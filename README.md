@@ -43,14 +43,18 @@ This installs the `swarmvault` command. The `vault` alias is also available for 
 ```bash
 mkdir my-vault
 cd my-vault
-swarmvault init
+swarmvault init --obsidian
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault compile
-swarmvault query "What are the main ideas?" --save
+swarmvault query "What are the main ideas?"
+swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I investigate next?" --steps 3
 swarmvault lint --deep
+swarmvault review list
+swarmvault candidate list
 swarmvault graph serve
+swarmvault graph export --html ./exports/graph.html
 ```
 
 You can also use the capture and automation loop:
@@ -80,6 +84,7 @@ my-vault/
 |   `-- assets/
 |-- wiki/
 |   |-- index.md
+|   |-- candidates/
 |   |-- insights/
 |   |-- sources/
 |   |-- concepts/
@@ -92,7 +97,9 @@ my-vault/
 |   |-- graph.json
 |   |-- search.sqlite
 |   |-- sessions/
+|   |-- approvals/
 |   `-- jobs.ndjson
+|-- .obsidian/
 `-- agent/
 ```
 
@@ -118,16 +125,19 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 
 ## Core Commands
 
-- `swarmvault init`: create a workspace, default config, and default schema file
+- `swarmvault init [--obsidian]`: create a workspace, default config, default schema file, and optional `.obsidian/` config
 - `swarmvault ingest <input>`: ingest a local file path or URL
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
-- `swarmvault compile`: build wiki pages, graph data, and the search index using the vault schema as guidance
-- `swarmvault query "<question>" [--save]`: answer questions against the compiled vault, optionally persisting the answer as a first-class output page
-- `swarmvault explore "<question>" [--steps <n>]`: run a save-first multi-step research loop and write a hub page plus step outputs
+- `swarmvault compile [--approve]`: build wiki pages, graph data, and the search index using the vault schema as guidance, or stage a review bundle before applying changes
+- `swarmvault query "<question>" [--no-save] [--format markdown|report|slides]`: answer questions against the compiled vault and save the result by default
+- `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides]`: run a save-first multi-step research loop and write a hub page plus step outputs
 - `swarmvault lint [--deep] [--web]`: run structural lint, optional LLM-powered deep lint, and optional web-augmented evidence gathering
 - `swarmvault watch --lint`: watch the inbox and run import/compile cycles on changes
 - `swarmvault mcp`: start a local MCP server over stdio
-- `swarmvault graph serve`: open the local graph viewer
+- `swarmvault review list|show|accept|reject`: inspect and resolve staged approval bundles
+- `swarmvault candidate list|promote|archive`: inspect and resolve staged concept and entity candidates
+- `swarmvault graph serve`: open the local graph workspace with graph, search, and page preview
+- `swarmvault graph export --html <output>`: export the graph workspace as a standalone HTML file
 - `swarmvault install --agent codex|claude|cursor`: install agent-specific rules
 
 Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
@@ -136,9 +146,13 @@ Human-authored insight pages placed in `wiki/insights/` are indexed into search 
 
 SwarmVault is designed so useful work compounds:
 
-- `query --save` writes output pages into `wiki/outputs/`
+- `query` writes output pages into `wiki/outputs/` by default
+- `query --no-save` keeps the answer ephemeral
 - saved outputs are indexed immediately into search and the graph page registry
-- later `compile` runs add `Related Outputs` sections back onto relevant source, concept, and entity pages
+- saved outputs immediately refresh related source, concept, and entity pages
+- new concept and entity pages land in `wiki/candidates/` first, then promote on the next matching compile
+- `review` turns `compile --approve` bundles into a local accept/reject workflow instead of a dead-end staging directory
+- `candidate` lets you promote or archive staged concept and entity pages without waiting for another compile
 - `explore` chains several saved queries together and writes a hub page you can revisit
 - `lint --deep` can suggest missing citations, coverage gaps, candidate pages, and follow-up questions without mutating the vault
 - compile, query, explore, lint, and watch each write a session artifact to `state/sessions/`

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import type { GraphPage, OutputOrigin, PageManager, PageStatus } from "./types.js";
+import type { GraphPage, OutputFormat, OutputOrigin, PageKind, PageManager, PageStatus } from "./types.js";
 import { fileExists, listFilesRecursive, sha256, slugify, toPosix } from "./utils.js";
 
 export interface StoredPage {
@@ -12,6 +12,10 @@ export interface StoredPage {
 
 export function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+export function normalizeProjectIds(value: unknown): string[] {
+  return normalizeStringArray(value);
 }
 
 export function normalizeSourceHashes(value: unknown): Record<string, string> {
@@ -30,6 +34,10 @@ export function normalizePageStatus(value: unknown, fallback: PageStatus = "acti
 
 export function normalizePageManager(value: unknown, fallback: PageManager = "system"): PageManager {
   return value === "human" || value === "system" ? value : fallback;
+}
+
+function normalizeOutputFormat(value: unknown, fallback: OutputFormat = "markdown"): OutputFormat {
+  return value === "report" || value === "slides" ? value : fallback;
 }
 
 function normalizeTimestamp(value: unknown, fallback: string): string {
@@ -79,6 +87,90 @@ export async function loadExistingManagedPageState(
   };
 }
 
+export function inferPageKind(relativePath: string, explicitKind: unknown = undefined): PageKind {
+  if (
+    explicitKind === "source" ||
+    explicitKind === "module" ||
+    explicitKind === "concept" ||
+    explicitKind === "entity" ||
+    explicitKind === "output" ||
+    explicitKind === "insight"
+  ) {
+    return explicitKind;
+  }
+
+  const normalized = relativePath.replace(/\\/g, "/");
+  if (normalized.startsWith("sources/")) {
+    return "source";
+  }
+  if (normalized.startsWith("code/")) {
+    return "module";
+  }
+  if (normalized.startsWith("concepts/") || normalized.startsWith("candidates/concepts/")) {
+    return "concept";
+  }
+  if (normalized.startsWith("entities/") || normalized.startsWith("candidates/entities/")) {
+    return "entity";
+  }
+  if (normalized.startsWith("outputs/")) {
+    return "output";
+  }
+  if (normalized.startsWith("insights/")) {
+    return "insight";
+  }
+  return "index";
+}
+
+export function parseStoredPage(
+  relativePath: string,
+  content: string,
+  defaults: {
+    createdAt?: string;
+    updatedAt?: string;
+  } = {}
+): GraphPage {
+  const parsed = matter(content);
+  const now = new Date().toISOString();
+  const fallbackCreatedAt = defaults.createdAt ?? now;
+  const fallbackUpdatedAt = defaults.updatedAt ?? fallbackCreatedAt;
+  const title = typeof parsed.data.title === "string" ? parsed.data.title : path.basename(relativePath, ".md");
+  const kind = inferPageKind(relativePath, parsed.data.kind);
+  const sourceIds = normalizeStringArray(parsed.data.source_ids);
+  const projectIds = normalizeProjectIds(parsed.data.project_ids);
+  const nodeIds = normalizeStringArray(parsed.data.node_ids);
+  const relatedPageIds = normalizeStringArray(parsed.data.related_page_ids);
+  const relatedNodeIds = normalizeStringArray(parsed.data.related_node_ids);
+  const relatedSourceIds = normalizeStringArray(parsed.data.related_source_ids);
+  const backlinks = normalizeStringArray(parsed.data.backlinks);
+  const compiledFrom = normalizeStringArray(parsed.data.compiled_from);
+
+  return {
+    id: typeof parsed.data.page_id === "string" ? parsed.data.page_id : `${kind}:${slugify(relativePath.replace(/\.md$/, ""))}`,
+    path: relativePath,
+    title,
+    kind,
+    sourceIds,
+    projectIds,
+    nodeIds,
+    freshness: parsed.data.freshness === "stale" ? "stale" : "fresh",
+    status: normalizePageStatus(parsed.data.status, kind === "insight" ? "active" : "active"),
+    confidence: typeof parsed.data.confidence === "number" ? parsed.data.confidence : kind === "output" ? 0.74 : 1,
+    backlinks,
+    schemaHash: typeof parsed.data.schema_hash === "string" ? parsed.data.schema_hash : "",
+    sourceHashes: normalizeSourceHashes(parsed.data.source_hashes),
+    relatedPageIds,
+    relatedNodeIds,
+    relatedSourceIds,
+    createdAt: normalizeTimestamp(parsed.data.created_at, fallbackCreatedAt),
+    updatedAt: normalizeTimestamp(parsed.data.updated_at, fallbackUpdatedAt),
+    compiledFrom: compiledFrom.length ? compiledFrom : sourceIds,
+    managedBy: normalizePageManager(parsed.data.managed_by, kind === "insight" ? "human" : "system"),
+    origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
+    question: typeof parsed.data.question === "string" ? parsed.data.question : undefined,
+    outputFormat: kind === "output" ? normalizeOutputFormat(parsed.data.output_format) : undefined
+  };
+}
+
 export async function loadInsightPages(wikiDir: string): Promise<StoredPage[]> {
   const insightsDir = path.join(wikiDir, "insights");
   if (!(await fileExists(insightsDir))) {
@@ -98,6 +190,7 @@ export async function loadInsightPages(wikiDir: string): Promise<StoredPage[]> {
     const stats = await fs.stat(absolutePath);
     const title = typeof parsed.data.title === "string" ? parsed.data.title : path.basename(absolutePath, ".md");
     const sourceIds = normalizeStringArray(parsed.data.source_ids);
+    const projectIds = normalizeProjectIds(parsed.data.project_ids);
     const nodeIds = normalizeStringArray(parsed.data.node_ids);
     const relatedPageIds = normalizeStringArray(parsed.data.related_page_ids);
     const relatedNodeIds = normalizeStringArray(parsed.data.related_node_ids);
@@ -115,6 +208,7 @@ export async function loadInsightPages(wikiDir: string): Promise<StoredPage[]> {
         title,
         kind: "insight",
         sourceIds,
+        projectIds,
         nodeIds,
         freshness: parsed.data.freshness === "stale" ? "stale" : "fresh",
         status: normalizePageStatus(parsed.data.status, "active"),

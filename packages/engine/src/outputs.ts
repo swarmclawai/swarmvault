@@ -1,8 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import { normalizePageManager, normalizePageStatus, normalizeSourceHashes, normalizeStringArray, type StoredPage } from "./pages.js";
-import type { GraphPage, OutputOrigin } from "./types.js";
+import {
+  normalizePageManager,
+  normalizePageStatus,
+  normalizeProjectIds,
+  normalizeSourceHashes,
+  normalizeStringArray,
+  type StoredPage
+} from "./pages.js";
+import type { GraphPage, OutputFormat, OutputOrigin } from "./types.js";
 import { fileExists, sha256 } from "./utils.js";
 
 function relationRank(outputPage: GraphPage, targetPage: GraphPage): number {
@@ -61,6 +68,7 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredPage[
     const title = typeof parsed.data.title === "string" ? parsed.data.title : slug;
     const pageId = typeof parsed.data.page_id === "string" ? parsed.data.page_id : `output:${slug}`;
     const sourceIds = normalizeStringArray(parsed.data.source_ids);
+    const projectIds = normalizeProjectIds(parsed.data.project_ids);
     const nodeIds = normalizeStringArray(parsed.data.node_ids);
     const relatedPageIds = normalizeStringArray(parsed.data.related_page_ids);
     const relatedNodeIds = normalizeStringArray(parsed.data.related_node_ids);
@@ -83,6 +91,7 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredPage[
         title,
         kind: "output",
         sourceIds,
+        projectIds,
         nodeIds,
         freshness: parsed.data.freshness === "stale" ? "stale" : "fresh",
         status: normalizePageStatus(parsed.data.status, "active"),
@@ -98,7 +107,11 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredPage[
         compiledFrom: compiledFrom.length ? compiledFrom : relatedSourceIds,
         managedBy: normalizePageManager(parsed.data.managed_by, "system"),
         origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
-        question: typeof parsed.data.question === "string" ? parsed.data.question : undefined
+        question: typeof parsed.data.question === "string" ? parsed.data.question : undefined,
+        outputFormat:
+          parsed.data.output_format === "report" || parsed.data.output_format === "slides"
+            ? (parsed.data.output_format as OutputFormat)
+            : "markdown"
       },
       content,
       contentHash: sha256(content)

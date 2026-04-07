@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe("incremental compilation", () => {
-  it("returns zero changed pages on second compile with no changes", async () => {
+  it("returns zero changed pages once the candidate promotion pass has completed", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
     await fs.writeFile(path.join(rootDir, "note.md"), "# Test\n\nSome content about knowledge graphs and compilation.", "utf8");
@@ -28,7 +28,10 @@ describe("incremental compilation", () => {
     expect(first.changedPages.length).toBeGreaterThan(0);
 
     const second = await compileVault(rootDir);
-    expect(second.changedPages).toHaveLength(0);
+    expect(second.changedPages.length).toBeGreaterThan(0);
+
+    const third = await compileVault(rootDir);
+    expect(third.changedPages).toHaveLength(0);
   });
 
   it("writes sourceHashes to compile-state.json", async () => {
@@ -40,7 +43,8 @@ describe("incremental compilation", () => {
 
     const state = JSON.parse(await fs.readFile(path.join(rootDir, "state", "compile-state.json"), "utf8")) as CompileState;
     expect(Object.keys(state.sourceHashes).length).toBe(1);
-    expect(state.schemaHash).toBeTruthy();
+    expect(state.rootSchemaHash).toBeTruthy();
+    expect(state.effectiveSchemaHashes.global).toBeTruthy();
   });
 });
 
@@ -56,7 +60,7 @@ describe("raw-source grounding in queries", () => {
     await ingestInput(rootDir, "raw-test.md");
     await compileVault(rootDir);
 
-    const result = await queryVault(rootDir, "What is the raw content?");
+    const result = await queryVault(rootDir, { question: "What is the raw content?", save: false });
     expect(result.answer).toContain("Raw source");
   });
 });

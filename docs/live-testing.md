@@ -38,7 +38,7 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.5 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.6 --keep-artifacts
 ```
 
 ## What The Smoke Runner Covers
@@ -49,7 +49,7 @@ node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.5 --keep-artifacts
 - initialize a fresh workspace
 - ingest and compile a markdown fixture
 - import an inbox markdown bundle with a linked local asset
-- run `query --save`
+- run `query`
 - run `explore`
 - run `lint` and `lint --deep`
 - start `graph serve` and verify HTML plus `/api/graph`
@@ -62,7 +62,7 @@ node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.5 --keep-artifacts
 - initialize a fresh workspace
 - write a temporary OpenAI-backed config override
 - ingest and compile a markdown fixture
-- run `query --save`
+- run `query`
 - run `lint --deep`
 
 The OpenAI lane is intentionally narrower. It is there to validate one real external-provider path without making every live test expensive.
@@ -74,7 +74,7 @@ The OpenAI lane is intentionally narrower. It is there to validate one real exte
 - write a temporary Ollama-backed config override
 - use the OpenAI-compatible `v1` chat surface against Ollama Cloud
 - ingest and compile a markdown fixture
-- run `query --save`
+- run `query`
 - run `lint --deep`
 
 The default cloud model is `gpt-oss:20b-cloud`, and the runner defaults to `SWARMVAULT_OLLAMA_API_STYLE=chat`. You can override both values explicitly.

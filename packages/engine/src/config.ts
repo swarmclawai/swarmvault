@@ -12,10 +12,9 @@ import {
 import { ensureDir, fileExists, readJsonFile, writeJsonFile } from "./utils.js";
 
 const PRIMARY_CONFIG_FILENAME = "swarmvault.config.json";
-const LEGACY_CONFIG_FILENAME = "vault.config.json";
 export const PRIMARY_SCHEMA_FILENAME = "swarmvault.schema.md";
-export const LEGACY_SCHEMA_FILENAME = "schema.md";
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const viewerDistDir = path.basename(moduleDir) === "src" ? path.resolve(moduleDir, "../../viewer/dist") : path.resolve(moduleDir, "viewer");
 
 const providerConfigSchema = z.object({
   type: providerTypeSchema,
@@ -63,6 +62,15 @@ const vaultConfigSchema = z.object({
   viewer: z.object({
     port: z.number().int().positive()
   }),
+  projects: z
+    .record(
+      z.string(),
+      z.object({
+        roots: z.array(z.string().min(1)).min(1),
+        schemaPath: z.string().min(1).optional()
+      })
+    )
+    .optional(),
   agents: z.array(z.enum(["codex", "claude", "cursor"])).default(["codex", "claude", "cursor"]),
   webSearch: z
     .object({
@@ -99,6 +107,7 @@ export function defaultVaultConfig(): VaultConfig {
     viewer: {
       port: 4123
     },
+    projects: {},
     agents: ["codex", "claude", "cursor"]
   };
 }
@@ -152,29 +161,11 @@ export function defaultVaultSchema(): string {
 
 async function findConfigPath(rootDir: string): Promise<string> {
   const primaryPath = path.join(rootDir, PRIMARY_CONFIG_FILENAME);
-  if (await fileExists(primaryPath)) {
-    return primaryPath;
-  }
-
-  const legacyPath = path.join(rootDir, LEGACY_CONFIG_FILENAME);
-  if (await fileExists(legacyPath)) {
-    return legacyPath;
-  }
-
   return primaryPath;
 }
 
 async function findSchemaPath(rootDir: string): Promise<string> {
   const primaryPath = path.join(rootDir, PRIMARY_SCHEMA_FILENAME);
-  if (await fileExists(primaryPath)) {
-    return primaryPath;
-  }
-
-  const legacyPath = path.join(rootDir, LEGACY_SCHEMA_FILENAME);
-  if (await fileExists(legacyPath)) {
-    return legacyPath;
-  }
-
   return primaryPath;
 }
 
@@ -189,6 +180,8 @@ export function resolvePaths(
   const rawSourcesDir = path.join(rawDir, "sources");
   const rawAssetsDir = path.join(rawDir, "assets");
   const wikiDir = path.resolve(rootDir, effective.workspace.wikiDir);
+  const projectsDir = path.join(wikiDir, "projects");
+  const candidatesDir = path.join(wikiDir, "candidates");
   const stateDir = path.resolve(rootDir, effective.workspace.stateDir);
   const agentDir = path.resolve(rootDir, effective.workspace.agentDir);
   const inboxDir = path.resolve(rootDir, effective.workspace.inboxDir);
@@ -200,18 +193,23 @@ export function resolvePaths(
     rawSourcesDir,
     rawAssetsDir,
     wikiDir,
+    projectsDir,
+    candidatesDir,
+    candidateConceptsDir: path.join(candidatesDir, "concepts"),
+    candidateEntitiesDir: path.join(candidatesDir, "entities"),
     stateDir,
     agentDir,
     inboxDir,
     manifestsDir: path.join(stateDir, "manifests"),
     extractsDir: path.join(stateDir, "extracts"),
     analysesDir: path.join(stateDir, "analyses"),
-    viewerDistDir: path.resolve(moduleDir, "viewer"),
+    viewerDistDir,
     graphPath: path.join(stateDir, "graph.json"),
     searchDbPath: path.join(stateDir, "search.sqlite"),
     compileStatePath: path.join(stateDir, "compile-state.json"),
     jobsLogPath: path.join(stateDir, "jobs.ndjson"),
     sessionsDir: path.join(stateDir, "sessions"),
+    approvalsDir: path.join(stateDir, "approvals"),
     configPath
   };
 }
@@ -233,13 +231,17 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
   const config = (await fileExists(configPath)) ? (await loadVaultConfig(rootDir)).config : defaultVaultConfig();
   const paths = resolvePaths(rootDir, config, configPath, schemaPath);
   const primarySchemaPath = path.join(rootDir, PRIMARY_SCHEMA_FILENAME);
-  const legacySchemaPath = path.join(rootDir, LEGACY_SCHEMA_FILENAME);
 
   await Promise.all([
     ensureDir(paths.rawDir),
     ensureDir(paths.wikiDir),
+    ensureDir(paths.projectsDir),
+    ensureDir(paths.candidatesDir),
+    ensureDir(paths.candidateConceptsDir),
+    ensureDir(paths.candidateEntitiesDir),
     ensureDir(paths.stateDir),
     ensureDir(paths.sessionsDir),
+    ensureDir(paths.approvalsDir),
     ensureDir(paths.agentDir),
     ensureDir(paths.inboxDir),
     ensureDir(paths.manifestsDir),
@@ -253,7 +255,7 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
     await writeJsonFile(configPath, config);
   }
 
-  if (!(await fileExists(primarySchemaPath)) && !(await fileExists(legacySchemaPath))) {
+  if (!(await fileExists(primarySchemaPath))) {
     await ensureDir(path.dirname(primarySchemaPath));
     await fs.writeFile(primarySchemaPath, defaultVaultSchema(), "utf8");
   }

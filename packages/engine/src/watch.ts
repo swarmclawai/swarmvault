@@ -25,6 +25,8 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
 
   const watcher = chokidar.watch(paths.inboxDir, {
     ignoreInitial: true,
+    usePolling: true,
+    interval: 100,
     awaitWriteFinish: {
       stabilityThreshold: Math.max(250, Math.floor(baseDebounceMs / 2)),
       pollInterval: 100

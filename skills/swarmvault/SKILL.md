@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: Operate SwarmVault knowledge bases from the CLI: initialize vaults, shape swarmvault.schema.md, ingest sources, compile/query/lint/watch, and expose the vault over MCP when agents need durable markdown, graph, and search artifacts on disk.
-version: 0.1.4
+version: 0.1.6
 metadata:
   openclaw:
     requires:
@@ -34,11 +34,13 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 2. Update `swarmvault.schema.md` before a serious compile. Use it for naming rules, categories, grounding, freshness expectations, and exclusions.
 3. Ingest one-off inputs with `swarmvault ingest <path-or-url>`.
 4. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint` when the workflow should stay automated.
-5. Compile with `swarmvault compile`.
-6. Ask questions with `swarmvault query "<question>"`. Add `--save` only when the answer should become a durable page in `wiki/outputs/`.
-7. Run `swarmvault lint` whenever the schema changed, artifacts look stale, or compile/query results drift.
-8. Use `swarmvault mcp` when another agent or tool should browse, search, and query the vault through MCP.
-9. Use `swarmvault graph serve` when visual graph inspection will help.
+5. Compile with `swarmvault compile`, or use `swarmvault compile --approve` when changes should go through the local review queue first.
+6. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
+7. Ask questions with `swarmvault query "<question>"`. It saves durable answers into `wiki/outputs/` by default; add `--no-save` only for ephemeral checks.
+8. Use `swarmvault explore "<question>" --steps <n>` for save-first multi-step research loops, or `--format report|slides` when the artifact should be presentation-oriented.
+9. Run `swarmvault lint` whenever the schema changed, artifacts look stale, or compile/query results drift.
+10. Use `swarmvault mcp` when another agent or tool should browse, search, and query the vault through MCP.
+11. Use `swarmvault graph serve` or `swarmvault graph export --html <output>` when graph inspection or sharing will help.
 
 ## Working rules
 
@@ -54,8 +56,13 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 - `swarmvault.schema.md`: vault-specific compile and query rules.
 - `raw/sources/` and `raw/assets/`: canonical source storage.
 - `wiki/`: generated pages plus saved outputs.
+- `wiki/code/`: module pages for ingested JS/TS sources.
+- `wiki/projects/`: project rollups over canonical pages.
+- `wiki/candidates/`: staged concept and entity pages awaiting promotion.
 - `state/graph.json`: compiled graph.
 - `state/search.sqlite`: local search index.
+- `state/approvals/`: staged review bundles from `compile --approve`.
+- `state/sessions/`: canonical session artifacts for compile, query, explore, lint, watch, review, and candidate actions.
 - `state/jobs.ndjson`: watch-mode run log.
 
 ## Agent integration

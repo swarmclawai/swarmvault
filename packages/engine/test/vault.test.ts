@@ -46,6 +46,16 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, ".cursor", "rules", "swarmvault.mdc"))).resolves.toBeUndefined();
   });
 
+  it("can initialize an obsidian workspace layout", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir, { obsidian: true });
+
+    await expect(fs.access(path.join(rootDir, ".obsidian", "app.json"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, ".obsidian", "core-plugins.json"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, ".obsidian", "graph.json"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, ".obsidian", "workspace.json"))).resolves.toBeUndefined();
+  });
+
   it("ingests, compiles, queries, and lints using the heuristic provider", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -79,9 +89,10 @@ describe("swarmvault workflow", () => {
     const reparsedSourcePage = matter(await fs.readFile(sourcePagePath, "utf8"));
     expect(reparsedSourcePage.data.created_at).toBe(parsedSourcePage.data.created_at);
 
-    const query = await queryVault(rootDir, "What does SwarmVault optimize for?", true);
+    const query = await queryVault(rootDir, { question: "What does SwarmVault optimize for?" });
     expect(query.answer).toContain("Question:");
-    expect(query.savedTo).toBeTruthy();
+    expect(query.savedPath).toBeTruthy();
+    expect(query.saved).toBe(true);
 
     const findings = await lintVault(rootDir);
     expect(findings.some((finding) => finding.code === "graph_missing")).toBe(false);
@@ -213,13 +224,13 @@ describe("swarmvault workflow", () => {
     const sourcePage = await fs.readFile(path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`), "utf8");
     expect(sourcePage).toContain("schema_hash:");
 
-    const query = await queryVault(rootDir, "How should this vault behave?", true);
-    expect(query.savedTo).toBeTruthy();
+    const query = await queryVault(rootDir, { question: "How should this vault behave?" });
+    expect(query.savedPath).toBeTruthy();
 
     const textLog = await fs.readFile(path.join(rootDir, "state", "provider-text.ndjson"), "utf8");
     expect(textLog).toContain(schemaMarker);
 
-    const savedOutput = await fs.readFile(query.savedTo as string, "utf8");
+    const savedOutput = await fs.readFile(query.savedPath as string, "utf8");
     expect(savedOutput).toContain("schema_hash:");
 
     await fs.writeFile(

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
+import { analyzeCodeSource } from "./code-analysis.js";
 import type { VaultSchema } from "./schema.js";
 import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
@@ -215,7 +216,9 @@ export async function analyzeSource(
   const content = normalizeWhitespace(extractedText ?? "");
   let analysis: SourceAnalysis;
 
-  if (!content) {
+  if (manifest.sourceKind === "code" && content) {
+    analysis = analyzeCodeSource(manifest, extractedText ?? "", schema.hash);
+  } else if (!content) {
     analysis = {
       sourceId: manifest.sourceId,
       sourceHash: manifest.contentHash,

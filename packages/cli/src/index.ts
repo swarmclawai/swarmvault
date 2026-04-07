@@ -1,27 +1,35 @@
 #!/usr/bin/env node
 import process from "node:process";
 import {
+  acceptApproval,
+  archiveCandidate,
   compileVault,
   exploreVault,
+  exportGraphHtml,
   importInbox,
   ingestInput,
   initVault,
   installAgent,
   lintVault,
+  listApprovals,
+  listCandidates,
   loadVaultConfig,
+  promoteCandidate,
   queryVault,
+  readApproval,
+  rejectApproval,
   startGraphServer,
   startMcpServer,
   watchVault
 } from "@swarmvaultai/engine";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 const program = new Command();
 
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.5")
+  .version("0.1.6")
   .option("--json", "Emit structured JSON output", false);
 
 function isJson(): boolean {
@@ -43,10 +51,11 @@ function log(message: string): void {
 program
   .command("init")
   .description("Initialize a SwarmVault workspace in the current directory.")
-  .action(async () => {
-    await initVault(process.cwd());
+  .option("--obsidian", "Generate a minimal .obsidian workspace alongside the vault", false)
+  .action(async (options: { obsidian?: boolean }) => {
+    await initVault(process.cwd(), { obsidian: options.obsidian ?? false });
     if (isJson()) {
-      emitJson({ status: "initialized", rootDir: process.cwd() });
+      emitJson({ status: "initialized", rootDir: process.cwd(), obsidian: options.obsidian ?? false });
     } else {
       log("Initialized SwarmVault workspace.");
     }
@@ -84,12 +93,17 @@ inbox
 program
   .command("compile")
   .description("Compile manifests into wiki pages, graph JSON, and search index.")
-  .action(async () => {
-    const result = await compileVault(process.cwd());
+  .option("--approve", "Stage a review bundle without applying active page changes", false)
+  .action(async (options: { approve?: boolean }) => {
+    const result = await compileVault(process.cwd(), { approve: options.approve ?? false });
     if (isJson()) {
       emitJson(result);
     } else {
-      log(`Compiled ${result.sourceCount} source(s), ${result.pageCount} page(s). Changed: ${result.changedPages.length}.`);
+      if (result.staged) {
+        log(`Staged ${result.changedPages.length} change(s) for review at ${result.approvalDir}.`);
+      } else {
+        log(`Compiled ${result.sourceCount} source(s), ${result.pageCount} page(s). Changed: ${result.changedPages.length}.`);
+      }
     }
   });
 
@@ -97,15 +111,20 @@ program
   .command("query")
   .description("Query the compiled SwarmVault wiki.")
   .argument("<question>", "Question to ask SwarmVault")
-  .option("--save", "Persist the answer to wiki/outputs", false)
-  .action(async (question: string, options: { save?: boolean }) => {
-    const result = await queryVault(process.cwd(), question, options.save ?? false);
+  .option("--no-save", "Do not persist the answer to wiki/outputs")
+  .addOption(new Option("--format <format>", "Output format").choices(["markdown", "report", "slides"]).default("markdown"))
+  .action(async (question: string, options: { save?: boolean; format?: "markdown" | "report" | "slides" }) => {
+    const result = await queryVault(process.cwd(), {
+      question,
+      save: options.save ?? true,
+      format: options.format
+    });
     if (isJson()) {
       emitJson(result);
     } else {
       log(result.answer);
-      if (result.savedTo) {
-        log(`Saved to ${result.savedTo}`);
+      if (result.savedPath) {
+        log(`Saved to ${result.savedPath}`);
       }
     }
   });
@@ -115,9 +134,14 @@ program
   .description("Run a save-first multi-step exploration loop against the vault.")
   .argument("<question>", "Root question to explore")
   .option("--steps <n>", "Maximum number of exploration steps", "3")
-  .action(async (question: string, options: { steps?: string }) => {
+  .addOption(new Option("--format <format>", "Output format for step pages").choices(["markdown", "report", "slides"]).default("markdown"))
+  .action(async (question: string, options: { steps?: string; format?: "markdown" | "report" | "slides" }) => {
     const stepCount = Number.parseInt(options.steps ?? "3", 10);
-    const result = await exploreVault(process.cwd(), question, Number.isFinite(stepCount) ? stepCount : 3);
+    const result = await exploreVault(process.cwd(), {
+      question,
+      steps: Number.isFinite(stepCount) ? stepCount : 3,
+      format: options.format
+    });
     if (isJson()) {
       emitJson(result);
     } else {
@@ -166,6 +190,129 @@ graph
       await server.close();
       process.exit(0);
     });
+  });
+
+graph
+  .command("export")
+  .description("Export the graph viewer as a single self-contained HTML file.")
+  .requiredOption("--html <output>", "Output HTML file path")
+  .action(async (options: { html: string }) => {
+    const outputPath = await exportGraphHtml(process.cwd(), options.html);
+    if (isJson()) {
+      emitJson({ outputPath });
+    } else {
+      log(`Exported graph HTML to ${outputPath}`);
+    }
+  });
+
+const review = program.command("review").description("Review staged compile approval bundles.");
+review
+  .command("list")
+  .description("List staged approval bundles and their resolution status.")
+  .action(async () => {
+    const approvals = await listApprovals(process.cwd());
+    if (isJson()) {
+      emitJson(approvals);
+      return;
+    }
+    if (!approvals.length) {
+      log("No approval bundles.");
+      return;
+    }
+    for (const approval of approvals) {
+      log(
+        `${approval.approvalId} pending=${approval.pendingCount} accepted=${approval.acceptedCount} rejected=${approval.rejectedCount} created=${approval.createdAt}`
+      );
+    }
+  });
+
+review
+  .command("show")
+  .description("Show the entries inside a staged approval bundle.")
+  .argument("<approvalId>", "Approval bundle identifier")
+  .action(async (approvalId: string) => {
+    const approval = await readApproval(process.cwd(), approvalId);
+    if (isJson()) {
+      emitJson(approval);
+      return;
+    }
+    log(`${approval.approvalId} pending=${approval.pendingCount} accepted=${approval.acceptedCount} rejected=${approval.rejectedCount}`);
+    for (const entry of approval.entries) {
+      log(`- ${entry.status} ${entry.changeType} ${entry.pageId} ${entry.nextPath ?? entry.previousPath ?? ""}`.trim());
+    }
+  });
+
+review
+  .command("accept")
+  .description("Accept all pending entries, or selected entries, from a staged approval bundle.")
+  .argument("<approvalId>", "Approval bundle identifier")
+  .argument("[targets...]", "Optional page ids or paths to accept")
+  .action(async (approvalId: string, targets: string[]) => {
+    const result = await acceptApproval(process.cwd(), approvalId, targets);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Accepted ${result.updatedEntries.length} entr${result.updatedEntries.length === 1 ? "y" : "ies"} from ${approvalId}.`);
+    }
+  });
+
+review
+  .command("reject")
+  .description("Reject all pending entries, or selected entries, from a staged approval bundle.")
+  .argument("<approvalId>", "Approval bundle identifier")
+  .argument("[targets...]", "Optional page ids or paths to reject")
+  .action(async (approvalId: string, targets: string[]) => {
+    const result = await rejectApproval(process.cwd(), approvalId, targets);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Rejected ${result.updatedEntries.length} entr${result.updatedEntries.length === 1 ? "y" : "ies"} from ${approvalId}.`);
+    }
+  });
+
+const candidate = program.command("candidate").description("Candidate page workflows.");
+candidate
+  .command("list")
+  .description("List staged concept and entity candidates.")
+  .action(async () => {
+    const candidates = await listCandidates(process.cwd());
+    if (isJson()) {
+      emitJson(candidates);
+      return;
+    }
+    if (!candidates.length) {
+      log("No candidates.");
+      return;
+    }
+    for (const entry of candidates) {
+      log(`${entry.pageId} ${entry.path} -> ${entry.activePath}`);
+    }
+  });
+
+candidate
+  .command("promote")
+  .description("Promote a candidate into its active concept or entity path.")
+  .argument("<target>", "Candidate page id or path")
+  .action(async (target: string) => {
+    const result = await promoteCandidate(process.cwd(), target);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Promoted ${result.pageId} to ${result.path}`);
+    }
+  });
+
+candidate
+  .command("archive")
+  .description("Archive a candidate by removing it from the active candidate set.")
+  .argument("<target>", "Candidate page id or path")
+  .action(async (target: string) => {
+    const result = await archiveCandidate(process.cwd(), target);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Archived ${result.pageId}`);
+    }
   });
 
 program

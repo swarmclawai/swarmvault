@@ -1,25 +1,149 @@
 import cytoscape, { type Core } from "cytoscape";
-import { useEffect, useRef, useState } from "react";
-import { fetchGraphArtifact, type ViewerGraphArtifact, type ViewerGraphNode } from "./lib";
+import { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
+import {
+  applyCandidateAction,
+  applyReviewAction,
+  fetchApprovalDetail,
+  fetchApprovals,
+  fetchCandidates,
+  fetchGraphArtifact,
+  fetchViewerPage,
+  searchViewerPages,
+  type ViewerApprovalDetail,
+  type ViewerApprovalSummary,
+  type ViewerCandidateRecord,
+  type ViewerGraphArtifact,
+  type ViewerGraphNode,
+  type ViewerPagePayload,
+  type ViewerSearchResult
+} from "./lib";
 
 const COLORS: Record<string, string> = {
   source: "#f59e0b",
+  module: "#fb7185",
+  symbol: "#8b5cf6",
   concept: "#0ea5e9",
   entity: "#22c55e"
 };
+
+function snippetFromContent(content: string): string {
+  return content.replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function emptyGraph(): ViewerGraphArtifact {
+  return { generatedAt: "", nodes: [], edges: [], communities: [], pages: [] };
+}
 
 export function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const [graph, setGraph] = useState<ViewerGraphArtifact | null>(null);
   const [selected, setSelected] = useState<ViewerGraphNode | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [edgeStatusFilter, setEdgeStatusFilter] = useState<string>("all");
+  const [kindFilter, setKindFilter] = useState<string>("all");
+  const [pageStatusFilter, setPageStatusFilter] = useState<string>("all");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<ViewerSearchResult[]>([]);
+  const [activePage, setActivePage] = useState<ViewerPagePayload | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [approvals, setApprovals] = useState<ViewerApprovalSummary[]>([]);
+  const [approvalDetail, setApprovalDetail] = useState<ViewerApprovalDetail | null>(null);
+  const [selectedApprovalId, setSelectedApprovalId] = useState<string>("");
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<ViewerCandidateRecord[]>([]);
+  const [candidateError, setCandidateError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<string>("");
+  const deferredQuery = useDeferredValue(query);
+  const currentGraphPage =
+    activePage && graph
+      ? (graph.pages?.find(
+          (page) =>
+            page.path === activePage.path ||
+            page.id === (typeof activePage.frontmatter.page_id === "string" ? activePage.frontmatter.page_id : "")
+        ) ?? null)
+      : null;
+  const projectOptions = uniqueStrings(graph?.pages?.flatMap((page) => page.projectIds ?? []) ?? []).sort((left, right) =>
+    left.localeCompare(right)
+  );
+  const backlinkPages = currentGraphPage
+    ? uniqueStrings(currentGraphPage.backlinks)
+        .map((pageId) => graph?.pages?.find((page) => page.id === pageId) ?? null)
+        .filter((page): page is NonNullable<typeof page> => Boolean(page))
+    : [];
+  const relatedPages = currentGraphPage
+    ? uniqueStrings(currentGraphPage.relatedPageIds)
+        .map((pageId) => graph?.pages?.find((page) => page.id === pageId) ?? null)
+        .filter((page): page is NonNullable<typeof page> => Boolean(page))
+    : [];
+
+  const refreshWorkspace = useCallback(async () => {
+    let nextApprovalError: string | null = null;
+    let nextCandidateError: string | null = null;
+    const [nextGraph, nextApprovals, nextCandidates] = await Promise.all([
+      fetchGraphArtifact().catch(() => emptyGraph()),
+      fetchApprovals().catch((error: unknown) => {
+        nextApprovalError = error instanceof Error ? error.message : String(error);
+        return [];
+      }),
+      fetchCandidates().catch((error: unknown) => {
+        nextCandidateError = error instanceof Error ? error.message : String(error);
+        return [];
+      })
+    ]);
+
+    startTransition(() => {
+      setGraph(nextGraph);
+      setApprovals(nextApprovals);
+      setCandidates(nextCandidates);
+      setApprovalError(nextApprovalError);
+      setCandidateError(nextCandidateError);
+    });
+  }, []);
 
   useEffect(() => {
-    void fetchGraphArtifact()
-      .then(setGraph)
-      .catch(() => setGraph({ generatedAt: "", nodes: [], edges: [] }));
-  }, []);
+    void refreshWorkspace();
+  }, [refreshWorkspace]);
+
+  useEffect(() => {
+    if (!approvals.length) {
+      setSelectedApprovalId("");
+      setApprovalDetail(null);
+      return;
+    }
+    if (!selectedApprovalId || !approvals.some((approval) => approval.approvalId === selectedApprovalId)) {
+      setSelectedApprovalId(approvals[0]?.approvalId ?? "");
+    }
+  }, [approvals, selectedApprovalId]);
+
+  useEffect(() => {
+    if (!selectedApprovalId) {
+      return;
+    }
+    let cancelled = false;
+    void fetchApprovalDetail(selectedApprovalId)
+      .then((detail) => {
+        if (!cancelled) {
+          setApprovalDetail(detail);
+          setApprovalError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setApprovalError(error instanceof Error ? error.message : String(error));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedApprovalId]);
 
   useEffect(() => {
     if (!containerRef.current || !graph) {
@@ -34,7 +158,7 @@ export function App() {
           data: { ...node, color: COLORS[node.type] ?? "#94a3b8" }
         })),
         ...graph.edges
-          .filter((edge) => statusFilter === "all" || edge.status === statusFilter)
+          .filter((edge) => edgeStatusFilter === "all" || edge.status === edgeStatusFilter)
           .map((edge) => ({
             data: edge
           }))
@@ -43,7 +167,7 @@ export function App() {
         name: "cose",
         animate: false,
         idealEdgeLength: 120,
-        nodeRepulsion: 8000
+        nodeRepulsion: 8_000
       },
       style: [
         {
@@ -56,6 +180,32 @@ export function App() {
             "text-outline-width": 2,
             "font-family": '"Avenir Next", "Segoe UI", sans-serif',
             "font-size": 11
+          }
+        },
+        {
+          selector: "node[?isGodNode]",
+          style: {
+            width: 56,
+            height: 56,
+            "border-width": 3,
+            "border-color": "#fef08a"
+          }
+        },
+        {
+          selector: 'node[type = "module"]',
+          style: {
+            shape: "round-rectangle",
+            width: 48,
+            height: 30
+          }
+        },
+        {
+          selector: 'node[type = "symbol"]',
+          style: {
+            shape: "diamond",
+            width: 28,
+            height: 28,
+            "font-size": 9
           }
         },
         {
@@ -90,27 +240,198 @@ export function App() {
 
     cyRef.current = cy;
     return () => cy.destroy();
-  }, [graph, statusFilter]);
+  }, [graph, edgeStatusFilter]);
+
+  useEffect(() => {
+    const normalizedQuery = deferredQuery.trim();
+    if (normalizedQuery.length < 2) {
+      setResults([]);
+      setSearchError(null);
+      return;
+    }
+
+    let cancelled = false;
+    void searchViewerPages(normalizedQuery, {
+      limit: 10,
+      kind: kindFilter,
+      status: pageStatusFilter,
+      project: projectFilter
+    })
+      .then((nextResults) => {
+        if (!cancelled) {
+          startTransition(() => {
+            setResults(nextResults);
+            setSearchError(null);
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setSearchError(error instanceof Error ? error.message : String(error));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deferredQuery, kindFilter, pageStatusFilter, projectFilter]);
+
+  useEffect(() => {
+    if (!selected?.pageId) {
+      return;
+    }
+    const page = graph?.pages?.find((candidate) => candidate.id === selected.pageId);
+    if (!page) {
+      return;
+    }
+
+    let cancelled = false;
+    void fetchViewerPage(page.path)
+      .then((payload) => {
+        if (!cancelled) {
+          setActivePage(payload);
+          setPageError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setPageError(error instanceof Error ? error.message : String(error));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [graph, selected]);
+
+  const openPagePath = async (pagePath: string, pageId?: string) => {
+    try {
+      const payload = await fetchViewerPage(pagePath);
+      setActivePage(payload);
+      setPageError(null);
+      if (graph && cyRef.current) {
+        const graphPage = graph.pages?.find((candidate) => candidate.path === pagePath || (pageId ? candidate.id === pageId : false));
+        const node =
+          (pageId ? graph.nodes.find((candidate) => candidate.pageId === pageId) : undefined) ??
+          graph.nodes.find((candidate) => graphPage?.nodeIds?.includes(candidate.id));
+        if (node) {
+          cyRef.current.elements().unselect();
+          cyRef.current.getElementById(node.id).select();
+          cyRef.current.center(cyRef.current.getElementById(node.id));
+        }
+      }
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const openResult = async (result: ViewerSearchResult) => {
+    await openPagePath(result.path, result.pageId);
+  };
+
+  const handleReviewAction = async (pageId: string, action: "accept" | "reject") => {
+    if (!selectedApprovalId) {
+      return;
+    }
+    setBusyAction(`${action}:${pageId}`);
+    setActionError(null);
+    try {
+      await applyReviewAction(selectedApprovalId, action, [pageId]);
+      await refreshWorkspace();
+      const detail = await fetchApprovalDetail(selectedApprovalId);
+      setApprovalDetail(detail);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const handleCandidateAction = async (target: string, action: "promote" | "archive", nextPath?: string) => {
+    setBusyAction(`${action}:${target}`);
+    setActionError(null);
+    try {
+      const result = await applyCandidateAction(target, action);
+      await refreshWorkspace();
+      if (action === "promote") {
+        await openPagePath(result.path, result.pageId);
+      } else if (nextPath) {
+        setActivePage(null);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyAction("");
+    }
+  };
 
   return (
     <main className="app-shell">
       <section className="app-header">
         <div>
           <p className="eyebrow">SwarmVault Viewer</p>
-          <h1>Knowledge graph with provenance-first structure</h1>
+          <h1>Search, review, and promote the vault locally.</h1>
           <p className="lede">
-            Sources, concepts, and entities stay visible as separate layers so the wiki does not collapse into a pile of summaries.
+            The graph, candidate queue, approval queue, and page previews stay in one local workspace instead of splitting review across
+            tools.
           </p>
         </div>
-        <label className="filter">
-          Edge status
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="all">All</option>
-            <option value="extracted">Extracted</option>
-            <option value="conflicted">Conflicted</option>
-            <option value="inferred">Inferred</option>
-          </select>
-        </label>
+        <div className="header-controls">
+          <label className="filter">
+            Edge status
+            <select value={edgeStatusFilter} onChange={(event) => setEdgeStatusFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="extracted">Extracted</option>
+              <option value="conflicted">Conflicted</option>
+              <option value="inferred">Inferred</option>
+              <option value="stale">Stale</option>
+            </select>
+          </label>
+          <label className="filter">
+            Page kind
+            <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="source">Source</option>
+              <option value="module">Module</option>
+              <option value="concept">Concept</option>
+              <option value="entity">Entity</option>
+              <option value="output">Output</option>
+              <option value="insight">Insight</option>
+              <option value="index">Index</option>
+            </select>
+          </label>
+          <label className="filter">
+            Page status
+            <select value={pageStatusFilter} onChange={(event) => setPageStatusFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="candidate">Candidate</option>
+              <option value="draft">Draft</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+          <label className="filter">
+            Project
+            <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="unassigned">Unassigned</option>
+              {projectOptions.map((projectId) => (
+                <option key={projectId} value={projectId}>
+                  {projectId}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter search">
+            Search pages
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search wiki pages, outputs, and candidates"
+            />
+          </label>
+        </div>
       </section>
 
       <section className="stats">
@@ -123,27 +444,225 @@ export function App() {
           <strong>{graph?.nodes.length ?? 0}</strong>
         </article>
         <article>
-          <span>Edges</span>
-          <strong>{graph?.edges.length ?? 0}</strong>
+          <span>Approvals</span>
+          <strong>{approvals.reduce((total, approval) => total + approval.pendingCount, 0)}</strong>
+        </article>
+        <article>
+          <span>Candidates</span>
+          <strong>{candidates.length}</strong>
         </article>
       </section>
 
       <section className="workspace">
         <div className="canvas" ref={containerRef} />
-        <aside className="panel">
-          <h2>Selection</h2>
-          {selected ? (
-            <>
-              <p className="panel-label">{selected.type}</p>
-              <h3>{selected.label}</h3>
-              <p>
-                Node ID: <code>{selected.id}</code>
-              </p>
-              <p>Sources: {selected.sourceIds.join(", ") || "None"}</p>
-            </>
-          ) : (
-            <p>Select a node to inspect its details.</p>
-          )}
+        <aside className="rail">
+          <section className="panel">
+            <h2>Search Results</h2>
+            {searchError ? <p>{searchError}</p> : null}
+            {results.length ? (
+              <div className="results">
+                {results.map((result) => (
+                  <button
+                    key={`${result.pageId}:${result.path}`}
+                    type="button"
+                    className="result-card"
+                    onClick={() => void openResult(result)}
+                  >
+                    <span className="panel-label">
+                      {result.kind ?? "page"} / {result.status ?? "active"}
+                    </span>
+                    <strong>{result.title}</strong>
+                    <p>{result.projectIds.length ? result.projectIds.join(", ") : "global / unassigned"}</p>
+                    <p>{result.snippet}</p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p>{query.trim().length >= 2 ? "No pages matched this query." : "Search the wiki, outputs, or candidate pages."}</p>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Approval Queue</h2>
+            {approvalError ? <p>{approvalError}</p> : null}
+            {actionError ? <p>{actionError}</p> : null}
+            {approvals.length ? (
+              <div className="results">
+                {approvals.map((approval) => (
+                  <button
+                    key={approval.approvalId}
+                    type="button"
+                    className={`result-card ${selectedApprovalId === approval.approvalId ? "is-active" : ""}`}
+                    onClick={() => setSelectedApprovalId(approval.approvalId)}
+                  >
+                    <span className="panel-label">pending {approval.pendingCount}</span>
+                    <strong>{approval.approvalId}</strong>
+                    <p>
+                      accepted {approval.acceptedCount} / rejected {approval.rejectedCount}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p>No staged approval bundles.</p>
+            )}
+            {approvalDetail?.entries.length ? (
+              <div className="review-list">
+                {approvalDetail.entries.map((entry) => (
+                  <article key={`${entry.pageId}:${entry.nextPath ?? entry.previousPath ?? entry.changeType}`} className="review-card">
+                    <span className="panel-label">
+                      {entry.status} / {entry.changeType}
+                    </span>
+                    <strong>{entry.title}</strong>
+                    <p>{entry.nextPath ?? entry.previousPath}</p>
+                    {entry.stagedContent ? (
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => void openPagePath(entry.nextPath ?? entry.previousPath ?? "", entry.pageId)}
+                      >
+                        Open page
+                      </button>
+                    ) : null}
+                    {entry.status === "pending" ? (
+                      <div className="action-row">
+                        <button
+                          type="button"
+                          className="action-button"
+                          disabled={busyAction === `accept:${entry.pageId}`}
+                          onClick={() => void handleReviewAction(entry.pageId, "accept")}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          className="action-button danger"
+                          disabled={busyAction === `reject:${entry.pageId}`}
+                          onClick={() => void handleReviewAction(entry.pageId, "reject")}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <p>{entry.currentContent ? snippetFromContent(entry.currentContent) : "No current content on disk."}</p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="panel">
+            <h2>Candidate Queue</h2>
+            {candidateError ? <p>{candidateError}</p> : null}
+            {candidates.length ? (
+              <div className="review-list">
+                {candidates.map((candidate) => (
+                  <article key={candidate.pageId} className="review-card">
+                    <span className="panel-label">{candidate.kind}</span>
+                    <strong>{candidate.title}</strong>
+                    <p>{candidate.path}</p>
+                    <button type="button" className="link-button" onClick={() => void openPagePath(candidate.path, candidate.pageId)}>
+                      Open candidate
+                    </button>
+                    <div className="action-row">
+                      <button
+                        type="button"
+                        className="action-button"
+                        disabled={busyAction === `promote:${candidate.pageId}`}
+                        onClick={() => void handleCandidateAction(candidate.pageId, "promote", candidate.activePath)}
+                      >
+                        Promote
+                      </button>
+                      <button
+                        type="button"
+                        className="action-button danger"
+                        disabled={busyAction === `archive:${candidate.pageId}`}
+                        onClick={() => void handleCandidateAction(candidate.pageId, "archive", candidate.path)}
+                      >
+                        Archive
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p>No candidate pages are waiting for review.</p>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Selection</h2>
+            {selected ? (
+              <>
+                <p className="panel-label">{selected.type}</p>
+                <h3>{selected.label}</h3>
+                <p>
+                  Node ID: <code>{selected.id}</code>
+                </p>
+                {selected.language ? <p>Language: {selected.language}</p> : null}
+                {selected.symbolKind ? <p>Symbol kind: {selected.symbolKind}</p> : null}
+                {selected.moduleId ? <p>Module ID: {selected.moduleId}</p> : null}
+                <p>Sources: {selected.sourceIds.join(", ") || "None"}</p>
+                <p>Projects: {selected.projectIds.join(", ") || "Global / unassigned"}</p>
+                <p>Community: {selected.communityId ?? "Unassigned"}</p>
+                <p>Degree: {selected.degree ?? 0}</p>
+                <p>Bridge score: {selected.bridgeScore ?? 0}</p>
+                <p>God node: {selected.isGodNode ? "Yes" : "No"}</p>
+              </>
+            ) : (
+              <p>Select a node to inspect graph metrics and linked pages.</p>
+            )}
+          </section>
+
+          <section className="panel page-panel">
+            <h2>Page Preview</h2>
+            {pageError ? <p>{pageError}</p> : null}
+            {activePage ? (
+              <>
+                <span className="panel-label">{activePage.path}</span>
+                <h3>{activePage.title}</h3>
+                <p>
+                  {typeof activePage.frontmatter.kind === "string" ? activePage.frontmatter.kind : "page"} /{" "}
+                  {typeof activePage.frontmatter.status === "string" ? activePage.frontmatter.status : "active"}
+                </p>
+                <p>
+                  Projects:{" "}
+                  {Array.isArray(activePage.frontmatter.project_ids)
+                    ? (activePage.frontmatter.project_ids as string[]).join(", ") || "Global / unassigned"
+                    : "Global / unassigned"}
+                </p>
+                <p>{snippetFromContent(activePage.content)}</p>
+                {backlinkPages.length ? (
+                  <div className="linked-pages">
+                    <span className="panel-label">Backlinks</span>
+                    <div className="action-row">
+                      {backlinkPages.map((page) => (
+                        <button key={page.id} type="button" className="link-button" onClick={() => void openPagePath(page.path, page.id)}>
+                          {page.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {relatedPages.length ? (
+                  <div className="linked-pages">
+                    <span className="panel-label">Related Pages</span>
+                    <div className="action-row">
+                      {relatedPages.map((page) => (
+                        <button key={page.id} type="button" className="link-button" onClick={() => void openPagePath(page.path, page.id)}>
+                          {page.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <pre>{activePage.content.slice(0, 1200)}</pre>
+              </>
+            ) : (
+              <p>Open a search result, review entry, candidate, or graph node page.</p>
+            )}
+          </section>
         </aside>
       </section>
     </main>

@@ -13,7 +13,7 @@ function buildManagedBlock(agent: "codex" | "claude" | "cursor"): string {
     managedStart,
     `# SwarmVault Rules (${agent})`,
     "",
-    "- Read `swarmvault.schema.md` before compile or query style work. If only `schema.md` exists, treat it as the legacy schema path.",
+    "- Read `swarmvault.schema.md` before compile or query style work. It is the canonical schema path.",
     "- Treat `raw/` as immutable source input.",
     "- Treat `wiki/` as generated markdown owned by the agent and compiler workflow.",
     "- Read `wiki/index.md` before broad file searching when answering SwarmVault questions.",

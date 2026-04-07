@@ -4,6 +4,7 @@ import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import mime from "mime-types";
 import TurndownService from "turndown";
+import { inferCodeLanguage } from "./code-analysis.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { appendLogEntry } from "./logs.js";
 import type { InboxImportResult, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
@@ -20,6 +21,7 @@ type PreparedInput = {
   title: string;
   originType: SourceManifest["originType"];
   sourceKind: SourceManifest["sourceKind"];
+  language?: SourceManifest["language"];
   originalPath?: string;
   url?: string;
   mimeType: string;
@@ -41,6 +43,9 @@ type InboxAttachmentRef = {
 };
 
 function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKind"] {
+  if (inferCodeLanguage(filePath, mimeType)) {
+    return "code";
+  }
   if (mimeType.includes("markdown")) {
     return "markdown";
   }
@@ -204,6 +209,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     title: prepared.title,
     originType: prepared.originType,
     sourceKind: prepared.sourceKind,
+    language: prepared.language,
     originalPath: prepared.originalPath,
     url: prepared.url,
     storedPath: toPosix(path.relative(rootDir, storedPath)),
@@ -229,11 +235,12 @@ async function prepareFileInput(_rootDir: string, absoluteInput: string): Promis
   const payloadBytes = await fs.readFile(absoluteInput);
   const mimeType = guessMimeType(absoluteInput);
   const sourceKind = inferKind(mimeType, absoluteInput);
+  const language = inferCodeLanguage(absoluteInput, mimeType);
   const storedExtension = path.extname(absoluteInput) || `.${mime.extension(mimeType) || "bin"}`;
 
   let title: string;
   let extractedText: string | undefined;
-  if (sourceKind === "markdown" || sourceKind === "text") {
+  if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
     extractedText = payloadBytes.toString("utf8");
     title = titleFromText(path.basename(absoluteInput, path.extname(absoluteInput)), extractedText);
   } else {
@@ -244,6 +251,7 @@ async function prepareFileInput(_rootDir: string, absoluteInput: string): Promis
     title,
     originType: "file",
     sourceKind,
+    language,
     originalPath: toPosix(absoluteInput),
     mimeType,
     storedExtension,
@@ -261,6 +269,7 @@ async function prepareUrlInput(input: string): Promise<PreparedInput> {
   let payloadBytes = Buffer.from(await response.arrayBuffer());
   let mimeType = response.headers.get("content-type")?.split(";")[0]?.trim() || guessMimeType(input);
   let sourceKind = inferKind(mimeType, input);
+  const language = inferCodeLanguage(input, mimeType);
   let storedExtension = ".bin";
   let title = new URL(input).hostname + new URL(input).pathname;
   let extractedText: string | undefined;
@@ -277,7 +286,7 @@ async function prepareUrlInput(input: string): Promise<PreparedInput> {
   } else {
     const extension = path.extname(new URL(input).pathname);
     storedExtension = extension || `.${mime.extension(mimeType) || "bin"}`;
-    if (sourceKind === "markdown" || sourceKind === "text") {
+    if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
       extractedText = payloadBytes.toString("utf8");
       title = titleFromText(title || new URL(input).hostname, extractedText);
     }
@@ -287,6 +296,7 @@ async function prepareUrlInput(input: string): Promise<PreparedInput> {
     title,
     originType: "url",
     sourceKind,
+    language,
     url: input,
     mimeType,
     storedExtension,

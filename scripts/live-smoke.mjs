@@ -125,12 +125,12 @@ try {
   }
 
   await runStep("query-save", async () => {
-    const result = await runCliJson(["query", "What does this vault say about durable outputs?", "--save"]);
-    assert.ok(typeof result.savedTo === "string" && result.savedTo.length > 0, "query --save did not return a saved path");
-    assert.ok(result.citations.length > 0, "query --save returned no citations");
-    await assertExists(result.savedTo);
+    const result = await runCliJson(["query", "What does this vault say about durable outputs?"]);
+    assert.ok(typeof result.savedPath === "string" && result.savedPath.length > 0, "query did not return a saved path");
+    assert.ok(result.citations.length > 0, "query returned no citations");
+    await assertExists(result.savedPath);
     const outputsIndex = await fs.readFile(path.join(workspaceDir, "wiki", "outputs", "index.md"), "utf8");
-    assert.ok(outputsIndex.includes(path.basename(result.savedTo, ".md")), "outputs index did not include saved output");
+    assert.ok(outputsIndex.includes(path.basename(result.savedPath, ".md")), "outputs index did not include saved output");
   });
 
   if (lane === "heuristic") {
@@ -140,7 +140,7 @@ try {
       assert.ok(typeof result.hubPath === "string" && result.hubPath.length > 0, "explore did not return a hub path");
       await assertExists(result.hubPath);
       for (const step of result.steps) {
-        await assertExists(step.savedTo);
+        await assertExists(step.savedPath);
       }
     });
   }

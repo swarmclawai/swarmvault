@@ -22,19 +22,21 @@ Installed commands:
 ```bash
 mkdir my-vault
 cd my-vault
-swarmvault init
+swarmvault init --obsidian
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault compile
-swarmvault query "What keeps recurring?" --save
+swarmvault query "What keeps recurring?"
+swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph serve
+swarmvault graph export --html ./exports/graph.html
 ```
 
 ## Commands
 
-### `swarmvault init`
+### `swarmvault init [--obsidian]`
 
 Create a workspace with:
 
@@ -47,6 +49,7 @@ Create a workspace with:
 - `agent/`
 - `swarmvault.config.json`
 - `swarmvault.schema.md`
+- optional `.obsidian/` workspace files when `--obsidian` is passed
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
@@ -58,7 +61,7 @@ Ingest a local file path or URL into immutable source storage and write a manife
 
 Import supported files from the configured inbox directory. This is meant for browser-clipper style markdown bundles and other capture workflows. Local image and asset references are preserved and copied into canonical storage under `raw/assets/`.
 
-### `swarmvault compile`
+### `swarmvault compile [--approve]`
 
 Compile the current manifests into:
 
@@ -68,18 +71,43 @@ Compile the current manifests into:
 
 The compiler also reads `swarmvault.schema.md` and records a `schema_hash` plus lifecycle metadata such as `status`, `created_at`, `updated_at`, `compiled_from`, and `managed_by` in generated pages so schema edits can mark pages stale without losing lifecycle state.
 
-### `swarmvault query "<question>" [--save]`
+New concept and entity pages are staged into `wiki/candidates/` first. A later matching compile promotes them into `wiki/concepts/` or `wiki/entities/`.
+
+With `--approve`, compile writes a staged review bundle into `state/approvals/` without applying active wiki changes.
+
+### `swarmvault review list|show|accept|reject`
+
+Inspect and resolve staged approval bundles created by `swarmvault compile --approve`.
+
+- `review list` shows pending, accepted, and rejected entry counts per bundle
+- `review show <approvalId>` shows each staged entry plus its current and staged content
+- `review accept <approvalId> [targets...]` applies pending entries to the live wiki
+- `review reject <approvalId> [targets...]` marks pending entries as rejected without mutating active wiki paths
+
+Targets can be page ids such as `concept:approval-concept` or relative wiki paths such as `concepts/approval-concept.md`.
+
+### `swarmvault candidate list|promote|archive`
+
+Inspect and resolve staged concept and entity candidates.
+
+- `candidate list` shows every current candidate plus its active destination path
+- `candidate promote <target>` promotes a candidate immediately into `wiki/concepts/` or `wiki/entities/`
+- `candidate archive <target>` removes a candidate from the staged set
+
+Targets can be page ids or relative paths under `wiki/candidates/`.
+
+### `swarmvault query "<question>" [--no-save] [--format markdown|report|slides]`
 
 Query the compiled vault. The query layer also reads `swarmvault.schema.md`, so answers follow the vault’s own structure and grounding rules.
 
-With `--save`, the answer is written into `wiki/outputs/` and immediately registered in:
+By default, the answer is written into `wiki/outputs/` and immediately registered in:
 
 - `wiki/index.md`
 - `wiki/outputs/index.md`
 - `state/graph.json`
 - `state/search.sqlite`
 
-Saved outputs also carry related page, node, and source metadata so later compiles can link them back into the wiki.
+Saved outputs also carry related page, node, and source metadata so SwarmVault can refresh related source, concept, and entity pages immediately.
 
 Human-authored pages in `wiki/insights/` are also indexed into search and query context, but SwarmVault does not rewrite them after initialization.
 
@@ -131,7 +159,11 @@ The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `sw
 
 ### `swarmvault graph serve`
 
-Start the local graph UI backed by `state/graph.json`.
+Start the local graph workspace backed by `state/graph.json`, `/api/search`, and `/api/page`.
+
+### `swarmvault graph export --html <output>`
+
+Export the graph workspace as a standalone HTML file with embedded graph and page data for offline sharing.
 
 ### `swarmvault install --agent <codex|claude|cursor>`
 
