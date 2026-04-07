@@ -251,3 +251,10 @@ export interface WatchRunRecord {
 export interface WatchController {
   close(): Promise<void>;
 }
+
+export interface CompileState {
+  generatedAt: string;
+  schemaHash: string;
+  analyses: Record<string, string>;
+  sourceHashes: Record<string, string>;
+}
