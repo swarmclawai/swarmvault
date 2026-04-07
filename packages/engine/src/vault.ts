@@ -3,6 +3,7 @@ import path from "node:path";
 import matter from "gray-matter";
 import { installConfiguredAgents } from "./agents.js";
 import { analysisSignature, analyzeSource } from "./analysis.js";
+import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
 import { appendLogEntry } from "./logs.js";
@@ -12,6 +13,7 @@ import { buildSchemaPrompt, loadVaultSchema } from "./schema.js";
 import { rebuildSearchIndex, searchPages } from "./search.js";
 import type {
   CompileResult,
+  CompileState,
   GraphArtifact,
   GraphEdge,
   GraphNode,
@@ -52,14 +54,15 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
   for (const analysis of analyses) {
     for (const concept of analysis.concepts) {
       const existing = conceptMap.get(concept.id);
+      const sourceIds = [...new Set([...(existing?.sourceIds ?? []), analysis.sourceId])];
       conceptMap.set(concept.id, {
         id: concept.id,
         type: "concept",
         label: concept.name,
         pageId: `concept:${slugify(concept.name)}`,
         freshness: "fresh",
-        confidence: 0.7,
-        sourceIds: [...new Set([...(existing?.sourceIds ?? []), analysis.sourceId])]
+        confidence: nodeConfidence(sourceIds.length),
+        sourceIds
       });
       edges.push({
         id: `${analysis.sourceId}->${concept.id}`,
@@ -67,21 +70,22 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
         target: concept.id,
         relation: "mentions",
         status: "extracted",
-        confidence: 0.72,
+        confidence: edgeConfidence(analysis.claims, concept.name),
         provenance: [analysis.sourceId]
       });
     }
 
     for (const entity of analysis.entities) {
       const existing = entityMap.get(entity.id);
+      const sourceIds = [...new Set([...(existing?.sourceIds ?? []), analysis.sourceId])];
       entityMap.set(entity.id, {
         id: entity.id,
         type: "entity",
         label: entity.name,
         pageId: `entity:${slugify(entity.name)}`,
         freshness: "fresh",
-        confidence: 0.7,
-        sourceIds: [...new Set([...(existing?.sourceIds ?? []), analysis.sourceId])]
+        confidence: nodeConfidence(sourceIds.length),
+        sourceIds
       });
       edges.push({
         id: `${analysis.sourceId}->${entity.id}`,
@@ -89,27 +93,49 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
         target: entity.id,
         relation: "mentions",
         status: "extracted",
-        confidence: 0.72,
+        confidence: edgeConfidence(analysis.claims, entity.name),
         provenance: [analysis.sourceId]
       });
     }
+  }
 
-    const conflictClaims = analysis.claims.filter((claim) => claim.polarity === "negative");
-    for (const claim of conflictClaims) {
-      const related = analyses
-        .filter((item) => item.sourceId !== analysis.sourceId)
-        .flatMap((item) =>
-          item.claims.filter((other) => other.polarity === "positive" && other.text.split(" ").some((word) => claim.text.includes(word)))
-        );
-      for (const other of related) {
+  // Concept-scoped conflict detection
+  const conceptClaims = new Map<string, Array<{ claim: SourceAnalysis["claims"][number]; sourceId: string }>>();
+  for (const analysis of analyses) {
+    for (const claim of analysis.claims) {
+      for (const concept of analysis.concepts) {
+        if (claim.text.toLowerCase().includes(concept.name.toLowerCase())) {
+          const key = concept.id;
+          const list = conceptClaims.get(key) ?? [];
+          list.push({ claim, sourceId: analysis.sourceId });
+          conceptClaims.set(key, list);
+        }
+      }
+    }
+  }
+
+  const conflictEdgeKeys = new Set<string>();
+  for (const [, claimsForConcept] of conceptClaims) {
+    const positive = claimsForConcept.filter((c) => c.claim.polarity === "positive");
+    const negative = claimsForConcept.filter((c) => c.claim.polarity === "negative");
+    for (const pos of positive) {
+      for (const neg of negative) {
+        if (pos.sourceId === neg.sourceId) {
+          continue;
+        }
+        const edgeKey = [pos.sourceId, neg.sourceId].sort().join("|");
+        if (conflictEdgeKeys.has(edgeKey)) {
+          continue;
+        }
+        conflictEdgeKeys.add(edgeKey);
         edges.push({
-          id: `${claim.id}->${other.id}`,
-          source: `source:${analysis.sourceId}`,
-          target: `source:${other.citation}`,
+          id: `conflict:${pos.claim.id}->${neg.claim.id}`,
+          source: `source:${pos.sourceId}`,
+          target: `source:${neg.sourceId}`,
           relation: "conflicted_with",
           status: "conflicted",
-          confidence: 0.6,
-          provenance: [analysis.sourceId, other.citation]
+          confidence: conflictConfidence(pos.claim, neg.claim),
+          provenance: [pos.sourceId, neg.sourceId]
         });
       }
     }
@@ -168,10 +194,56 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
   const schema = await loadVaultSchema(rootDir);
   const provider = await getProviderForTask(rootDir, "compileProvider");
   const manifests = await listManifests(rootDir);
-  const analyses = await Promise.all(
-    manifests.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema))
-  );
 
+  // Incremental compilation: compare against previous compile state
+  const previousState = await readJsonFile<CompileState>(paths.compileStatePath);
+  const schemaChanged = !previousState || previousState.schemaHash !== schema.hash;
+  const previousSourceHashes = previousState?.sourceHashes ?? {};
+  const previousAnalyses = previousState?.analyses ?? {};
+  const currentSourceIds = new Set(manifests.map((m) => m.sourceId));
+  const previousSourceIds = new Set(Object.keys(previousSourceHashes));
+  const sourcesChanged = currentSourceIds.size !== previousSourceIds.size || [...currentSourceIds].some((id) => !previousSourceIds.has(id));
+
+  const dirty: SourceManifest[] = [];
+  const clean: SourceManifest[] = [];
+
+  for (const manifest of manifests) {
+    const hashChanged = previousSourceHashes[manifest.sourceId] !== manifest.contentHash;
+    const noAnalysis = !previousAnalyses[manifest.sourceId];
+    if (schemaChanged || hashChanged || noAnalysis) {
+      dirty.push(manifest);
+    } else {
+      clean.push(manifest);
+    }
+  }
+
+  // Early return when nothing changed
+  if (dirty.length === 0 && !schemaChanged && !sourcesChanged) {
+    return {
+      graphPath: paths.graphPath,
+      pageCount: previousState?.analyses ? Object.keys(previousState.analyses).length : 0,
+      changedPages: [],
+      sourceCount: manifests.length
+    };
+  }
+
+  // Only analyze dirty sources; load cached analyses for clean ones
+  const [dirtyAnalyses, cleanAnalyses] = await Promise.all([
+    Promise.all(
+      dirty.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema))
+    ),
+    Promise.all(
+      clean.map(async (manifest) => {
+        const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
+        if (cached) {
+          return cached;
+        }
+        return analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema);
+      })
+    )
+  ]);
+
+  const analyses = [...dirtyAnalyses, ...cleanAnalyses];
   const changedPages: string[] = [];
   const pages: GraphPage[] = [];
 
@@ -187,32 +259,36 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
     if (!analysis) {
       continue;
     }
-    const sourcePage = buildSourcePage(manifest, analysis, schema.hash);
+    const sourcePage = buildSourcePage(manifest, analysis, schema.hash, 1.0);
     pages.push(sourcePage.page);
     await writePage(paths.wikiDir, sourcePage.page.path, sourcePage.content, changedPages);
   }
 
   for (const aggregate of aggregateItems(analyses, "concepts")) {
+    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
     const page = buildAggregatePage(
       "concept",
       aggregate.name,
       aggregate.descriptions,
       aggregate.sourceAnalyses,
       aggregate.sourceHashes,
-      schema.hash
+      schema.hash,
+      confidence
     );
     pages.push(page.page);
     await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
   }
 
   for (const aggregate of aggregateItems(analyses, "entities")) {
+    const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
     const page = buildAggregatePage(
       "entity",
       aggregate.name,
       aggregate.descriptions,
       aggregate.sourceAnalyses,
       aggregate.sourceHashes,
-      schema.hash
+      schema.hash,
+      confidence
     );
     pages.push(page.page);
     await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
@@ -223,8 +299,9 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
   await writeJsonFile(paths.compileStatePath, {
     generatedAt: graph.generatedAt,
     schemaHash: schema.hash,
-    analyses: Object.fromEntries(analyses.map((analysis) => [analysis.sourceId, analysisSignature(analysis)]))
-  });
+    analyses: Object.fromEntries(analyses.map((a) => [a.sourceId, analysisSignature(a)])),
+    sourceHashes: Object.fromEntries(manifests.map((m) => [m.sourceId, m.contentHash]))
+  } satisfies CompileState);
 
   await writePage(paths.wikiDir, "index.md", buildIndexPage(pages, schema.hash), changedPages);
   await writePage(
@@ -258,10 +335,15 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
     changedPages
   );
 
-  await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
+  if (changedPages.length > 0) {
+    await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
+  }
+
   await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [
     `provider=${provider.id}`,
     `pages=${pages.length}`,
+    `dirty=${dirty.length}`,
+    `clean=${clean.length}`,
     `schema=${schema.hash.slice(0, 12)}`
   ]);
 
@@ -291,6 +373,36 @@ export async function queryVault(rootDir: string, question: string, save = false
     })
   );
 
+  // Load raw source material for grounding (spec principle #6)
+  const allSourceIds: string[] = [];
+  for (const result of searchResults) {
+    const absolutePath = path.join(paths.wikiDir, result.path);
+    try {
+      const content = await fs.readFile(absolutePath, "utf8");
+      const parsed = matter(content);
+      const ids = parsed.data.source_ids;
+      if (Array.isArray(ids)) {
+        allSourceIds.push(...ids);
+      }
+    } catch {
+      // Page may not exist
+    }
+  }
+  const sourceIds = uniqueBy(allSourceIds, (id) => id).slice(0, 5);
+
+  const manifests = await listManifests(rootDir);
+  const rawExcerpts: string[] = [];
+  for (const sourceId of sourceIds) {
+    const manifest = manifests.find((m) => m.sourceId === sourceId);
+    if (!manifest) {
+      continue;
+    }
+    const text = await readExtractedText(rootDir, manifest);
+    if (text) {
+      rawExcerpts.push(`# [source:${sourceId}] ${manifest.title}\n${truncate(normalizeWhitespace(text), 800)}`);
+    }
+  }
+
   let answer: string;
   if (provider.type === "heuristic") {
     answer = [
@@ -299,12 +411,22 @@ export async function queryVault(rootDir: string, question: string, save = false
       "Relevant pages:",
       ...searchResults.map((result) => `- ${result.title} (${result.path})`),
       "",
-      excerpts.length ? excerpts.join("\n\n") : "No relevant pages found yet."
+      excerpts.length ? excerpts.join("\n\n") : "No relevant pages found yet.",
+      ...(rawExcerpts.length ? ["", "Raw source material:", "", ...rawExcerpts] : [])
     ].join("\n");
   } else {
+    const context = [
+      "Wiki context:",
+      excerpts.join("\n\n---\n\n"),
+      ...(rawExcerpts.length ? ["", "Raw source material:", rawExcerpts.join("\n\n---\n\n")] : [])
+    ].join("\n\n");
+
     const response = await provider.generateText({
-      system: buildSchemaPrompt(schema, "Answer using the provided SwarmVault excerpts. Cite source ids or page titles when possible."),
-      prompt: `Question: ${question}\n\nContext:\n${excerpts.join("\n\n---\n\n")}`
+      system: buildSchemaPrompt(
+        schema,
+        "Answer using the provided context. Prefer raw source material over wiki summaries when they differ. Cite source IDs."
+      ),
+      prompt: `Question: ${question}\n\n${context}`
     });
     answer = response.text;
   }
@@ -322,7 +444,11 @@ export async function queryVault(rootDir: string, question: string, save = false
     savedTo = absolutePath;
   }
 
-  await appendLogEntry(rootDir, "query", question, [`citations=${citations.join(",") || "none"}`, `saved=${Boolean(savedTo)}`]);
+  await appendLogEntry(rootDir, "query", question, [
+    `citations=${citations.join(",") || "none"}`,
+    `saved=${Boolean(savedTo)}`,
+    `rawSources=${rawExcerpts.length}`
+  ]);
   return { answer, savedTo, citations };
 }
 

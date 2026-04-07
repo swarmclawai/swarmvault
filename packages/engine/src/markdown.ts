@@ -20,7 +20,8 @@ function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
 export function buildSourcePage(
   manifest: SourceManifest,
   analysis: SourceAnalysis,
-  schemaHash: string
+  schemaHash: string,
+  confidence = 1.0
 ): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
@@ -38,7 +39,7 @@ export function buildSourcePage(
     source_ids: [manifest.sourceId],
     node_ids: nodeIds,
     freshness: "fresh" satisfies Freshness,
-    confidence: 0.8,
+    confidence,
     updated_at: analysis.producedAt,
     backlinks,
     schema_hash: schemaHash,
@@ -92,7 +93,7 @@ export function buildSourcePage(
       sourceIds: [manifest.sourceId],
       nodeIds,
       freshness: "fresh",
-      confidence: 0.8,
+      confidence,
       backlinks,
       schemaHash,
       sourceHashes: { [manifest.sourceId]: manifest.contentHash }
@@ -107,7 +108,8 @@ export function buildAggregatePage(
   descriptions: string[],
   sourceAnalyses: SourceAnalysis[],
   sourceHashes: Record<string, string>,
-  schemaHash: string
+  schemaHash: string,
+  confidence = 0.72
 ): { page: GraphPage; content: string } {
   const slug = slugify(name);
   const relativePath = pagePathFor(kind, slug);
@@ -123,7 +125,7 @@ export function buildAggregatePage(
     source_ids: sourceIds,
     node_ids: [pageId],
     freshness: "fresh" satisfies Freshness,
-    confidence: 0.72,
+    confidence,
     updated_at: new Date().toISOString(),
     backlinks: otherPages,
     schema_hash: schemaHash,
@@ -160,7 +162,7 @@ export function buildAggregatePage(
       sourceIds,
       nodeIds: [pageId],
       freshness: "fresh",
-      confidence: 0.72,
+      confidence,
       backlinks: otherPages,
       schemaHash,
       sourceHashes
