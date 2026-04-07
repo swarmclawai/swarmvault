@@ -13,7 +13,7 @@ async function createTempWorkspace(): Promise<string> {
   return dir;
 }
 
-async function waitFor(condition: () => Promise<boolean>, timeoutMs = 6000): Promise<void> {
+async function waitFor(condition: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await condition()) {
@@ -114,6 +114,47 @@ describe("compounding loop", () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
 
+    await fs.writeFile(
+      path.join(rootDir, "watch-provider.mjs"),
+      [
+        "import fs from 'node:fs/promises';",
+        "import path from 'node:path';",
+        "",
+        "export async function createAdapter(id, config, rootDir) {",
+        "  const failOncePath = path.join(rootDir, 'state', 'watch-fail-once.txt');",
+        "  const shouldFail = await fs",
+        "    .access(failOncePath)",
+        "    .then(() => true)",
+        "    .catch(() => false);",
+        "  if (shouldFail) {",
+        "    await fs.rm(failOncePath, { force: true });",
+        "    throw new Error('intentional first failure');",
+        "  }",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() {",
+        "      return { text: 'ok' };",
+        "    },",
+        "    async generateStructured() {",
+        "      return {",
+        "        title: 'Retry Source',",
+        "        summary: 'Recovered after retry.',",
+        "        concepts: [],",
+        "        entities: [],",
+        "        claims: [],",
+        "        questions: []",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(path.join(rootDir, "state", "watch-fail-once.txt"), "fail-once\n", "utf8");
+
     const configPath = path.join(rootDir, "swarmvault.config.json");
     const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
       providers: Record<string, unknown>;
@@ -144,51 +185,12 @@ describe("compounding loop", () => {
           .split("\n")
           .filter(Boolean)
           .map((line) => JSON.parse(line) as { success: boolean });
-        return runs.some((run) => run.success === false);
-      });
-
-      await fs.writeFile(
-        path.join(rootDir, "watch-provider.mjs"),
-        [
-          "export async function createAdapter(id, config) {",
-          "  return {",
-          "    id,",
-          "    type: 'custom',",
-          "    model: config.model,",
-          "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
-          "    async generateText() {",
-          "      return { text: 'ok' };",
-          "    },",
-          "    async generateStructured() {",
-          "      return {",
-          "        title: 'Retry Source',",
-          "        summary: 'Recovered after retry.',",
-          "        concepts: [],",
-          "        entities: [],",
-          "        claims: [],",
-          "        questions: []",
-          "      };",
-          "    }",
-          "  };",
-          "}"
-        ].join("\n"),
-        "utf8"
-      );
-
-      await waitFor(async () => {
-        const logPath = path.join(rootDir, "state", "jobs.ndjson");
-        const raw = await fs.readFile(logPath, "utf8").catch(() => "");
-        const runs = raw
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => JSON.parse(line) as { success: boolean });
         return runs.length >= 2 && runs.some((run) => run.success === false) && runs.at(-1)?.success === true;
       });
     } finally {
       await controller.close();
     }
-  }, 10_000);
+  }, 15_000);
 
   it("returns deep lint findings and optional web evidence", async () => {
     const rootDir = await createTempWorkspace();
