@@ -4,6 +4,12 @@
 
 Nothing yet.
 
+## 0.1.11
+
+- Fixed saved `query` and `explore` refreshes so they no longer auto-promote staged candidate concept and entity pages outside the compile flow
+- Added a regression test for preserving candidate pages across output-save graph/index refreshes
+- Expanded the published-install live smoke lane to validate project-aware code ingestion, candidate and review flows, richer graph workspace APIs, watch automation, and MCP search/chart queries
+
 ## 0.1.10
 
 - Fixed provider-backed `lint --deep` and orchestration parsing so non-canonical model severities like `medium`, `critical`, or `low` normalize after structured parsing instead of breaking JSON-schema generation

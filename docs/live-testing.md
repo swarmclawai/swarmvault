@@ -38,7 +38,7 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.10 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.11 --keep-artifacts
 ```
 
 ## What The Smoke Runner Covers
@@ -51,12 +51,16 @@ node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.10 --keep-artifacts
 - import an inbox markdown bundle with a linked local asset
 - run `query`
 - run saved `query --format chart` and `query --format image`
+- configure project roots, re-run `init --obsidian`, ingest JS/TS code sources, and verify module pages plus project rollups
+- stage a deterministic candidate concept through a custom compile provider
 - run `explore`
 - run `lint` and `lint --deep`
 - run `graph export --html` and verify the standalone HTML embeds local asset data
 - run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
-- start `graph serve` and verify HTML plus `/api/graph`
-- start `mcp` and call tools over stdio
+- start `graph serve` and verify HTML plus `/api/graph`, `/api/search`, `/api/page`, `/api/asset`, `/api/candidates`, and `/api/reviews`
+- promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
+- run `watch --lint` against the published install and verify `state/jobs.ndjson` plus watch sessions
+- start `mcp` and call tools over stdio, including `search_pages` and chart-format `query_vault`
 - run `install --agent codex`
 
 ### OpenAI lane
@@ -99,10 +103,9 @@ Use `--keep-artifacts` or `KEEP_LIVE_SMOKE_ARTIFACTS=1` to preserve them during 
 These checks stay manual for now:
 
 1. Install the published package in a fresh directory on a real machine with Node 24.
-2. Run `swarmvault watch --lint`, drop a new file into `inbox/`, and verify `state/jobs.ndjson` is appended.
-3. Run `swarmvault graph serve` and confirm the viewer loads in a real browser without console errors.
-4. Launch `swarmvault mcp` from a real MCP client configuration and confirm tool discovery works.
-5. Compare heuristic output quality versus the Ollama and OpenAI lanes on the same fixture vault.
+2. Run `swarmvault graph serve` and confirm the viewer loads in a real browser without console errors.
+3. Launch `swarmvault mcp` from a real MCP client configuration and confirm tool discovery works.
+4. Compare heuristic output quality versus the Ollama and OpenAI lanes on the same fixture vault.
 
 ## CI Workflow
 

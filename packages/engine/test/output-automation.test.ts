@@ -3,7 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileVault, ingestInput, initVault, listApprovals, listSchedules, queryVault, readApproval, runSchedule } from "../src/index.js";
+import {
+  compileVault,
+  ingestInput,
+  initVault,
+  listApprovals,
+  listCandidates,
+  listSchedules,
+  queryVault,
+  readApproval,
+  runSchedule
+} from "../src/index.js";
 
 const tempDirs: string[] = [];
 
@@ -92,6 +102,67 @@ describe("output artifacts and automation", () => {
     const updatedSchedules = await listSchedules(rootDir);
     expect(updatedSchedules[0]?.lastApprovalId).toBe(run.approvalId);
     expect(updatedSchedules[0]?.lastStatus).toBe("success");
+  });
+
+  it("does not auto-promote staged candidates when saved outputs refresh vault indexes", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "candidate-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() {",
+        "      return { text: 'ok' };",
+        "    },",
+        "    async generateStructured() {",
+        "      return {",
+        "        title: 'Candidate Source',",
+        "        summary: 'Candidate summary.',",
+        "        concepts: [{ name: 'Candidate Concept', description: 'A recurring concept.' }],",
+        "        entities: [],",
+        "        claims: [{ text: 'Candidate claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'candidate-source' }],",
+        "        questions: []",
+        "      };",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.candidateTest = {
+      type: "custom",
+      model: "candidate-test",
+      module: "./candidate-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "candidateTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    await fs.writeFile(path.join(rootDir, "candidate.md"), "# Candidate\n\nCandidate content.", "utf8");
+    await ingestInput(rootDir, "candidate.md");
+    await compileVault(rootDir);
+
+    expect(await listCandidates(rootDir)).toHaveLength(1);
+    await expect(fs.access(path.join(rootDir, "wiki", "candidates", "concepts", "candidate-concept.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "wiki", "concepts", "candidate-concept.md"))).rejects.toThrow();
+
+    await queryVault(rootDir, { question: "What does this candidate source describe?" });
+
+    expect(await listCandidates(rootDir)).toHaveLength(1);
+    await expect(fs.access(path.join(rootDir, "wiki", "candidates", "concepts", "candidate-concept.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "wiki", "concepts", "candidate-concept.md"))).rejects.toThrow();
   });
 
   it("stages compile post-pass proposals through approvals", async () => {
