@@ -1,19 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import {
-  compileVault,
-  createMcpServer,
-  importInbox,
-  ingestInput,
-  initVault,
-  lintVault,
-  queryVault,
-  watchVault
-} from "../src/index.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { compileVault, createMcpServer, importInbox, ingestInput, initVault, lintVault, queryVault, watchVault } from "../src/index.js";
 
 const tempDirs: string[] = [];
 type ToolContent = Array<{ type?: string; text?: string }>;
@@ -91,13 +82,9 @@ describe("swarmvault workflow", () => {
     await fs.mkdir(assetsDir, { recursive: true });
     await fs.writeFile(
       path.join(inboxDir, "clip.md"),
-      [
-        "# Browser Clip",
-        "",
-        "SwarmVault can preserve image references from captured markdown.",
-        "",
-        "![Diagram](assets/diagram.png)"
-      ].join("\n"),
+      ["# Browser Clip", "", "SwarmVault can preserve image references from captured markdown.", "", "![Diagram](assets/diagram.png)"].join(
+        "\n"
+      ),
       "utf8"
     );
     await fs.writeFile(path.join(assetsDir, "diagram.png"), Buffer.from([0, 1, 2, 3]));
@@ -193,11 +180,7 @@ describe("swarmvault workflow", () => {
     const notePath = path.join(rootDir, "notes.md");
     await fs.writeFile(
       notePath,
-      [
-        "# Schema Test",
-        "",
-        "This source exists to verify schema-guided compile and query behavior."
-      ].join("\n"),
+      ["# Schema Test", "", "This source exists to verify schema-guided compile and query behavior."].join("\n"),
       "utf8"
     );
 
@@ -247,11 +230,7 @@ describe("swarmvault workflow", () => {
     const notePath = path.join(rootDir, "notes.md");
     await fs.writeFile(
       notePath,
-      [
-        "# MCP Test Note",
-        "",
-        "SwarmVault exposes wiki search and read operations through MCP."
-      ].join("\n"),
+      ["# MCP Test Note", "", "SwarmVault exposes wiki search and read operations through MCP."].join("\n"),
       "utf8"
     );
 
@@ -283,7 +262,7 @@ describe("swarmvault workflow", () => {
 
     const configResource = await client.readResource({ uri: "swarmvault://config" });
     expect(configResource.contents[0]?.uri).toBe("swarmvault://config");
-    expect((configResource.contents[0] as { text: string }).text).toContain("\"inboxDir\"");
+    expect((configResource.contents[0] as { text: string }).text).toContain('"inboxDir"');
 
     const schemaResource = await client.readResource({ uri: "swarmvault://schema" });
     expect(schemaResource.contents[0]?.uri).toBe("swarmvault://schema");
@@ -301,19 +280,23 @@ describe("swarmvault workflow", () => {
     try {
       await fs.writeFile(
         path.join(rootDir, "inbox", "watch.md"),
-        [
-          "# Watch Note",
-          "",
-          "SwarmVault should import and compile this file when watch mode is running."
-        ].join("\n"),
+        ["# Watch Note", "", "SwarmVault should import and compile this file when watch mode is running."].join("\n"),
         "utf8"
       );
 
       await waitFor(async () => {
         const graphPath = path.join(rootDir, "state", "graph.json");
         const jobsPath = path.join(rootDir, "state", "jobs.ndjson");
-        return (await fs.stat(graphPath).then(() => true).catch(() => false))
-          && (await fs.stat(jobsPath).then(() => true).catch(() => false));
+        return (
+          (await fs
+            .stat(graphPath)
+            .then(() => true)
+            .catch(() => false)) &&
+          (await fs
+            .stat(jobsPath)
+            .then(() => true)
+            .catch(() => false))
+        );
       });
 
       const jobsLog = await fs.readFile(path.join(rootDir, "state", "jobs.ndjson"), "utf8");

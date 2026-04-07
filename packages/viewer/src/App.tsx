@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
 import cytoscape, { type Core } from "cytoscape";
+import { useEffect, useRef, useState } from "react";
 import { fetchGraphArtifact, type ViewerGraphArtifact, type ViewerGraphNode } from "./lib";
 
 const COLORS: Record<string, string> = {
@@ -54,7 +54,7 @@ export function App() {
             color: "#f8fafc",
             "text-outline-color": "#020617",
             "text-outline-width": 2,
-            "font-family": "\"Avenir Next\", \"Segoe UI\", sans-serif",
+            "font-family": '"Avenir Next", "Segoe UI", sans-serif',
             "font-size": 11
           }
         },
@@ -136,7 +136,9 @@ export function App() {
             <>
               <p className="panel-label">{selected.type}</p>
               <h3>{selected.label}</h3>
-              <p>Node ID: <code>{selected.id}</code></p>
+              <p>
+                Node ID: <code>{selected.id}</code>
+              </p>
               <p>Sources: {selected.sourceIds.join(", ") || "None"}</p>
             </>
           ) : (

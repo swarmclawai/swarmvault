@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import { z } from "zod";
-import { extractJson } from "../utils.js";
 import type {
   GenerationAttachment,
   GenerationRequest,
@@ -9,6 +8,7 @@ import type {
   ProviderCapability,
   ProviderType
 } from "../types.js";
+import { extractJson } from "../utils.js";
 
 export abstract class BaseProviderAdapter implements ProviderAdapter {
   public readonly capabilities: Set<ProviderCapability>;

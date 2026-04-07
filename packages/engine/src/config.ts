@@ -1,9 +1,9 @@
-import path from "node:path";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { ensureDir, fileExists, readJsonFile, writeJsonFile } from "./utils.js";
 import { providerCapabilitySchema, providerTypeSchema, type ResolvedPaths, type VaultConfig } from "./types.js";
+import { ensureDir, fileExists, readJsonFile, writeJsonFile } from "./utils.js";
 
 const PRIMARY_CONFIG_FILENAME = "swarmvault.config.json";
 const LEGACY_CONFIG_FILENAME = "vault.config.json";

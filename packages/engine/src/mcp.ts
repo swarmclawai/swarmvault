@@ -7,9 +7,9 @@ import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
 import { ingestInput, listManifests } from "./ingest.js";
 import { loadVaultSchema } from "./schema.js";
-import { compileVault, getWorkspaceInfo, lintVault, listPages, queryVault, readPage, searchVault } from "./vault.js";
-import { readJsonFile } from "./utils.js";
 import type { GraphArtifact } from "./types.js";
+import { readJsonFile } from "./utils.js";
+import { compileVault, getWorkspaceInfo, lintVault, listPages, queryVault, readPage, searchVault } from "./vault.js";
 
 const SERVER_VERSION = "0.1.4";
 
@@ -20,122 +20,174 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     websiteUrl: "https://www.swarmvault.ai"
   });
 
-  server.registerTool("workspace_info", {
-    description: "Return the current SwarmVault workspace paths and high-level counts."
-  }, async () => {
-    const info = await getWorkspaceInfo(rootDir);
-    return asToolText(info);
-  });
-
-  server.registerTool("search_pages", {
-    description: "Search compiled wiki pages using the local full-text index.",
-    inputSchema: {
-      query: z.string().min(1).describe("Search query"),
-      limit: z.number().int().min(1).max(25).optional().describe("Maximum number of results")
+  server.registerTool(
+    "workspace_info",
+    {
+      description: "Return the current SwarmVault workspace paths and high-level counts."
+    },
+    async () => {
+      const info = await getWorkspaceInfo(rootDir);
+      return asToolText(info);
     }
-  }, async ({ query, limit }) => {
-    const results = await searchVault(rootDir, query, limit ?? 5);
-    return asToolText(results);
-  });
+  );
 
-  server.registerTool("read_page", {
-    description: "Read a generated wiki page by its path relative to wiki/.",
-    inputSchema: {
-      path: z.string().min(1).describe("Path relative to wiki/, for example sources/example.md")
+  server.registerTool(
+    "search_pages",
+    {
+      description: "Search compiled wiki pages using the local full-text index.",
+      inputSchema: {
+        query: z.string().min(1).describe("Search query"),
+        limit: z.number().int().min(1).max(25).optional().describe("Maximum number of results")
+      }
+    },
+    async ({ query, limit }) => {
+      const results = await searchVault(rootDir, query, limit ?? 5);
+      return asToolText(results);
     }
-  }, async ({ path: relativePath }) => {
-    const page = await readPage(rootDir, relativePath);
-    if (!page) {
-      return asToolError(`Page not found: ${relativePath}`);
+  );
+
+  server.registerTool(
+    "read_page",
+    {
+      description: "Read a generated wiki page by its path relative to wiki/.",
+      inputSchema: {
+        path: z.string().min(1).describe("Path relative to wiki/, for example sources/example.md")
+      }
+    },
+    async ({ path: relativePath }) => {
+      const page = await readPage(rootDir, relativePath);
+      if (!page) {
+        return asToolError(`Page not found: ${relativePath}`);
+      }
+
+      return asToolText(page);
     }
+  );
 
-    return asToolText(page);
-  });
-
-  server.registerTool("list_sources", {
-    description: "List source manifests in the current workspace.",
-    inputSchema: {
-      limit: z.number().int().min(1).max(100).optional().describe("Maximum number of manifests to return")
+  server.registerTool(
+    "list_sources",
+    {
+      description: "List source manifests in the current workspace.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional().describe("Maximum number of manifests to return")
+      }
+    },
+    async ({ limit }) => {
+      const manifests = await listManifests(rootDir);
+      return asToolText(limit ? manifests.slice(0, limit) : manifests);
     }
-  }, async ({ limit }) => {
-    const manifests = await listManifests(rootDir);
-    return asToolText(limit ? manifests.slice(0, limit) : manifests);
-  });
+  );
 
-  server.registerTool("query_vault", {
-    description: "Ask a question against the compiled vault and optionally save the answer.",
-    inputSchema: {
-      question: z.string().min(1).describe("Question to ask the vault"),
-      save: z.boolean().optional().describe("Persist the answer to wiki/outputs")
+  server.registerTool(
+    "query_vault",
+    {
+      description: "Ask a question against the compiled vault and optionally save the answer.",
+      inputSchema: {
+        question: z.string().min(1).describe("Question to ask the vault"),
+        save: z.boolean().optional().describe("Persist the answer to wiki/outputs")
+      }
+    },
+    async ({ question, save }) => {
+      const result = await queryVault(rootDir, question, save ?? false);
+      return asToolText(result);
     }
-  }, async ({ question, save }) => {
-    const result = await queryVault(rootDir, question, save ?? false);
-    return asToolText(result);
-  });
+  );
 
-  server.registerTool("ingest_input", {
-    description: "Ingest a local file path or URL into the SwarmVault workspace.",
-    inputSchema: {
-      input: z.string().min(1).describe("Local path or URL to ingest")
+  server.registerTool(
+    "ingest_input",
+    {
+      description: "Ingest a local file path or URL into the SwarmVault workspace.",
+      inputSchema: {
+        input: z.string().min(1).describe("Local path or URL to ingest")
+      }
+    },
+    async ({ input }) => {
+      const manifest = await ingestInput(rootDir, input);
+      return asToolText(manifest);
     }
-  }, async ({ input }) => {
-    const manifest = await ingestInput(rootDir, input);
-    return asToolText(manifest);
-  });
+  );
 
-  server.registerTool("compile_vault", {
-    description: "Compile source manifests into wiki pages, graph data, and search index."
-  }, async () => {
-    const result = await compileVault(rootDir);
-    return asToolText(result);
-  });
+  server.registerTool(
+    "compile_vault",
+    {
+      description: "Compile source manifests into wiki pages, graph data, and search index."
+    },
+    async () => {
+      const result = await compileVault(rootDir);
+      return asToolText(result);
+    }
+  );
 
-  server.registerTool("lint_vault", {
-    description: "Run anti-drift and vault health checks."
-  }, async () => {
-    const findings = await lintVault(rootDir);
-    return asToolText(findings);
-  });
+  server.registerTool(
+    "lint_vault",
+    {
+      description: "Run anti-drift and vault health checks."
+    },
+    async () => {
+      const findings = await lintVault(rootDir);
+      return asToolText(findings);
+    }
+  );
 
-  server.registerResource("swarmvault-config", "swarmvault://config", {
-    title: "SwarmVault Config",
-    description: "The resolved SwarmVault config file.",
-    mimeType: "application/json"
-  }, async () => {
-    const { config } = await loadVaultConfig(rootDir);
-    return asTextResource("swarmvault://config", JSON.stringify(config, null, 2));
-  });
+  server.registerResource(
+    "swarmvault-config",
+    "swarmvault://config",
+    {
+      title: "SwarmVault Config",
+      description: "The resolved SwarmVault config file.",
+      mimeType: "application/json"
+    },
+    async () => {
+      const { config } = await loadVaultConfig(rootDir);
+      return asTextResource("swarmvault://config", JSON.stringify(config, null, 2));
+    }
+  );
 
-  server.registerResource("swarmvault-graph", "swarmvault://graph", {
-    title: "SwarmVault Graph",
-    description: "The compiled graph artifact for the current workspace.",
-    mimeType: "application/json"
-  }, async () => {
-    const { paths } = await loadVaultConfig(rootDir);
-    const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
-    return asTextResource(
-      "swarmvault://graph",
-      JSON.stringify(graph ?? { error: "Graph artifact not found. Run `swarmvault compile` first." }, null, 2)
-    );
-  });
+  server.registerResource(
+    "swarmvault-graph",
+    "swarmvault://graph",
+    {
+      title: "SwarmVault Graph",
+      description: "The compiled graph artifact for the current workspace.",
+      mimeType: "application/json"
+    },
+    async () => {
+      const { paths } = await loadVaultConfig(rootDir);
+      const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+      return asTextResource(
+        "swarmvault://graph",
+        JSON.stringify(graph ?? { error: "Graph artifact not found. Run `swarmvault compile` first." }, null, 2)
+      );
+    }
+  );
 
-  server.registerResource("swarmvault-manifests", "swarmvault://manifests", {
-    title: "SwarmVault Manifests",
-    description: "All source manifests in the workspace.",
-    mimeType: "application/json"
-  }, async () => {
-    const manifests = await listManifests(rootDir);
-    return asTextResource("swarmvault://manifests", JSON.stringify(manifests, null, 2));
-  });
+  server.registerResource(
+    "swarmvault-manifests",
+    "swarmvault://manifests",
+    {
+      title: "SwarmVault Manifests",
+      description: "All source manifests in the workspace.",
+      mimeType: "application/json"
+    },
+    async () => {
+      const manifests = await listManifests(rootDir);
+      return asTextResource("swarmvault://manifests", JSON.stringify(manifests, null, 2));
+    }
+  );
 
-  server.registerResource("swarmvault-schema", "swarmvault://schema", {
-    title: "SwarmVault Schema",
-    description: "The vault schema file that guides compile and query behavior.",
-    mimeType: "text/markdown"
-  }, async () => {
-    const schema = await loadVaultSchema(rootDir);
-    return asTextResource("swarmvault://schema", schema.content);
-  });
+  server.registerResource(
+    "swarmvault-schema",
+    "swarmvault://schema",
+    {
+      title: "SwarmVault Schema",
+      description: "The vault schema file that guides compile and query behavior.",
+      mimeType: "text/markdown"
+    },
+    async () => {
+      const schema = await loadVaultSchema(rootDir);
+      return asTextResource("swarmvault://schema", schema.content);
+    }
+  );
 
   server.registerResource(
     "swarmvault-pages",
@@ -175,11 +227,7 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
   return server;
 }
 
-export async function startMcpServer(
-  rootDir: string,
-  stdin?: Readable,
-  stdout?: Writable
-): Promise<{ close: () => Promise<void> }> {
+export async function startMcpServer(rootDir: string, stdin?: Readable, stdout?: Writable): Promise<{ close: () => Promise<void> }> {
   const server = await createMcpServer(rootDir);
   const transport = new StdioServerTransport(stdin, stdout);
   await server.connect(transport);

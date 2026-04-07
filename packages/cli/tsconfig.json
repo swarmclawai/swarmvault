@@ -5,12 +5,8 @@
     "outDir": "dist",
     "rootDir": "..",
     "paths": {
-      "@swarmvaultai/engine": [
-        "../engine/src/index.ts"
-      ]
+      "@swarmvaultai/engine": ["../engine/src/index.ts"]
     }
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }

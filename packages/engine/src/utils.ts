@@ -3,11 +3,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "item";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "item"
+  );
 }
 
 export function sha256(value: string | Uint8Array): string {

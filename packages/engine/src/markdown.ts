@@ -17,14 +17,14 @@ function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
   }
 }
 
-export function buildSourcePage(manifest: SourceManifest, analysis: SourceAnalysis, schemaHash: string): { page: GraphPage; content: string } {
+export function buildSourcePage(
+  manifest: SourceManifest,
+  analysis: SourceAnalysis,
+  schemaHash: string
+): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
-  const nodeIds = [
-    `source:${manifest.sourceId}`,
-    ...analysis.concepts.map((item) => item.id),
-    ...analysis.entities.map((item) => item.id)
-  ];
+  const nodeIds = [`source:${manifest.sourceId}`, ...analysis.concepts.map((item) => item.id), ...analysis.entities.map((item) => item.id)];
   const backlinks = [
     ...analysis.concepts.map((item) => `concept:${slugify(item.name)}`),
     ...analysis.entities.map((item) => `entity:${slugify(item.name)}`)
@@ -59,11 +59,19 @@ export function buildSourcePage(manifest: SourceManifest, analysis: SourceAnalys
     "",
     "## Concepts",
     "",
-    ...(analysis.concepts.length ? analysis.concepts.map((item) => `- [[${pagePathFor("concept", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`) : ["- None detected."]),
+    ...(analysis.concepts.length
+      ? analysis.concepts.map(
+          (item) => `- [[${pagePathFor("concept", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
+        )
+      : ["- None detected."]),
     "",
     "## Entities",
     "",
-    ...(analysis.entities.length ? analysis.entities.map((item) => `- [[${pagePathFor("entity", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`) : ["- None detected."]),
+    ...(analysis.entities.length
+      ? analysis.entities.map(
+          (item) => `- [[${pagePathFor("entity", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
+        )
+      : ["- None detected."]),
     "",
     "## Claims",
     "",
@@ -203,12 +211,7 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string): string {
 export function buildSectionIndex(kind: "sources" | "concepts" | "entities", pages: GraphPage[], schemaHash: string): string {
   const title = kind.charAt(0).toUpperCase() + kind.slice(1);
   return matter.stringify(
-    [
-      `# ${title}`,
-      "",
-      ...pages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`),
-      ""
-    ].join("\n"),
+    [`# ${title}`, "", ...pages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`), ""].join("\n"),
     {
       page_id: `${kind}:index`,
       kind: "index",
@@ -226,7 +229,12 @@ export function buildSectionIndex(kind: "sources" | "concepts" | "entities", pag
   );
 }
 
-export function buildOutputPage(question: string, answer: string, citations: string[], schemaHash: string): { page: GraphPage; content: string } {
+export function buildOutputPage(
+  question: string,
+  answer: string,
+  citations: string[],
+  schemaHash: string
+): { page: GraphPage; content: string } {
   const slug = slugify(question);
   const pageId = `output:${slug}`;
   const pathValue = pagePathFor("output", slug);
@@ -260,16 +268,7 @@ export function buildOutputPage(question: string, answer: string, citations: str
       sourceHashes: {}
     },
     content: matter.stringify(
-      [
-        `# ${question}`,
-        "",
-        answer,
-        "",
-        "## Citations",
-        "",
-        ...citations.map((citation) => `- [source:${citation}]`),
-        ""
-      ].join("\n"),
+      [`# ${question}`, "", answer, "", "## Citations", "", ...citations.map((citation) => `- [source:${citation}]`), ""].join("\n"),
       frontmatter
     )
   };
