@@ -1,28 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
+import { normalizePageManager, normalizePageStatus, normalizeSourceHashes, normalizeStringArray, type StoredPage } from "./pages.js";
 import type { GraphPage, OutputOrigin } from "./types.js";
 import { fileExists, sha256 } from "./utils.js";
-
-export interface StoredOutputPage {
-  page: GraphPage;
-  content: string;
-  contentHash: string;
-}
-
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function normalizeSourceHashes(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string")
-  );
-}
 
 function relationRank(outputPage: GraphPage, targetPage: GraphPage): number {
   if (outputPage.relatedPageIds.includes(targetPage.id)) {
@@ -62,10 +43,10 @@ export async function resolveUniqueOutputSlug(wikiDir: string, baseSlug: string)
   return candidate;
 }
 
-export async function loadSavedOutputPages(wikiDir: string): Promise<StoredOutputPage[]> {
+export async function loadSavedOutputPages(wikiDir: string): Promise<StoredPage[]> {
   const outputsDir = path.join(wikiDir, "outputs");
   const entries = await fs.readdir(outputsDir, { withFileTypes: true }).catch(() => []);
-  const outputs: StoredOutputPage[] = [];
+  const outputs: StoredPage[] = [];
 
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "index.md") {
@@ -85,6 +66,15 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredOutpu
     const relatedNodeIds = normalizeStringArray(parsed.data.related_node_ids);
     const relatedSourceIds = normalizeStringArray(parsed.data.related_source_ids);
     const backlinks = normalizeStringArray(parsed.data.backlinks);
+    const compiledFrom = normalizeStringArray(parsed.data.compiled_from);
+    const stats = await fs.stat(absolutePath);
+    const createdAt =
+      typeof parsed.data.created_at === "string"
+        ? parsed.data.created_at
+        : stats.birthtimeMs > 0
+          ? stats.birthtime.toISOString()
+          : stats.mtime.toISOString();
+    const updatedAt = typeof parsed.data.updated_at === "string" ? parsed.data.updated_at : stats.mtime.toISOString();
 
     outputs.push({
       page: {
@@ -95,6 +85,7 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredOutpu
         sourceIds,
         nodeIds,
         freshness: parsed.data.freshness === "stale" ? "stale" : "fresh",
+        status: normalizePageStatus(parsed.data.status, "active"),
         confidence: typeof parsed.data.confidence === "number" ? parsed.data.confidence : 0.74,
         backlinks,
         schemaHash: typeof parsed.data.schema_hash === "string" ? parsed.data.schema_hash : "",
@@ -102,6 +93,10 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredOutpu
         relatedPageIds,
         relatedNodeIds,
         relatedSourceIds,
+        createdAt,
+        updatedAt,
+        compiledFrom: compiledFrom.length ? compiledFrom : relatedSourceIds,
+        managedBy: normalizePageManager(parsed.data.managed_by, "system"),
         origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
         question: typeof parsed.data.question === "string" ? parsed.data.question : undefined
       },

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added lifecycle metadata on generated pages, including `status`, `created_at`, `updated_at`, `compiled_from`, and `managed_by`
+- Added a human-only `wiki/insights/` area that SwarmVault indexes into search and query without rewriting
+- Added canonical markdown session artifacts in `state/sessions/` for compile, query, explore, lint, and watch runs
+- Expanded MCP resources with session listing and per-session reads
+- Updated OSS docs and site docs for lifecycle metadata, insights, sessions, and workspace layout
+
 ## 0.1.5
 
 - Added a compounding output loop with immediate output-page indexing for `query --save`

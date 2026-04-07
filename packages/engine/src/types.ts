@@ -8,11 +8,13 @@ export const providerTypeSchema = z.enum(["heuristic", "openai", "ollama", "anth
 
 export type ProviderType = z.infer<typeof providerTypeSchema>;
 
-export type PageKind = "index" | "source" | "concept" | "entity" | "output";
+export type PageKind = "index" | "source" | "concept" | "entity" | "output" | "insight";
 export type Freshness = "fresh" | "stale";
 export type ClaimStatus = "extracted" | "inferred" | "conflicted" | "stale";
 export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore";
+export type PageStatus = "draft" | "candidate" | "active" | "archived";
+export type PageManager = "system" | "human";
 
 export const webSearchProviderTypeSchema = z.enum(["http-json", "custom"]);
 
@@ -132,6 +134,7 @@ export interface ResolvedPaths {
   searchDbPath: string;
   compileStatePath: string;
   jobsLogPath: string;
+  sessionsDir: string;
   configPath: string;
 }
 
@@ -213,6 +216,7 @@ export interface GraphPage {
   sourceIds: string[];
   nodeIds: string[];
   freshness: Freshness;
+  status: PageStatus;
   confidence: number;
   backlinks: string[];
   schemaHash: string;
@@ -220,6 +224,10 @@ export interface GraphPage {
   relatedPageIds: string[];
   relatedNodeIds: string[];
   relatedSourceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  compiledFrom: string[];
+  managedBy: PageManager;
   origin?: OutputOrigin;
   question?: string;
 }
@@ -311,6 +319,7 @@ export interface CompileState {
   analyses: Record<string, string>;
   sourceHashes: Record<string, string>;
   outputHashes: Record<string, string>;
+  insightHashes: Record<string, string>;
 }
 
 export interface LintOptions {

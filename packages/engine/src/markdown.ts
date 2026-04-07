@@ -1,6 +1,18 @@
 import matter from "gray-matter";
-import type { Freshness, GraphPage, OutputOrigin, PageKind, SourceAnalysis, SourceManifest } from "./types.js";
+import type { Freshness, GraphPage, OutputOrigin, PageKind, PageManager, PageStatus, SourceAnalysis, SourceManifest } from "./types.js";
 import { slugify } from "./utils.js";
+
+export interface ManagedPageMetadata {
+  status: PageStatus;
+  createdAt: string;
+  updatedAt: string;
+  compiledFrom: string[];
+  managedBy: PageManager;
+}
+
+export interface ManagedGraphPageMetadata extends ManagedPageMetadata {
+  confidence: number;
+}
 
 function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
   switch (kind) {
@@ -33,7 +45,7 @@ export function buildSourcePage(
   manifest: SourceManifest,
   analysis: SourceAnalysis,
   schemaHash: string,
-  confidence = 1.0,
+  metadata: ManagedGraphPageMetadata,
   relatedOutputs: GraphPage[] = []
 ): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
@@ -53,8 +65,12 @@ export function buildSourcePage(
     source_ids: [manifest.sourceId],
     node_ids: nodeIds,
     freshness: "fresh" satisfies Freshness,
-    confidence,
-    updated_at: analysis.producedAt,
+    status: metadata.status,
+    confidence: metadata.confidence,
+    created_at: metadata.createdAt,
+    updated_at: metadata.updatedAt,
+    compiled_from: metadata.compiledFrom,
+    managed_by: metadata.managedBy,
     backlinks,
     schema_hash: schemaHash,
     source_hashes: {
@@ -109,13 +125,18 @@ export function buildSourcePage(
       sourceIds: [manifest.sourceId],
       nodeIds,
       freshness: "fresh",
-      confidence,
+      status: metadata.status,
+      confidence: metadata.confidence,
       backlinks,
       schemaHash,
       sourceHashes: { [manifest.sourceId]: manifest.contentHash },
       relatedPageIds: relatedOutputs.map((page) => page.id),
       relatedNodeIds: [],
-      relatedSourceIds: []
+      relatedSourceIds: [],
+      createdAt: metadata.createdAt,
+      updatedAt: metadata.updatedAt,
+      compiledFrom: metadata.compiledFrom,
+      managedBy: metadata.managedBy
     },
     content: matter.stringify(body, frontmatter)
   };
@@ -128,7 +149,7 @@ export function buildAggregatePage(
   sourceAnalyses: SourceAnalysis[],
   sourceHashes: Record<string, string>,
   schemaHash: string,
-  confidence = 0.72,
+  metadata: ManagedGraphPageMetadata,
   relatedOutputs: GraphPage[] = []
 ): { page: GraphPage; content: string } {
   const slug = slugify(name);
@@ -145,8 +166,12 @@ export function buildAggregatePage(
     source_ids: sourceIds,
     node_ids: [pageId],
     freshness: "fresh" satisfies Freshness,
-    confidence,
-    updated_at: new Date().toISOString(),
+    status: metadata.status,
+    confidence: metadata.confidence,
+    created_at: metadata.createdAt,
+    updated_at: metadata.updatedAt,
+    compiled_from: metadata.compiledFrom,
+    managed_by: metadata.managedBy,
     backlinks: otherPages,
     schema_hash: schemaHash,
     source_hashes: sourceHashes
@@ -184,23 +209,29 @@ export function buildAggregatePage(
       sourceIds,
       nodeIds: [pageId],
       freshness: "fresh",
-      confidence,
+      status: metadata.status,
+      confidence: metadata.confidence,
       backlinks: otherPages,
       schemaHash,
       sourceHashes,
       relatedPageIds: relatedOutputs.map((page) => page.id),
       relatedNodeIds: [],
-      relatedSourceIds: []
+      relatedSourceIds: [],
+      createdAt: metadata.createdAt,
+      updatedAt: metadata.updatedAt,
+      compiledFrom: metadata.compiledFrom,
+      managedBy: metadata.managedBy
     },
     content: matter.stringify(body, frontmatter)
   };
 }
 
-export function buildIndexPage(pages: GraphPage[], schemaHash: string): string {
+export function buildIndexPage(pages: GraphPage[], schemaHash: string, metadata: ManagedPageMetadata): string {
   const sources = pages.filter((page) => page.kind === "source");
   const concepts = pages.filter((page) => page.kind === "concept");
   const entities = pages.filter((page) => page.kind === "entity");
   const outputs = pages.filter((page) => page.kind === "output");
+  const insights = pages.filter((page) => page.kind === "insight");
 
   return [
     "---",
@@ -212,8 +243,12 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string): string {
     "source_ids: []",
     "node_ids: []",
     "freshness: fresh",
+    `status: ${metadata.status}`,
     "confidence: 1",
-    `updated_at: ${new Date().toISOString()}`,
+    `created_at: ${metadata.createdAt}`,
+    `updated_at: ${metadata.updatedAt}`,
+    `compiled_from: [${metadata.compiledFrom.join(", ")}]`,
+    `managed_by: ${metadata.managedBy}`,
     "backlinks: []",
     `schema_hash: ${schemaHash}`,
     "source_hashes: {}",
@@ -236,11 +271,20 @@ export function buildIndexPage(pages: GraphPage[], schemaHash: string): string {
     "## Outputs",
     "",
     ...(outputs.length ? outputs.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No saved outputs yet."]),
+    "",
+    "## Insights",
+    "",
+    ...(insights.length ? insights.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No insights yet."]),
     ""
   ].join("\n");
 }
 
-export function buildSectionIndex(kind: "sources" | "concepts" | "entities" | "outputs", pages: GraphPage[], schemaHash: string): string {
+export function buildSectionIndex(
+  kind: "sources" | "concepts" | "entities" | "outputs",
+  pages: GraphPage[],
+  schemaHash: string,
+  metadata: ManagedPageMetadata
+): string {
   const title = kind.charAt(0).toUpperCase() + kind.slice(1);
   return matter.stringify(
     [`# ${title}`, "", ...pages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`), ""].join("\n"),
@@ -252,8 +296,12 @@ export function buildSectionIndex(kind: "sources" | "concepts" | "entities" | "o
       source_ids: [],
       node_ids: [],
       freshness: "fresh" satisfies Freshness,
+      status: metadata.status,
       confidence: 1,
-      updated_at: new Date().toISOString(),
+      created_at: metadata.createdAt,
+      updated_at: metadata.updatedAt,
+      compiled_from: metadata.compiledFrom,
+      managed_by: metadata.managedBy,
       backlinks: [],
       schema_hash: schemaHash,
       source_hashes: {}
@@ -272,6 +320,7 @@ export function buildOutputPage(input: {
   relatedSourceIds?: string[];
   origin: OutputOrigin;
   slug?: string;
+  metadata: ManagedGraphPageMetadata;
 }): { page: GraphPage; content: string } {
   const slug = input.slug ?? slugify(input.question);
   const pageId = `output:${slug}`;
@@ -288,8 +337,12 @@ export function buildOutputPage(input: {
     source_ids: input.citations,
     node_ids: relatedNodeIds,
     freshness: "fresh" satisfies Freshness,
-    confidence: 0.74,
-    updated_at: new Date().toISOString(),
+    status: input.metadata.status,
+    confidence: input.metadata.confidence,
+    created_at: input.metadata.createdAt,
+    updated_at: input.metadata.updatedAt,
+    compiled_from: input.metadata.compiledFrom,
+    managed_by: input.metadata.managedBy,
     backlinks,
     schema_hash: input.schemaHash,
     source_hashes: {},
@@ -309,13 +362,18 @@ export function buildOutputPage(input: {
       sourceIds: input.citations,
       nodeIds: relatedNodeIds,
       freshness: "fresh",
-      confidence: 0.74,
+      status: input.metadata.status,
+      confidence: input.metadata.confidence,
       backlinks,
       schemaHash: input.schemaHash,
       sourceHashes: {},
       relatedPageIds,
       relatedNodeIds,
       relatedSourceIds,
+      createdAt: input.metadata.createdAt,
+      updatedAt: input.metadata.updatedAt,
+      compiledFrom: input.metadata.compiledFrom,
+      managedBy: input.metadata.managedBy,
       origin: input.origin,
       question: input.question
     },
@@ -346,6 +404,7 @@ export function buildExploreHubPage(input: {
   citations: string[];
   schemaHash: string;
   slug?: string;
+  metadata: ManagedGraphPageMetadata;
 }): { page: GraphPage; content: string } {
   const slug = input.slug ?? `explore-${slugify(input.question)}`;
   const pageId = `output:${slug}`;
@@ -364,8 +423,12 @@ export function buildExploreHubPage(input: {
     source_ids: relatedSourceIds,
     node_ids: relatedNodeIds,
     freshness: "fresh" satisfies Freshness,
-    confidence: 0.76,
-    updated_at: new Date().toISOString(),
+    status: input.metadata.status,
+    confidence: input.metadata.confidence,
+    created_at: input.metadata.createdAt,
+    updated_at: input.metadata.updatedAt,
+    compiled_from: input.metadata.compiledFrom,
+    managed_by: input.metadata.managedBy,
     backlinks,
     schema_hash: input.schemaHash,
     source_hashes: {},
@@ -385,13 +448,18 @@ export function buildExploreHubPage(input: {
       sourceIds: relatedSourceIds,
       nodeIds: relatedNodeIds,
       freshness: "fresh",
-      confidence: 0.76,
+      status: input.metadata.status,
+      confidence: input.metadata.confidence,
       backlinks,
       schemaHash: input.schemaHash,
       sourceHashes: {},
       relatedPageIds,
       relatedNodeIds,
       relatedSourceIds,
+      createdAt: input.metadata.createdAt,
+      updatedAt: input.metadata.updatedAt,
+      compiledFrom: input.metadata.compiledFrom,
+      managedBy: input.metadata.managedBy,
       origin: "explore",
       question: input.question
     },

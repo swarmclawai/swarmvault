@@ -21,7 +21,9 @@ The open source runtime gives you:
 - Markdown-first outputs that stay usable in Obsidian or plain Git
 - A structured graph artifact for relationships, provenance, and freshness
 - A vault-specific schema file that guides compile and query behavior
+- Human-only insight pages in `wiki/insights/` that SwarmVault can read but does not rewrite
 - Local full-text search over compiled pages
+- Canonical session artifacts in `state/sessions/` for compile, query, explore, lint, and watch runs
 - CLI workflows for ingest, inbox import, compile, query, explore, lint, watch, MCP, and graph serving
 - Pluggable model providers, including OpenAI, Anthropic, Gemini, Ollama, generic OpenAI-compatible APIs, and custom adapters
 - Optional web-search augmentation for deep lint findings
@@ -78,6 +80,7 @@ my-vault/
 |   `-- assets/
 |-- wiki/
 |   |-- index.md
+|   |-- insights/
 |   |-- sources/
 |   |-- concepts/
 |   |-- entities/
@@ -88,6 +91,7 @@ my-vault/
 |   |-- analyses/
 |   |-- graph.json
 |   |-- search.sqlite
+|   |-- sessions/
 |   `-- jobs.ndjson
 `-- agent/
 ```
@@ -110,6 +114,8 @@ This is a markdown instruction layer, not a separate DSL. SwarmVault reads that 
 
 Generated pages include a `schema_hash` in frontmatter, which lets lint mark pages stale when the schema changes.
 
+Generated source, concept, entity, output, and index pages also carry lifecycle fields such as `status`, `created_at`, `updated_at`, `compiled_from`, and `managed_by`.
+
 ## Core Commands
 
 - `swarmvault init`: create a workspace, default config, and default schema file
@@ -124,6 +130,8 @@ Generated pages include a `schema_hash` in frontmatter, which lets lint mark pag
 - `swarmvault graph serve`: open the local graph viewer
 - `swarmvault install --agent codex|claude|cursor`: install agent-specific rules
 
+Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
+
 ## Compounding Loop
 
 SwarmVault is designed so useful work compounds:
@@ -133,6 +141,7 @@ SwarmVault is designed so useful work compounds:
 - later `compile` runs add `Related Outputs` sections back onto relevant source, concept, and entity pages
 - `explore` chains several saved queries together and writes a hub page you can revisit
 - `lint --deep` can suggest missing citations, coverage gaps, candidate pages, and follow-up questions without mutating the vault
+- compile, query, explore, lint, and watch each write a session artifact to `state/sessions/`
 
 ## Why This Exists
 

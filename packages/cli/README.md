@@ -41,7 +41,9 @@ Create a workspace with:
 - `inbox/`
 - `raw/`
 - `wiki/`
+- `wiki/insights/`
 - `state/`
+- `state/sessions/`
 - `agent/`
 - `swarmvault.config.json`
 - `swarmvault.schema.md`
@@ -64,7 +66,7 @@ Compile the current manifests into:
 - structured graph data in `state/graph.json`
 - local search data in `state/search.sqlite`
 
-The compiler also reads `swarmvault.schema.md` and records a `schema_hash` in generated pages so schema edits can mark pages stale.
+The compiler also reads `swarmvault.schema.md` and records a `schema_hash` plus lifecycle metadata such as `status`, `created_at`, `updated_at`, `compiled_from`, and `managed_by` in generated pages so schema edits can mark pages stale without losing lifecycle state.
 
 ### `swarmvault query "<question>" [--save]`
 
@@ -78,6 +80,8 @@ With `--save`, the answer is written into `wiki/outputs/` and immediately regist
 - `state/search.sqlite`
 
 Saved outputs also carry related page, node, and source metadata so later compiles can link them back into the wiki.
+
+Human-authored pages in `wiki/insights/` are also indexed into search and query context, but SwarmVault does not rewrite them after initialization.
 
 ### `swarmvault explore "<question>" [--steps <n>]`
 
@@ -108,7 +112,7 @@ Run anti-drift and vault health checks such as stale pages, missing graph artifa
 
 ### `swarmvault watch [--lint] [--debounce <ms>]`
 
-Watch the inbox directory and trigger import and compile cycles when files change. With `--lint`, each cycle also runs linting. Run metadata is appended to `state/jobs.ndjson`.
+Watch the inbox directory and trigger import and compile cycles when files change. With `--lint`, each cycle also runs linting. Each cycle writes a canonical session artifact to `state/sessions/`, and compatibility run metadata is still appended to `state/jobs.ndjson`.
 
 ### `swarmvault mcp`
 
@@ -123,7 +127,7 @@ Run SwarmVault as a local MCP server over stdio. This exposes the vault to compa
 - `compile_vault`
 - `lint_vault`
 
-The MCP surface also exposes `swarmvault://schema` and includes `schemaPath` in `workspace_info`.
+The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `swarmvault://sessions/{path}`, and includes `schemaPath` in `workspace_info`.
 
 ### `swarmvault graph serve`
 

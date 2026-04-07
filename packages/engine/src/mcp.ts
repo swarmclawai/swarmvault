@@ -8,7 +8,7 @@ import { loadVaultConfig } from "./config.js";
 import { ingestInput, listManifests } from "./ingest.js";
 import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact } from "./types.js";
-import { readJsonFile } from "./utils.js";
+import { fileExists, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
 import { compileVault, getWorkspaceInfo, lintVault, listPages, queryVault, readPage, searchVault } from "./vault.js";
 
 const SERVER_VERSION = "0.1.5";
@@ -190,6 +190,24 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
   );
 
   server.registerResource(
+    "swarmvault-sessions",
+    "swarmvault://sessions",
+    {
+      title: "SwarmVault Sessions",
+      description: "Canonical session artifacts for compile, query, explore, lint, and watch runs.",
+      mimeType: "application/json"
+    },
+    async () => {
+      const { paths } = await loadVaultConfig(rootDir);
+      const files = (await listFilesRecursive(paths.sessionsDir))
+        .filter((filePath) => filePath.endsWith(".md"))
+        .map((filePath) => toPosix(path.relative(paths.sessionsDir, filePath)))
+        .sort();
+      return asTextResource("swarmvault://sessions", JSON.stringify(files, null, 2));
+    }
+  );
+
+  server.registerResource(
     "swarmvault-pages",
     new ResourceTemplate("swarmvault://pages/{path}", {
       list: async () => {
@@ -199,7 +217,7 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
             uri: `swarmvault://pages/${encodeURIComponent(page.path)}`,
             name: page.title,
             title: page.title,
-            description: `Generated ${page.kind} page`,
+            description: `SwarmVault ${page.kind} page`,
             mimeType: "text/markdown"
           }))
         };
@@ -221,6 +239,44 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
       const { paths } = await loadVaultConfig(rootDir);
       const absolutePath = path.resolve(paths.wikiDir, relativePath);
       return asTextResource(`swarmvault://pages/${encodedPath}`, await fs.readFile(absolutePath, "utf8"));
+    }
+  );
+
+  server.registerResource(
+    "swarmvault-session-files",
+    new ResourceTemplate("swarmvault://sessions/{path}", {
+      list: async () => {
+        const { paths } = await loadVaultConfig(rootDir);
+        const files = (await listFilesRecursive(paths.sessionsDir))
+          .filter((filePath) => filePath.endsWith(".md"))
+          .map((filePath) => toPosix(path.relative(paths.sessionsDir, filePath)))
+          .sort();
+        return {
+          resources: files.map((relativePath) => ({
+            uri: `swarmvault://sessions/${encodeURIComponent(relativePath)}`,
+            name: path.basename(relativePath, ".md"),
+            title: relativePath,
+            description: "SwarmVault session artifact",
+            mimeType: "text/markdown"
+          }))
+        };
+      }
+    }),
+    {
+      title: "SwarmVault Session Files",
+      description: "Session artifacts exposed as MCP resources.",
+      mimeType: "text/markdown"
+    },
+    async (_uri, variables) => {
+      const { paths } = await loadVaultConfig(rootDir);
+      const encodedPath = typeof variables.path === "string" ? variables.path : "";
+      const relativePath = decodeURIComponent(encodedPath);
+      const absolutePath = path.resolve(paths.sessionsDir, relativePath);
+      if (!absolutePath.startsWith(paths.sessionsDir) || !(await fileExists(absolutePath))) {
+        return asTextResource(`swarmvault://sessions/${encodedPath}`, `Session not found: ${relativePath}`);
+      }
+
+      return asTextResource(`swarmvault://sessions/${encodedPath}`, await fs.readFile(absolutePath, "utf8"));
     }
   );
 

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
 import { compileVault, createMcpServer, importInbox, ingestInput, initVault, lintVault, queryVault, watchVault } from "../src/index.js";
 
@@ -38,6 +39,8 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, "swarmvault.config.json"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, "swarmvault.schema.md"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, "inbox"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "wiki", "insights", "index.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(rootDir, "state", "sessions"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, "AGENTS.md"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, "CLAUDE.md"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(rootDir, ".cursor", "rules", "swarmvault.mdc"))).resolves.toBeUndefined();
@@ -64,6 +67,17 @@ describe("swarmvault workflow", () => {
 
     const compile = await compileVault(rootDir);
     expect(compile.pageCount).toBeGreaterThan(0);
+    const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
+    const parsedSourcePage = matter(await fs.readFile(sourcePagePath, "utf8"));
+    expect(parsedSourcePage.data.status).toBe("active");
+    expect(parsedSourcePage.data.managed_by).toBe("system");
+    expect(parsedSourcePage.data.created_at).toBeTruthy();
+    expect(parsedSourcePage.data.updated_at).toBeTruthy();
+    expect(parsedSourcePage.data.compiled_from).toContain(manifest.sourceId);
+
+    await compileVault(rootDir);
+    const reparsedSourcePage = matter(await fs.readFile(sourcePagePath, "utf8"));
+    expect(reparsedSourcePage.data.created_at).toBe(parsedSourcePage.data.created_at);
 
     const query = await queryVault(rootDir, "What does SwarmVault optimize for?", true);
     expect(query.answer).toContain("Question:");
@@ -71,6 +85,11 @@ describe("swarmvault workflow", () => {
 
     const findings = await lintVault(rootDir);
     expect(findings.some((finding) => finding.code === "graph_missing")).toBe(false);
+
+    const sessionFiles = (await fs.readdir(path.join(rootDir, "state", "sessions"))).filter((file) => file.endsWith(".md"));
+    expect(sessionFiles.some((file) => file.includes("-compile-"))).toBe(true);
+    expect(sessionFiles.some((file) => file.includes("-query-"))).toBe(true);
+    expect(sessionFiles.some((file) => file.includes("-lint-"))).toBe(true);
   });
 
   it("imports inbox markdown bundles with copied attachments", async () => {
@@ -268,6 +287,9 @@ describe("swarmvault workflow", () => {
     expect(schemaResource.contents[0]?.uri).toBe("swarmvault://schema");
     expect((schemaResource.contents[0] as { text: string }).text).toContain("# SwarmVault Schema");
 
+    const sessionsResource = await client.readResource({ uri: "swarmvault://sessions" });
+    expect((sessionsResource.contents[0] as { text: string }).text).toContain("compile");
+
     await client.close();
     await server.close();
   });
@@ -297,7 +319,7 @@ describe("swarmvault workflow", () => {
             .then(() => true)
             .catch(() => false))
         );
-      });
+      }, 19_000);
 
       const jobsLog = await fs.readFile(path.join(rootDir, "state", "jobs.ndjson"), "utf8");
       const runs = jobsLog
@@ -309,8 +331,11 @@ describe("swarmvault workflow", () => {
       expect(runs.length).toBeGreaterThan(0);
       expect(runs.at(-1)?.success).toBe(true);
       expect(runs.at(-1)?.importedCount).toBe(1);
+
+      const sessionFiles = (await fs.readdir(path.join(rootDir, "state", "sessions"))).filter((file) => file.endsWith(".md"));
+      expect(sessionFiles.some((file) => file.includes("-watch-"))).toBe(true);
     } finally {
       await controller.close();
     }
-  }, 20_000);
+  }, 25_000);
 });

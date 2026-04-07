@@ -211,6 +211,7 @@ export function resolvePaths(
     searchDbPath: path.join(stateDir, "search.sqlite"),
     compileStatePath: path.join(stateDir, "compile-state.json"),
     jobsLogPath: path.join(stateDir, "jobs.ndjson"),
+    sessionsDir: path.join(stateDir, "sessions"),
     configPath
   };
 }
@@ -238,6 +239,7 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
     ensureDir(paths.rawDir),
     ensureDir(paths.wikiDir),
     ensureDir(paths.stateDir),
+    ensureDir(paths.sessionsDir),
     ensureDir(paths.agentDir),
     ensureDir(paths.inboxDir),
     ensureDir(paths.manifestsDir),

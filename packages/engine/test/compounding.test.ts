@@ -88,6 +88,43 @@ describe("compounding loop", () => {
     expect(sourcePage).toContain(parsedOutput.data.title as string);
   });
 
+  it("indexes human insights without rewriting them", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(
+      path.join(rootDir, "note.md"),
+      ["# Durable Notes", "", "Compiled pages should coexist with human-authored insight files."].join("\n"),
+      "utf8"
+    );
+    await ingestInput(rootDir, "note.md");
+
+    const insightPath = path.join(rootDir, "wiki", "insights", "research-hypothesis.md");
+    const insightContent = [
+      "---",
+      "title: Research Hypothesis",
+      "status: active",
+      "managed_by: human",
+      "---",
+      "",
+      "# Research Hypothesis",
+      "",
+      "Human insight: durable notes need explicit session history."
+    ].join("\n");
+    await fs.writeFile(insightPath, insightContent, "utf8");
+
+    await compileVault(rootDir);
+
+    const searchResults = await searchVault(rootDir, "explicit session history", 10);
+    expect(searchResults.some((page) => page.path === "insights/research-hypothesis.md")).toBe(true);
+
+    const query = await queryVault(rootDir, "What human insight is recorded about session history?");
+    expect(query.relatedPageIds.some((pageId) => pageId.startsWith("insight:"))).toBe(true);
+    expect(query.answer).toContain("Research Hypothesis");
+
+    const insightAfterCompile = await fs.readFile(insightPath, "utf8");
+    expect(insightAfterCompile).toBe(insightContent);
+  });
+
   it("writes multi-step exploration outputs and a hub page", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

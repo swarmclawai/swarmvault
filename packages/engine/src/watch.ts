@@ -3,7 +3,7 @@ import process from "node:process";
 import chokidar from "chokidar";
 import { initWorkspace } from "./config.js";
 import { importInbox } from "./ingest.js";
-import { appendWatchRun } from "./logs.js";
+import { appendWatchRun, recordSession } from "./logs.js";
 import type { WatchController, WatchOptions } from "./types.js";
 import { compileVault, lintVault } from "./vault.js";
 
@@ -100,6 +100,23 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
       }
     } finally {
       const finishedAt = new Date();
+      await recordSession(rootDir, {
+        operation: "watch",
+        title: `Watch cycle for ${paths.inboxDir}`,
+        startedAt: startedAt.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        success,
+        error,
+        changedPages,
+        lintFindingCount,
+        lines: [
+          `reasons=${runReasons.join(",") || "none"}`,
+          `imported=${importedCount}`,
+          `scanned=${scannedCount}`,
+          `attachments=${attachmentCount}`,
+          `lint=${lintFindingCount ?? 0}`
+        ]
+      });
       await appendWatchRun(rootDir, {
         startedAt: startedAt.toISOString(),
         finishedAt: finishedAt.toISOString(),
