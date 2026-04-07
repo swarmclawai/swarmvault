@@ -1552,6 +1552,7 @@ async function syncVaultArtifacts(
     insightHashes: Record<string, string>;
     previousState: CompileState | null;
     approve?: boolean;
+    promoteCandidates?: boolean;
   }
 ): Promise<{
   graph: GraphArtifact;
@@ -1570,6 +1571,7 @@ async function syncVaultArtifacts(
   const promotedPageIds: string[] = [];
   const candidateHistory: CompileState["candidateHistory"] = {};
   const records: ManagedPageRecord[] = [];
+  const promoteCandidates = input.promoteCandidates ?? true;
 
   for (const manifest of input.manifests) {
     const analysis = input.analyses.find((item) => item.sourceId === manifest.sourceId);
@@ -1700,7 +1702,7 @@ async function syncVaultArtifacts(
       const projectIds = scopedProjectIdsFromSources(sourceIds, input.sourceProjects);
       const schemaHash = effectiveHashForProject(input.schemas, projectIds[0] ?? null);
       const previousEntry = input.previousState?.candidateHistory?.[pageId];
-      const promoted = previousEntry?.status === "active" || shouldPromoteCandidate(previousEntry, sourceIds);
+      const promoted = previousEntry?.status === "active" || (promoteCandidates && shouldPromoteCandidate(previousEntry, sourceIds));
       const relativePath = promoted ? activeAggregatePath(itemKind, slug) : candidatePagePathFor(itemKind, slug);
       const fallbackPaths = [
         path.join(paths.wikiDir, activeAggregatePath(itemKind, slug)),
@@ -2405,7 +2407,8 @@ async function refreshVaultAfterOutputSave(rootDir: string): Promise<void> {
     outputHashes: pageHashes(storedOutputs),
     insightHashes: pageHashes(storedInsights),
     previousState: await readJsonFile<CompileState>(paths.compileStatePath),
-    approve: false
+    approve: false,
+    promoteCandidates: false
   });
 }
 

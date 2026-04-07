@@ -41,6 +41,9 @@ const state = {
 let installedCli;
 
 let graphServer;
+let chartPrimaryAssetPath = "";
+let widgetModulePath = "";
+let pendingApprovalId = "";
 
 await fs.mkdir(logsDir, { recursive: true });
 
@@ -140,12 +143,143 @@ try {
       assert.ok(Array.isArray(chart.outputAssets) && chart.outputAssets.length > 0, "chart query did not return output assets");
       await assertExists(chart.savedPath);
       await assertExists(path.join(workspaceDir, "wiki", chart.outputAssets[0].path));
+      chartPrimaryAssetPath = chart.outputAssets.find((asset) => asset.role === "primary")?.path ?? chart.outputAssets[0].path;
 
       const image = await runCliJson(["query", "Show this vault as an image", "--format", "image"]);
       assert.equal(image.outputFormat, "image", "image query did not report the image format");
       assert.ok(Array.isArray(image.outputAssets) && image.outputAssets.length > 0, "image query did not return output assets");
       await assertExists(image.savedPath);
       await assertExists(path.join(workspaceDir, "wiki", image.outputAssets[0].path));
+    });
+
+    await runStep("projects-and-code", async () => {
+      await updateConfig((config) => {
+        config.projects = {
+          alpha: {
+            roots: ["apps/alpha"]
+          }
+        };
+      });
+      await runCliJson(["init", "--obsidian"]);
+
+      await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "util.ts"),
+        [
+          "export interface Renderable {",
+          "  render(): string;",
+          "}",
+          "",
+          "export function formatLabel(name: string): string {",
+          "  return `Widget:${name}`;",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "widget.ts"),
+        [
+          "import { formatLabel, Renderable } from './util';",
+          "",
+          "function buildLabel(name: string): string {",
+          "  return formatLabel(name);",
+          "}",
+          "",
+          "export class Widget implements Renderable {",
+          "  constructor(private readonly name: string) {}",
+          "",
+          "  render(): string {",
+          "    return buildLabel(this.name);",
+          "  }",
+          "}",
+          "",
+          "export function renderWidget(name: string): string {",
+          "  return buildLabel(name);",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const util = await runCliJson(["ingest", "apps/alpha/src/util.ts"]);
+      const widget = await runCliJson(["ingest", "apps/alpha/src/widget.ts"]);
+      assert.equal(util.sourceKind, "code", "util ingest did not classify as code");
+      assert.equal(util.language, "typescript", "util ingest did not classify as typescript");
+      assert.equal(widget.sourceKind, "code", "widget ingest did not classify as code");
+
+      await runCliJson(["compile"]);
+
+      widgetModulePath = `code/${widget.sourceId}.md`;
+      await assertExists(path.join(workspaceDir, "wiki", widgetModulePath));
+      await assertExists(path.join(workspaceDir, "wiki", "projects", "index.md"));
+      await assertExists(path.join(workspaceDir, "wiki", "projects", "alpha", "index.md"));
+      const modulePage = await fs.readFile(path.join(workspaceDir, "wiki", widgetModulePath), "utf8");
+      assert.ok(modulePage.includes("## Imports"), "module page did not include imports");
+      assert.ok(modulePage.includes("formatLabel"), "module page did not include imported symbol");
+
+      const graphConfig = JSON.parse(await fs.readFile(path.join(workspaceDir, ".obsidian", "graph.json"), "utf8"));
+      assert.ok(
+        Array.isArray(graphConfig.colorGroups) && graphConfig.colorGroups.some((group) => group.query === "tag:#project/alpha"),
+        "obsidian graph config did not include project tag colors"
+      );
+    });
+
+    await runStep("candidate-flow", async () => {
+      await fs.writeFile(
+        path.join(workspaceDir, "candidate-provider.mjs"),
+        [
+          "export async function createAdapter(id, config) {",
+          "  return {",
+          "    id,",
+          "    type: 'custom',",
+          "    model: config.model,",
+          "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+          "    async generateText() {",
+          "      return { text: 'ok' };",
+          "    },",
+          "    async generateStructured(request) {",
+          "      if (request.prompt.includes('Approval Source')) {",
+          "        return {",
+          "          title: 'Approval Source',",
+          "          summary: 'Approval summary.',",
+          "          concepts: [{ name: 'Approval Concept', description: 'Requires review.' }],",
+          "          entities: [],",
+          "          claims: [{ text: 'Approval claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'approval-source' }],",
+          "          questions: []",
+          "        };",
+          "      }",
+          "      return {",
+          "        title: 'Candidate Source',",
+          "        summary: 'Candidate summary.',",
+          "        concepts: [{ name: 'Candidate Concept', description: 'A recurring concept.' }],",
+          "        entities: [],",
+          "        claims: [{ text: 'Candidate claim.', confidence: 0.8, status: 'extracted', polarity: 'positive', citation: 'candidate-source' }],",
+          "        questions: []",
+          "      };",
+          "    }",
+          "  };",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+
+      await updateConfig((config) => {
+        config.providers.candidateTest = {
+          type: "custom",
+          model: "candidate-test",
+          module: "./candidate-provider.mjs",
+          capabilities: ["chat", "structured"]
+        };
+        config.tasks.compileProvider = "candidateTest";
+      });
+
+      await fs.writeFile(path.join(workspaceDir, "candidate.md"), "# Candidate\n\nCandidate content.", "utf8");
+      await runCliJson(["ingest", "candidate.md"]);
+      await runCliJson(["compile"]);
+
+      const candidates = await runCliJson(["candidate", "list"]);
+      assert.ok(Array.isArray(candidates) && candidates.length > 0, "candidate list did not report staged candidates");
+      assert.ok(candidates.some((entry) => entry.pageId === "concept:candidate-concept"), "candidate concept missing from candidate list");
+      await assertExists(path.join(workspaceDir, "wiki", "candidates", "concepts", "candidate-concept.md"));
     });
 
     await runStep("explore", async () => {
@@ -212,11 +346,90 @@ try {
       }, 10_000);
       const html = await fetch(`http://127.0.0.1:${port}/`).then((response) => response.text());
       const graph = await fetch(`http://127.0.0.1:${port}/api/graph`).then((response) => response.json());
+      const candidates = await fetchJson(`http://127.0.0.1:${port}/api/candidates`);
+      assert.ok(Array.isArray(candidates) && candidates.some((entry) => entry.pageId === "concept:candidate-concept"), "candidate API did not expose staged candidate");
+      const promoted = await fetchJson(`http://127.0.0.1:${port}/api/candidate?action=promote`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: "concept:candidate-concept" })
+      });
+      assert.equal(promoted.pageId, "concept:candidate-concept", "candidate API returned the wrong promoted page");
+      await assertExists(path.join(workspaceDir, "wiki", "concepts", "candidate-concept.md"));
+
+      await fs.writeFile(path.join(workspaceDir, "approval.md"), "# Approval Source\n\nApproval content.", "utf8");
+      await runCliJson(["ingest", "approval.md"]);
+      await runCliJson(["compile"]);
+      const staged = await runCliJson(["compile", "--approve"]);
+      pendingApprovalId = staged.approvalId;
+      assert.ok(typeof pendingApprovalId === "string" && pendingApprovalId.length > 0, "compile --approve did not return an approval id");
+
+      const reviews = await fetchJson(`http://127.0.0.1:${port}/api/reviews`);
+      assert.ok(Array.isArray(reviews) && reviews.some((entry) => entry.approvalId === pendingApprovalId), "reviews API did not list the pending approval");
+      const reviewDetail = await fetchJson(`http://127.0.0.1:${port}/api/review?id=${encodeURIComponent(pendingApprovalId)}`);
+      assert.ok(
+        Array.isArray(reviewDetail.entries) && reviewDetail.entries.some((entry) => entry.pageId === "concept:approval-concept"),
+        "review API did not expose the approval concept entry"
+      );
+
+      const search = await fetchJson(
+        `http://127.0.0.1:${port}/api/search?q=${encodeURIComponent("renderWidget")}&project=alpha&kind=module&status=active&limit=10`
+      );
+      assert.ok(Array.isArray(search) && search.some((entry) => entry.path === widgetModulePath), "search API did not return the alpha module page");
+      const page = await fetchJson(`http://127.0.0.1:${port}/api/page?path=${encodeURIComponent(widgetModulePath)}`);
+      assert.equal(page.path, widgetModulePath, "page API returned the wrong module path");
+      assert.ok(page.content.includes("## Imports"), "page API did not return module page content");
+
+      const assetResponse = await fetch(`http://127.0.0.1:${port}/api/asset?path=${encodeURIComponent(chartPrimaryAssetPath)}`);
+      assert.equal(assetResponse.ok, true, "asset API did not return the saved chart asset");
+      assert.ok((assetResponse.headers.get("content-type") ?? "").includes("image/"), "asset API returned the wrong mime type");
+
+      const blockedAssetResponse = await fetch(`http://127.0.0.1:${port}/api/asset?path=${encodeURIComponent("../package.json")}`);
+      assert.equal(blockedAssetResponse.status, 404, "asset API did not block path traversal");
+
       assert.ok(html.includes("<!doctype html") || html.includes("<html"), "graph viewer did not return HTML");
       assert.ok(Array.isArray(graph.nodes), "graph API did not return nodes");
       assert.ok(Array.isArray(graph.pages), "graph API did not return pages");
       await stopProcess(graphServer.child, graphServer.label);
       graphServer = undefined;
+    });
+
+    await runStep("review-flow", async () => {
+      const approvals = await runCliJson(["review", "list"]);
+      assert.ok(Array.isArray(approvals) && approvals.some((entry) => entry.approvalId === pendingApprovalId), "review list did not include the pending approval");
+
+      const detail = await runCliJson(["review", "show", pendingApprovalId]);
+      assert.ok(Array.isArray(detail.entries) && detail.entries.some((entry) => entry.pageId === "concept:approval-concept"), "review show did not include the approval concept");
+
+      const rejected = await runCliJson(["review", "reject", pendingApprovalId, "concept:approval-concept"]);
+      assert.ok(Array.isArray(rejected.updatedEntries) && rejected.updatedEntries.length === 1, "review reject did not update exactly one entry");
+      await assertMissing(path.join(workspaceDir, "wiki", "concepts", "approval-concept.md"));
+
+      const stagedAgain = await runCliJson(["compile", "--approve"]);
+      const accepted = await runCliJson(["review", "accept", stagedAgain.approvalId]);
+      assert.ok(Array.isArray(accepted.updatedEntries) && accepted.updatedEntries.length > 0, "review accept did not apply staged entries");
+      await assertExists(path.join(workspaceDir, "wiki", "concepts", "approval-concept.md"));
+      await assertMissing(path.join(workspaceDir, "wiki", "candidates", "concepts", "approval-concept.md"));
+    });
+
+    await runStep("watch", async () => {
+      const watchServer = await startCliServer("watch", ["watch", "--lint", "--debounce", "150"], workspaceDir);
+      try {
+        await fs.writeFile(
+          path.join(workspaceDir, "inbox", "watch.md"),
+          ["# Watch Note", "", "SwarmVault should import and compile this file when watch mode is running."].join("\n"),
+          "utf8"
+        );
+
+        await waitFor(async () => {
+          const jobsPath = path.join(workspaceDir, "state", "jobs.ndjson");
+          const sessionsDir = path.join(workspaceDir, "state", "sessions");
+          const jobs = await fs.readFile(jobsPath, "utf8").catch(() => "");
+          const sessions = await fs.readdir(sessionsDir).catch(() => []);
+          return jobs.includes('"success":true') && jobs.includes('"importedCount":1') && sessions.some((file) => file.includes("-watch-"));
+        }, 20_000);
+      } finally {
+        await stopProcess(watchServer.child, watchServer.label);
+      }
     });
 
     await runStep("mcp", async () => {
@@ -248,12 +461,23 @@ try {
         const workspaceJson = JSON.parse(readToolText(workspaceInfo));
         assert.equal(workspaceJson.rootDir, workspaceDir, "workspace_info rootDir mismatch");
 
+        const searchResults = await client.callTool({ name: "search_pages", arguments: { query: "renderWidget", limit: 5 } });
+        const searchJson = JSON.parse(readToolText(searchResults));
+        assert.ok(Array.isArray(searchJson) && searchJson.some((entry) => entry.path === widgetModulePath), "MCP search_pages did not return the module page");
+
         const queryResult = await client.callTool({
           name: "query_vault",
           arguments: { question: "What is this vault about?", save: false }
         });
         const queryJson = JSON.parse(readToolText(queryResult));
         assert.ok(typeof queryJson.answer === "string" && queryJson.answer.length > 0, "MCP query returned no answer");
+
+        const chartQuery = await client.callTool({
+          name: "query_vault",
+          arguments: { question: "Show this vault as a chart", save: false, format: "chart" }
+        });
+        const chartJson = JSON.parse(readToolText(chartQuery));
+        assert.equal(chartJson.outputFormat, "chart", "MCP chart query did not return chart output");
       } finally {
         await fs.writeFile(stderrPath, stderrChunks.join(""), "utf8");
         await client.close();
@@ -381,6 +605,20 @@ async function runCliJson(args) {
     .filter(Boolean);
   assert.ok(lines.length > 0, `no JSON output received for command: ${args.join(" ")}`);
   return JSON.parse(lines.at(-1));
+}
+
+async function updateConfig(mutate) {
+  const configPath = path.join(workspaceDir, "swarmvault.config.json");
+  const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+  mutate(config);
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function fetchJson(url, init) {
+  const response = await fetch(url, init);
+  const text = await response.text();
+  assert.equal(response.ok, true, `HTTP ${response.status} from ${url}: ${text}`);
+  return text ? JSON.parse(text) : null;
 }
 
 async function runInstalledCliCommand(label, args, options = {}) {
