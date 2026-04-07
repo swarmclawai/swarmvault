@@ -19,14 +19,35 @@ const program = new Command();
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.4");
+  .version("0.1.4")
+  .option("--json", "Emit structured JSON output", false);
+
+function isJson(): boolean {
+  return program.opts().json === true;
+}
+
+function emitJson(data: unknown): void {
+  process.stdout.write(`${JSON.stringify(data)}\n`);
+}
+
+function log(message: string): void {
+  if (isJson()) {
+    process.stderr.write(`${message}\n`);
+  } else {
+    process.stdout.write(`${message}\n`);
+  }
+}
 
 program
   .command("init")
   .description("Initialize a SwarmVault workspace in the current directory.")
   .action(async () => {
     await initVault(process.cwd());
-    process.stdout.write("Initialized SwarmVault workspace.\n");
+    if (isJson()) {
+      emitJson({ status: "initialized", rootDir: process.cwd() });
+    } else {
+      log("Initialized SwarmVault workspace.");
+    }
   });
 
 program
@@ -35,7 +56,11 @@ program
   .argument("<input>", "Local file path or URL")
   .action(async (input: string) => {
     const manifest = await ingestInput(process.cwd(), input);
-    process.stdout.write(`${manifest.sourceId}\n`);
+    if (isJson()) {
+      emitJson(manifest);
+    } else {
+      log(manifest.sourceId);
+    }
   });
 
 const inbox = program.command("inbox").description("Inbox and capture workflows.");
@@ -45,9 +70,13 @@ inbox
   .argument("[dir]", "Optional inbox directory override")
   .action(async (dir?: string) => {
     const result = await importInbox(process.cwd(), dir);
-    process.stdout.write(
-      `Imported ${result.imported.length} source(s) from ${result.inputDir}. Scanned: ${result.scannedCount}. Attachments: ${result.attachmentCount}. Skipped: ${result.skipped.length}.\n`
-    );
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(
+        `Imported ${result.imported.length} source(s) from ${result.inputDir}. Scanned: ${result.scannedCount}. Attachments: ${result.attachmentCount}. Skipped: ${result.skipped.length}.`
+      );
+    }
   });
 
 program
@@ -55,9 +84,11 @@ program
   .description("Compile manifests into wiki pages, graph JSON, and search index.")
   .action(async () => {
     const result = await compileVault(process.cwd());
-    process.stdout.write(
-      `Compiled ${result.sourceCount} source(s), ${result.pageCount} page(s). Changed: ${result.changedPages.length}.\n`
-    );
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Compiled ${result.sourceCount} source(s), ${result.pageCount} page(s). Changed: ${result.changedPages.length}.`);
+    }
   });
 
 program
@@ -67,9 +98,13 @@ program
   .option("--save", "Persist the answer to wiki/outputs", false)
   .action(async (question: string, options: { save?: boolean }) => {
     const result = await queryVault(process.cwd(), question, options.save ?? false);
-    process.stdout.write(`${result.answer}\n`);
-    if (result.savedTo) {
-      process.stdout.write(`Saved to ${result.savedTo}\n`);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(result.answer);
+      if (result.savedTo) {
+        log(`Saved to ${result.savedTo}`);
+      }
     }
   });
 
@@ -78,15 +113,16 @@ program
   .description("Run anti-drift and wiki-health checks.")
   .action(async () => {
     const findings = await lintVault(process.cwd());
-    if (!findings.length) {
-      process.stdout.write("No findings.\n");
+    if (isJson()) {
+      emitJson(findings);
       return;
     }
-
+    if (!findings.length) {
+      log("No findings.");
+      return;
+    }
     for (const finding of findings) {
-      process.stdout.write(
-        `[${finding.severity}] ${finding.code}: ${finding.message}${finding.pagePath ? ` (${finding.pagePath})` : ""}\n`
-      );
+      log(`[${finding.severity}] ${finding.code}: ${finding.message}${finding.pagePath ? ` (${finding.pagePath})` : ""}`);
     }
   });
 
@@ -98,7 +134,11 @@ graph
   .action(async (options: { port?: string }) => {
     const port = options.port ? Number.parseInt(options.port, 10) : undefined;
     const server = await startGraphServer(process.cwd(), port);
-    process.stdout.write(`Graph viewer running at http://localhost:${server.port}\n`);
+    if (isJson()) {
+      emitJson({ port: server.port, url: `http://localhost:${server.port}` });
+    } else {
+      log(`Graph viewer running at http://localhost:${server.port}`);
+    }
     process.on("SIGINT", async () => {
       await server.close();
       process.exit(0);
@@ -116,7 +156,11 @@ program
       lint: options.lint ?? false,
       debounceMs: Number.isFinite(debounceMs) ? debounceMs : 900
     });
-    process.stdout.write("Watching inbox for changes. Press Ctrl+C to stop.\n");
+    if (isJson()) {
+      emitJson({ status: "watching", inboxDir: "inbox" });
+    } else {
+      log("Watching inbox for changes. Press Ctrl+C to stop.");
+    }
     process.on("SIGINT", async () => {
       await controller.close();
       process.exit(0);
@@ -127,6 +171,9 @@ program
   .command("mcp")
   .description("Run SwarmVault as a local MCP server over stdio.")
   .action(async () => {
+    if (isJson()) {
+      process.stderr.write(`${JSON.stringify({ status: "running", transport: "stdio" })}\n`);
+    }
     const controller = await startMcpServer(process.cwd());
     process.on("SIGINT", async () => {
       await controller.close();
@@ -140,11 +187,19 @@ program
   .requiredOption("--agent <agent>", "codex, claude, or cursor")
   .action(async (options: { agent: "codex" | "claude" | "cursor" }) => {
     const target = await installAgent(process.cwd(), options.agent);
-    process.stdout.write(`Installed rules into ${target}\n`);
+    if (isJson()) {
+      emitJson({ agent: options.agent, target });
+    } else {
+      log(`Installed rules into ${target}`);
+    }
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
+  if (isJson()) {
+    emitJson({ error: message });
+  } else {
+    process.stderr.write(`${message}\n`);
+  }
   process.exit(1);
 });
