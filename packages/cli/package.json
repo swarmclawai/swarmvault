@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/cli",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Global CLI for SwarmVault.",
   "type": "module",
   "main": "dist/index.js",

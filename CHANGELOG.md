@@ -4,6 +4,11 @@
 
 Nothing yet.
 
+## 0.1.16
+
+- Fixed the CLI `--version` output to read from the installed package metadata at runtime instead of a stale hardcoded string
+- Re-ran the published-install smoke path after release to catch version-surface drift in the real npm package
+
 ## 0.1.15
 
 - Added `swarmvault install --agent goose|pi|gemini`, with shared `AGENTS.md` handling for Codex, Goose, and Pi plus `GEMINI.md` support for Gemini CLI

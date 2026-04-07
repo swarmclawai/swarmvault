@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import process from "node:process";
 import {
   acceptApproval,
@@ -28,12 +29,22 @@ import {
 import { Command, Option } from "commander";
 
 const program = new Command();
+const CLI_VERSION = readCliVersion();
 
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
-  .version("0.1.14")
+  .version(CLI_VERSION)
   .option("--json", "Emit structured JSON output", false);
+
+function readCliVersion(): string {
+  try {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.16";
+  } catch {
+    return "0.1.16";
+  }
+}
 
 function isJson(): boolean {
   return program.opts().json === true;
