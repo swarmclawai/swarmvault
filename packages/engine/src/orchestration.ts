@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
-import { findingSeveritySchema } from "./findings.js";
+import { normalizeFindingSeverity } from "./findings.js";
 import { createProvider } from "./providers/registry.js";
 import type { OrchestrationRole, OrchestrationRoleConfig, OrchestrationRoleResult, RoleExecutorConfig } from "./types.js";
 
@@ -11,7 +11,7 @@ const orchestrationRoleResultSchema = z.object({
   findings: z
     .array(
       z.object({
-        severity: findingSeveritySchema,
+        severity: z.string().optional().default("info"),
         message: z.string().min(1),
         relatedPageIds: z.array(z.string()).optional(),
         relatedSourceIds: z.array(z.string()).optional(),
@@ -102,7 +102,7 @@ async function runProviderRole(
   return {
     role,
     summary: result.summary,
-    findings: result.findings.map((finding) => ({ role, ...finding })),
+    findings: result.findings.map((finding) => ({ role, ...finding, severity: normalizeFindingSeverity(finding.severity) })),
     questions: result.questions,
     proposals: result.proposals
   };
@@ -165,7 +165,7 @@ async function runCommandRole(
   return {
     role,
     summary: parsed.summary,
-    findings: parsed.findings.map((finding) => ({ role, ...finding })),
+    findings: parsed.findings.map((finding) => ({ role, ...finding, severity: normalizeFindingSeverity(finding.severity) })),
     questions: parsed.questions,
     proposals: parsed.proposals
   };

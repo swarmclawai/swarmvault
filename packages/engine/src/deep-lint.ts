@@ -3,7 +3,7 @@ import path from "node:path";
 import matter from "gray-matter";
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
-import { findingSeveritySchema } from "./findings.js";
+import { normalizeFindingSeverity } from "./findings.js";
 import { listManifests } from "./ingest.js";
 import { runConfiguredRoles, summarizeRoleQuestions } from "./orchestration.js";
 import { getProviderForTask } from "./providers/registry.js";
@@ -16,7 +16,7 @@ const deepLintResponseSchema = z.object({
   findings: z
     .array(
       z.object({
-        severity: findingSeveritySchema,
+        severity: z.string().optional().default("info"),
         code: z.enum(["coverage_gap", "contradiction_candidate", "missing_citation", "candidate_page", "follow_up_question"]),
         message: z.string().min(1),
         relatedSourceIds: z.array(z.string()).default([]),
@@ -234,7 +234,7 @@ export async function runDeepLint(
     );
 
     findings = response.findings.map((item) => ({
-      severity: item.severity,
+      severity: normalizeFindingSeverity(item.severity),
       code: item.code,
       message: item.message,
       relatedSourceIds: item.relatedSourceIds,

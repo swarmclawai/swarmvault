@@ -38,7 +38,7 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.9 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.10 --keep-artifacts
 ```
 
 ## What The Smoke Runner Covers

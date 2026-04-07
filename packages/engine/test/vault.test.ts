@@ -261,6 +261,7 @@ describe("swarmvault workflow", () => {
     await fs.writeFile(
       path.join(rootDir, "lint-provider.mjs"),
       [
+        "import { z } from 'zod';",
         "export async function createAdapter(id, config) {",
         "  return {",
         "    id,",
@@ -269,6 +270,7 @@ describe("swarmvault workflow", () => {
         "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
         "    async generateText() { return { text: 'ok' }; },",
         "    async generateStructured(_request, schema) {",
+        "      z.toJSONSchema(schema);",
         "      return schema.parse({",
         "        findings: [",
         "          { severity: 'medium', code: 'coverage_gap', message: 'Needs broader coverage.' },",

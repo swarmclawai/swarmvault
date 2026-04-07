@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 export type FindingSeverity = "error" | "warning" | "info";
 
 export function normalizeFindingSeverity(value: unknown): FindingSeverity {
@@ -22,5 +20,3 @@ export function normalizeFindingSeverity(value: unknown): FindingSeverity {
   }
   return "info";
 }
-
-export const findingSeveritySchema = z.any().transform((value) => normalizeFindingSeverity(value));

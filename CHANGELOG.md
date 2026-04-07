@@ -4,10 +4,10 @@
 
 Nothing yet.
 
-## 0.1.9
+## 0.1.10
 
-- Fixed `lint --deep` and orchestration parsing so non-canonical model severities like `medium`, `critical`, or `low` normalize instead of failing the whole run
-- Added a regression test for provider-backed deep lint severity normalization
+- Fixed provider-backed `lint --deep` and orchestration parsing so non-canonical model severities like `medium`, `critical`, or `low` normalize after structured parsing instead of breaking JSON-schema generation
+- Added a regression test that exercises the JSON-schema path used by provider-backed deep lint
 - Updated the published-install smoke documentation and site MCP/install docs to reflect the current validation and query format behavior
 
 ## 0.1.8
