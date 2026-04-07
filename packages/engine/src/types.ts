@@ -1,27 +1,10 @@
 import { z } from "zod";
 
-export const providerCapabilitySchema = z.enum([
-  "responses",
-  "chat",
-  "structured",
-  "tools",
-  "vision",
-  "embeddings",
-  "streaming",
-  "local"
-]);
+export const providerCapabilitySchema = z.enum(["responses", "chat", "structured", "tools", "vision", "embeddings", "streaming", "local"]);
 
 export type ProviderCapability = z.infer<typeof providerCapabilitySchema>;
 
-export const providerTypeSchema = z.enum([
-  "heuristic",
-  "openai",
-  "ollama",
-  "anthropic",
-  "gemini",
-  "openai-compatible",
-  "custom"
-]);
+export const providerTypeSchema = z.enum(["heuristic", "openai", "ollama", "anthropic", "gemini", "openai-compatible", "custom"]);
 
 export type ProviderType = z.infer<typeof providerTypeSchema>;
 

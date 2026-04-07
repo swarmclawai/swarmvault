@@ -1,15 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import { analyzeSource, analysisSignature } from "./analysis.js";
 import { installConfiguredAgents } from "./agents.js";
+import { analysisSignature, analyzeSource } from "./analysis.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
 import { appendLogEntry } from "./logs.js";
 import { buildAggregatePage, buildIndexPage, buildOutputPage, buildSectionIndex, buildSourcePage } from "./markdown.js";
 import { getProviderForTask } from "./providers/registry.js";
-import { rebuildSearchIndex, searchPages } from "./search.js";
 import { buildSchemaPrompt, loadVaultSchema } from "./schema.js";
+import { rebuildSearchIndex, searchPages } from "./search.js";
 import type {
   CompileResult,
   GraphArtifact,
@@ -22,7 +22,17 @@ import type {
   SourceAnalysis,
   SourceManifest
 } from "./types.js";
-import { ensureDir, fileExists, normalizeWhitespace, readJsonFile, slugify, truncate, uniqueBy, writeFileIfChanged, writeJsonFile } from "./utils.js";
+import {
+  ensureDir,
+  fileExists,
+  normalizeWhitespace,
+  readJsonFile,
+  slugify,
+  truncate,
+  uniqueBy,
+  writeFileIfChanged,
+  writeJsonFile
+} from "./utils.js";
 
 function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pages: GraphPage[]): GraphArtifact {
   const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
@@ -88,7 +98,9 @@ function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pag
     for (const claim of conflictClaims) {
       const related = analyses
         .filter((item) => item.sourceId !== analysis.sourceId)
-        .flatMap((item) => item.claims.filter((other) => other.polarity === "positive" && other.text.split(" ").some((word) => claim.text.includes(word))));
+        .flatMap((item) =>
+          item.claims.filter((other) => other.polarity === "positive" && other.text.split(" ").some((word) => claim.text.includes(word)))
+        );
       for (const other of related) {
         edges.push({
           id: `${claim.id}->${other.id}`,
@@ -120,8 +132,14 @@ async function writePage(wikiDir: string, relativePath: string, content: string,
   }
 }
 
-function aggregateItems(analyses: SourceAnalysis[], kind: "concepts" | "entities"): Array<{ name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }> {
-  const grouped = new Map<string, { name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }>();
+function aggregateItems(
+  analyses: SourceAnalysis[],
+  kind: "concepts" | "entities"
+): Array<{ name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }> {
+  const grouped = new Map<
+    string,
+    { name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }
+  >();
   for (const analysis of analyses) {
     for (const item of analysis[kind]) {
       const key = slugify(item.name);
@@ -175,13 +193,27 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
   }
 
   for (const aggregate of aggregateItems(analyses, "concepts")) {
-    const page = buildAggregatePage("concept", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes, schema.hash);
+    const page = buildAggregatePage(
+      "concept",
+      aggregate.name,
+      aggregate.descriptions,
+      aggregate.sourceAnalyses,
+      aggregate.sourceHashes,
+      schema.hash
+    );
     pages.push(page.page);
     await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
   }
 
   for (const aggregate of aggregateItems(analyses, "entities")) {
-    const page = buildAggregatePage("entity", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes, schema.hash);
+    const page = buildAggregatePage(
+      "entity",
+      aggregate.name,
+      aggregate.descriptions,
+      aggregate.sourceAnalyses,
+      aggregate.sourceHashes,
+      schema.hash
+    );
     pages.push(page.page);
     await writePage(paths.wikiDir, page.page.path, page.content, changedPages);
   }
@@ -195,12 +227,43 @@ export async function compileVault(rootDir: string): Promise<CompileResult> {
   });
 
   await writePage(paths.wikiDir, "index.md", buildIndexPage(pages, schema.hash), changedPages);
-  await writePage(paths.wikiDir, "sources/index.md", buildSectionIndex("sources", pages.filter((page) => page.kind === "source"), schema.hash), changedPages);
-  await writePage(paths.wikiDir, "concepts/index.md", buildSectionIndex("concepts", pages.filter((page) => page.kind === "concept"), schema.hash), changedPages);
-  await writePage(paths.wikiDir, "entities/index.md", buildSectionIndex("entities", pages.filter((page) => page.kind === "entity"), schema.hash), changedPages);
+  await writePage(
+    paths.wikiDir,
+    "sources/index.md",
+    buildSectionIndex(
+      "sources",
+      pages.filter((page) => page.kind === "source"),
+      schema.hash
+    ),
+    changedPages
+  );
+  await writePage(
+    paths.wikiDir,
+    "concepts/index.md",
+    buildSectionIndex(
+      "concepts",
+      pages.filter((page) => page.kind === "concept"),
+      schema.hash
+    ),
+    changedPages
+  );
+  await writePage(
+    paths.wikiDir,
+    "entities/index.md",
+    buildSectionIndex(
+      "entities",
+      pages.filter((page) => page.kind === "entity"),
+      schema.hash
+    ),
+    changedPages
+  );
 
   await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
-  await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [`provider=${provider.id}`, `pages=${pages.length}`, `schema=${schema.hash.slice(0, 12)}`]);
+  await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [
+    `provider=${provider.id}`,
+    `pages=${pages.length}`,
+    `schema=${schema.hash.slice(0, 12)}`
+  ]);
 
   return {
     graphPath: paths.graphPath,
@@ -247,9 +310,7 @@ export async function queryVault(rootDir: string, question: string, save = false
   }
 
   const citations = uniqueBy(
-    searchResults
-      .filter((result) => result.pageId.startsWith("source:"))
-      .map((result) => result.pageId.replace(/^source:/, "")),
+    searchResults.filter((result) => result.pageId.startsWith("source:")).map((result) => result.pageId.replace(/^source:/, "")),
     (item) => item
   );
   let savedTo: string | undefined;
@@ -280,7 +341,10 @@ export async function listPages(rootDir: string): Promise<GraphPage[]> {
   return graph?.pages ?? [];
 }
 
-export async function readPage(rootDir: string, relativePath: string): Promise<{
+export async function readPage(
+  rootDir: string,
+  relativePath: string
+): Promise<{
   path: string;
   title: string;
   frontmatter: Record<string, unknown>;
@@ -386,9 +450,7 @@ export async function lintVault(rootDir: string): Promise<LintFinding[]> {
     if (await fileExists(absolutePath)) {
       const content = await fs.readFile(absolutePath, "utf8");
       if (content.includes("## Claims")) {
-        const uncited = content
-          .split("\n")
-          .filter((line) => line.startsWith("- ") && !line.includes("[source:"));
+        const uncited = content.split("\n").filter((line) => line.startsWith("- ") && !line.includes("[source:"));
         if (uncited.length) {
           findings.push({
             severity: "warning",

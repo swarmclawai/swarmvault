@@ -1,6 +1,6 @@
+import type { GenerationRequest, GenerationResponse } from "../types.js";
 import { firstSentences, normalizeWhitespace } from "../utils.js";
 import { BaseProviderAdapter } from "./base.js";
-import type { GenerationRequest, GenerationResponse } from "../types.js";
 
 function summarizePrompt(prompt: string): string {
   const cleaned = normalizeWhitespace(prompt);

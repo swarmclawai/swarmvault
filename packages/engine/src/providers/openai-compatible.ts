@@ -1,5 +1,5 @@
+import type { GenerationRequest, GenerationResponse, ProviderCapability } from "../types.js";
 import { BaseProviderAdapter } from "./base.js";
-import type { GenerationAttachment, GenerationRequest, GenerationResponse, ProviderCapability } from "../types.js";
 
 export interface OpenAiCompatibleOptions {
   baseUrl: string;
@@ -91,10 +91,7 @@ export class OpenAiCompatibleProviderAdapter extends BaseProviderAdapter {
         ]
       : request.prompt;
 
-    const messages = [
-      ...(request.system ? [{ role: "system", content: request.system }] : []),
-      { role: "user", content }
-    ];
+    const messages = [...(request.system ? [{ role: "system", content: request.system }] : []), { role: "user", content }];
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
@@ -119,14 +116,10 @@ export class OpenAiCompatibleProviderAdapter extends BaseProviderAdapter {
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     const contentValue = payload.choices?.[0]?.message?.content;
-    const text = Array.isArray(contentValue)
-      ? contentValue.map((item) => item.text ?? "").join("\n")
-      : (contentValue ?? "");
+    const text = Array.isArray(contentValue) ? contentValue.map((item) => item.text ?? "").join("\n") : (contentValue ?? "");
     return {
       text,
-      usage: payload.usage
-        ? { inputTokens: payload.usage.prompt_tokens, outputTokens: payload.usage.completion_tokens }
-        : undefined
+      usage: payload.usage ? { inputTokens: payload.usage.prompt_tokens, outputTokens: payload.usage.completion_tokens } : undefined
     };
   }
 }

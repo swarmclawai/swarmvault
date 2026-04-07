@@ -1,5 +1,5 @@
-import { BaseProviderAdapter } from "./base.js";
 import type { GenerationRequest, GenerationResponse } from "../types.js";
+import { BaseProviderAdapter } from "./base.js";
 
 export class GeminiProviderAdapter extends BaseProviderAdapter {
   private readonly apiKey?: string;

@@ -1,29 +1,74 @@
 import path from "node:path";
 import { z } from "zod";
-import { type SourceAnalysis, type SourceManifest, type Polarity } from "./types.js";
 import type { VaultSchema } from "./schema.js";
+import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
-import type { ProviderAdapter, ResolvedPaths } from "./types.js";
 
 const sourceAnalysisSchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
-  concepts: z.array(z.object({ name: z.string().min(1), description: z.string().default("") })).max(12).default([]),
-  entities: z.array(z.object({ name: z.string().min(1), description: z.string().default("") })).max(12).default([]),
-  claims: z.array(z.object({
-    text: z.string().min(1),
-    confidence: z.number().min(0).max(1).default(0.6),
-    status: z.enum(["extracted", "inferred", "conflicted", "stale"]).default("extracted"),
-    polarity: z.enum(["positive", "negative", "neutral"]).default("neutral"),
-    citation: z.string().min(1)
-  })).max(8).default([]),
+  concepts: z
+    .array(z.object({ name: z.string().min(1), description: z.string().default("") }))
+    .max(12)
+    .default([]),
+  entities: z
+    .array(z.object({ name: z.string().min(1), description: z.string().default("") }))
+    .max(12)
+    .default([]),
+  claims: z
+    .array(
+      z.object({
+        text: z.string().min(1),
+        confidence: z.number().min(0).max(1).default(0.6),
+        status: z.enum(["extracted", "inferred", "conflicted", "stale"]).default("extracted"),
+        polarity: z.enum(["positive", "negative", "neutral"]).default("neutral"),
+        citation: z.string().min(1)
+      })
+    )
+    .max(8)
+    .default([]),
   questions: z.array(z.string()).max(6).default([])
 });
 
 const STOPWORDS = new Set([
-  "about", "after", "also", "been", "being", "between", "both", "could", "does", "each", "from", "have", "into",
-  "just", "more", "much", "only", "other", "over", "same", "some", "such", "than", "that", "their", "there",
-  "these", "they", "this", "very", "what", "when", "where", "which", "while", "with", "would", "your"
+  "about",
+  "after",
+  "also",
+  "been",
+  "being",
+  "between",
+  "both",
+  "could",
+  "does",
+  "each",
+  "from",
+  "have",
+  "into",
+  "just",
+  "more",
+  "much",
+  "only",
+  "other",
+  "over",
+  "same",
+  "some",
+  "such",
+  "than",
+  "that",
+  "their",
+  "there",
+  "these",
+  "they",
+  "this",
+  "very",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "with",
+  "would",
+  "your"
 ]);
 
 function extractTopTerms(text: string, count: number): string[] {
@@ -43,7 +88,10 @@ function extractTopTerms(text: string, count: number): string[] {
 
 function extractEntities(text: string, count: number): string[] {
   const matches = text.match(/\b[A-Z][A-Za-z0-9-]+(?:\s+[A-Z][A-Za-z0-9-]+){0,2}\b/g) ?? [];
-  return uniqueBy(matches.map((value) => normalizeWhitespace(value)), (value) => value.toLowerCase()).slice(0, count);
+  return uniqueBy(
+    matches.map((value) => normalizeWhitespace(value)),
+    (value) => value.toLowerCase()
+  ).slice(0, count);
 }
 
 function detectPolarity(text: string): Polarity {
@@ -73,7 +121,10 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
     name: term,
     description: `Named entity mentioned in ${manifest.title}.`
   }));
-  const claimSentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 4);
+  const claimSentences = normalized
+    .split(/(?<=[.!?])\s+/)
+    .filter(Boolean)
+    .slice(0, 4);
 
   return {
     sourceId: manifest.sourceId,

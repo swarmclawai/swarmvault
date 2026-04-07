@@ -1,22 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { JSDOM } from "jsdom";
-import TurndownService from "turndown";
 import { Readability } from "@mozilla/readability";
+import { JSDOM } from "jsdom";
 import mime from "mime-types";
+import TurndownService from "turndown";
 import { initWorkspace, loadVaultConfig } from "./config.js";
-import type { InboxImportResult, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
 import { appendLogEntry } from "./logs.js";
-import {
-  ensureDir,
-  fileExists,
-  listFilesRecursive,
-  readJsonFile,
-  sha256,
-  slugify,
-  toPosix,
-  writeJsonFile
-} from "./utils.js";
+import type { InboxImportResult, ResolvedPaths, SourceAttachment, SourceManifest } from "./types.js";
+import { ensureDir, fileExists, listFilesRecursive, readJsonFile, sha256, slugify, toPosix, writeJsonFile } from "./utils.js";
 
 type PreparedAttachment = {
   relativePath: string;
@@ -234,7 +225,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
   return { manifest, isNew: true };
 }
 
-async function prepareFileInput(rootDir: string, absoluteInput: string): Promise<PreparedInput> {
+async function prepareFileInput(_rootDir: string, absoluteInput: string): Promise<PreparedInput> {
   const payloadBytes = await fs.readFile(absoluteInput);
   const mimeType = guessMimeType(absoluteInput);
   const sourceKind = inferKind(mimeType, absoluteInput);
@@ -338,7 +329,8 @@ async function collectInboxAttachmentRefs(inputDir: string, files: string[]): Pr
         absolutePath,
         sourceRefs.filter(
           (ref, index, items) =>
-            index === items.findIndex((candidate) => candidate.absolutePath === ref.absolutePath && candidate.relativeRef === ref.relativeRef)
+            index ===
+            items.findIndex((candidate) => candidate.absolutePath === ref.absolutePath && candidate.relativeRef === ref.relativeRef)
         )
       );
     }
@@ -363,10 +355,7 @@ function rewriteMarkdownReferences(content: string, replacements: Map<string, st
   });
 }
 
-async function prepareInboxMarkdownInput(
-  absolutePath: string,
-  attachmentRefs: InboxAttachmentRef[]
-): Promise<PreparedInput> {
+async function prepareInboxMarkdownInput(absolutePath: string, attachmentRefs: InboxAttachmentRef[]): Promise<PreparedInput> {
   const originalBytes = await fs.readFile(absolutePath);
   const originalText = originalBytes.toString("utf8");
   const title = titleFromText(path.basename(absolutePath, path.extname(absolutePath)), originalText);
@@ -429,9 +418,7 @@ export async function importInbox(rootDir: string, inputDir?: string): Promise<I
 
   const files = (await listFilesRecursive(effectiveInputDir)).sort();
   const refsBySource = await collectInboxAttachmentRefs(effectiveInputDir, files);
-  const claimedAttachments = new Set(
-    [...refsBySource.values()].flatMap((refs) => refs.map((ref) => ref.absolutePath))
-  );
+  const claimedAttachments = new Set([...refsBySource.values()].flatMap((refs) => refs.map((ref) => ref.absolutePath)));
 
   const imported: SourceManifest[] = [];
   const skipped: InboxImportResult["skipped"] = [];
@@ -495,9 +482,7 @@ export async function listManifests(rootDir: string): Promise<SourceManifest[]> 
 
   const entries = await fs.readdir(paths.manifestsDir);
   const manifests = await Promise.all(
-    entries
-      .filter((entry) => entry.endsWith(".json"))
-      .map((entry) => readJsonFile<SourceManifest>(path.join(paths.manifestsDir, entry)))
+    entries.filter((entry) => entry.endsWith(".json")).map((entry) => readJsonFile<SourceManifest>(path.join(paths.manifestsDir, entry)))
   );
 
   return manifests.filter((manifest): manifest is SourceManifest => Boolean(manifest));

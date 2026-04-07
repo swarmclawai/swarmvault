@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { defaultVaultSchema, LEGACY_SCHEMA_FILENAME, PRIMARY_SCHEMA_FILENAME, loadVaultConfig } from "./config.js";
+import { defaultVaultSchema, LEGACY_SCHEMA_FILENAME, loadVaultConfig, PRIMARY_SCHEMA_FILENAME } from "./config.js";
 import { fileExists, sha256 } from "./utils.js";
 
 export interface VaultSchema {
@@ -25,12 +25,5 @@ export async function loadVaultSchema(rootDir: string): Promise<VaultSchema> {
 }
 
 export function buildSchemaPrompt(schema: VaultSchema, instruction: string): string {
-  return [
-    instruction,
-    "",
-    `Vault schema path: ${schema.path}`,
-    "",
-    "Vault schema instructions:",
-    schema.content
-  ].join("\n");
+  return [instruction, "", `Vault schema path: ${schema.path}`, "", "Vault schema instructions:", schema.content].join("\n");
 }

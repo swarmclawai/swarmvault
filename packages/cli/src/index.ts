@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { Command } from "commander";
 import process from "node:process";
 import {
   compileVault,
@@ -13,6 +12,7 @@ import {
   startMcpServer,
   watchVault
 } from "@swarmvaultai/engine";
+import { Command } from "commander";
 
 const program = new Command();
 

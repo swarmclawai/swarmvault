@@ -3,10 +3,10 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { loadVaultConfig } from "../config.js";
 import type { ProviderAdapter, ProviderCapability, ProviderConfig, ResolvedPaths } from "../types.js";
-import { HeuristicProviderAdapter } from "./heuristic.js";
-import { OpenAiCompatibleProviderAdapter } from "./openai-compatible.js";
 import { AnthropicProviderAdapter } from "./anthropic.js";
 import { GeminiProviderAdapter } from "./gemini.js";
+import { HeuristicProviderAdapter } from "./heuristic.js";
+import { OpenAiCompatibleProviderAdapter } from "./openai-compatible.js";
 
 const customModuleSchema = z.object({
   createAdapter: z.function({
@@ -76,7 +76,10 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
   }
 }
 
-export async function getProviderForTask(rootDir: string, task: keyof Awaited<ReturnType<typeof loadVaultConfig>>["config"]["tasks"]): Promise<ProviderAdapter> {
+export async function getProviderForTask(
+  rootDir: string,
+  task: keyof Awaited<ReturnType<typeof loadVaultConfig>>["config"]["tasks"]
+): Promise<ProviderAdapter> {
   const { config } = await loadVaultConfig(rootDir);
   const providerId = config.tasks[task];
   const providerConfig = config.providers[providerId];

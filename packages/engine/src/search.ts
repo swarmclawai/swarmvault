@@ -15,10 +15,11 @@ function getDatabaseSync(): DatabaseSyncCtor {
 }
 
 function toFtsQuery(query: string): string {
-  const tokens = query
-    .toLowerCase()
-    .match(/[a-z0-9]{2,}/g)
-    ?.filter(Boolean) ?? [];
+  const tokens =
+    query
+      .toLowerCase()
+      .match(/[a-z0-9]{2,}/g)
+      ?.filter(Boolean) ?? [];
   return tokens.join(" OR ");
 }
 

@@ -1,5 +1,5 @@
-import { BaseProviderAdapter } from "./base.js";
 import type { GenerationRequest, GenerationResponse } from "../types.js";
+import { BaseProviderAdapter } from "./base.js";
 
 export class AnthropicProviderAdapter extends BaseProviderAdapter {
   private readonly apiKey?: string;
@@ -58,7 +58,11 @@ export class AnthropicProviderAdapter extends BaseProviderAdapter {
     };
 
     return {
-      text: payload.content?.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n") ?? "",
+      text:
+        payload.content
+          ?.filter((item) => item.type === "text")
+          .map((item) => item.text ?? "")
+          .join("\n") ?? "",
       usage: payload.usage ? { inputTokens: payload.usage.input_tokens, outputTokens: payload.usage.output_tokens } : undefined
     };
   }

@@ -51,7 +51,7 @@ async function upsertManagedBlock(filePath: string, block: string): Promise<void
 }
 
 export async function installAgent(rootDir: string, agent: "codex" | "claude" | "cursor"): Promise<string> {
-  const { paths } = await initWorkspace(rootDir);
+  await initWorkspace(rootDir);
   const block = buildManagedBlock(agent);
 
   switch (agent) {
