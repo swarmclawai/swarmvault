@@ -63,6 +63,7 @@ import type {
   ApprovalChangeType,
   ApprovalDetail,
   ApprovalEntry,
+  ApprovalEntryDetail,
   ApprovalManifest,
   ApprovalSummary,
   BenchmarkArtifact,
@@ -3024,7 +3025,7 @@ export async function readApproval(rootDir: string, approvalId: string, options?
       const stagedContent = entry.nextPath
         ? await fs.readFile(path.join(paths.approvalsDir, approvalId, "wiki", entry.nextPath), "utf8").catch(() => undefined)
         : undefined;
-      const detail = {
+      const detail: ApprovalEntryDetail = {
         ...entry,
         currentContent,
         stagedContent
