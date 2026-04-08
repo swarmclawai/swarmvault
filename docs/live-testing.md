@@ -15,6 +15,7 @@ pnpm exec playwright install chromium
 pnpm live:smoke:heuristic:browser
 pnpm live:smoke:neo4j
 pnpm live:oss:corpus
+pnpm skill:inspect
 ```
 
 To test a real provider path with Ollama Cloud:
@@ -79,6 +80,23 @@ The optional canary repo is:
 - `apple/sample-food-truck`
 
 That Swift canary is not part of the default gated lane.
+
+## ClawHub Skill Checks
+
+The ClawHub/OpenClaw skill is a separate published artifact under `skills/swarmvault/`.
+
+Before release:
+
+- run `pnpm check` so `check-clawhub-skill.mjs` validates the skill bundle shape, version sync, metadata, and README contract
+- run `pnpm skill:publish -- --dry-run` to confirm the exact publish command, changelog text, and tags
+
+After publish:
+
+```bash
+pnpm skill:inspect
+```
+
+Confirm the published skill includes `README.md` plus the expected examples, references, troubleshooting notes, and validation prompts.
 
 ## What The Smoke Runner Covers
 

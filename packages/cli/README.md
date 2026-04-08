@@ -317,6 +317,20 @@ Hook semantics:
 
 `aider` is intentionally file/config-based in this release rather than hook-based.
 
+### OpenClaw / ClawHub Skill
+
+If you use OpenClaw through ClawHub, install the packaged skill:
+
+```bash
+clawhub install swarmvault
+```
+
+That published bundle includes `SKILL.md`, a ClawHub README, examples, references, troubleshooting notes, and release-validation prompts. The CLI binary still comes from npm:
+
+```bash
+npm install -g @swarmvaultai/cli
+```
+
 ## Provider Configuration
 
 SwarmVault defaults to a local `heuristic` provider so the CLI works without API keys, but real vaults will usually point at an actual model provider.

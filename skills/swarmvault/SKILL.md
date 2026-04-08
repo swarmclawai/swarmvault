@@ -1,7 +1,7 @@
 ---
 name: swarmvault
-description: "Operate SwarmVault knowledge bases from the CLI: initialize vaults, shape swarmvault.schema.md, ingest sources, compile/query/lint/watch/hook, and expose the vault over MCP when agents need durable markdown, graph, and search artifacts on disk."
-version: "0.1.33"
+description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, review, and MCP artifacts to disk from files, URLs, code, and recurring repo workflows."
+version: "0.1.34"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -9,11 +9,14 @@ metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":
 
 Use this skill when the user wants a local-first knowledge base whose outputs stay on disk as markdown, graph, and search artifacts, or when the project already contains `swarmvault.config.json` or `swarmvault.schema.md`.
 
+For onboarding, examples, command references, or troubleshooting, read the bundled `README.md`, `examples/`, `references/`, and `TROUBLESHOOTING.md` before improvising workflow advice.
+
 ## Quick checks
 
 - Work from the vault root.
 - If the vault does not exist yet, run `swarmvault init`.
 - Read `swarmvault.schema.md` before compile or query work. It is the vault's operating contract.
+- If `wiki/graph/report.md` exists, use it before broad repo search.
 
 ## Core loop
 
@@ -33,6 +36,7 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 
 - Prefer changing the schema before re-running compile when organization or grounding is wrong.
 - Treat `wiki/` and `state/` as first-class outputs. Inspect them instead of trusting a single chat answer.
+- Prefer `wiki/graph/report.md`, `state/graph.json`, and saved wiki pages over ad hoc broad search when they already exist.
 - Use `ingest` for deliberate single inputs and `inbox import` plus `watch` for recurring capture pipelines.
 - The default heuristic provider is only for smoke tests or offline defaults. Point real vaults at a stronger provider before serious synthesis.
 - If an OpenAI-compatible backend cannot satisfy structured generation, reduce its declared capabilities instead of forcing every task through it.
@@ -59,3 +63,10 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 - `swarmvault install --agent claude|opencode|gemini|copilot --hook` installs graph-first hook or plugin support for the agents that expose project hook APIs.
 - `swarmvault install --agent aider` installs `CONVENTIONS.md` and wires `.aider.conf.yml` to read it when that config is valid YAML.
 - `swarmvault mcp` exposes tools and resources for page search, page reads, source listing, query, ingest, compile, and lint.
+
+## Defaults to preserve
+
+- Keep raw source material immutable under `raw/`.
+- Save useful answers unless the user explicitly wants ephemeral output.
+- Prefer reviewable flows such as `compile --approve`, `review`, and `candidate` when a change should not activate silently.
+- Treat provider setup as part of serious vault operation. If only `heuristic` is configured, say so clearly.

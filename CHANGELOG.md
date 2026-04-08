@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.34
+
+- Upgraded the published ClawHub/OpenClaw skill from a single-file instruction bundle into a verification-ready text package with a dedicated README, examples, references, troubleshooting guide, and validation prompts
+- Added repo-level ClawHub skill validation plus a publish helper so `pnpm check` verifies the skill bundle shape, version sync, metadata, and listing content before release
+- Added explicit ClawHub install, update, and post-publish inspect guidance to the OSS docs and site install docs so the skill release flow stays aligned with the real published CLI workflow
+
 ## 0.1.33
 
 - Added parser-backed Kotlin and Scala code ingestion, including vendored WASM grammar loading, package-aware symbol/import extraction, and repo-aware module-page generation

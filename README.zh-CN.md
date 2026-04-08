@@ -105,6 +105,14 @@ swarmvault install --agent gemini --hook    # Gemini CLI + hook
 swarmvault mcp
 ```
 
+如果你在使用 OpenClaw 或 ClawHub，可以这样安装打包好的技能：
+
+```bash
+clawhub install swarmvault
+```
+
+这会安装已发布的 `SKILL.md`，以及 ClawHub README、示例、参考资料、故障排查说明和验证提示。CLI 仍然通过 `npm install -g @swarmvaultai/cli@latest` 更新。
+
 <!-- readme-section:input-types -->
 ## 支持多种输入类型混合使用
 

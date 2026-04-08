@@ -105,6 +105,14 @@ Or expose the vault directly over MCP:
 swarmvault mcp
 ```
 
+Using OpenClaw or ClawHub? Install the packaged skill with:
+
+```bash
+clawhub install swarmvault
+```
+
+That installs the published `SKILL.md` plus a ClawHub README, examples, references, troubleshooting notes, and validation prompts. Keep the CLI itself updated with `npm install -g @swarmvaultai/cli@latest`.
+
 <!-- readme-section:input-types -->
 ## Works With Any Mix Of Input Types
 

@@ -1,7 +1,7 @@
 {
   "name": "swarmvault-opensource",
   "private": true,
-  "version": "0.1.33",
+  "version": "0.1.34",
   "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {
@@ -11,9 +11,10 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "typecheck": "pnpm -r typecheck",
-    "check": "biome check . && pnpm -r typecheck && node ./scripts/check-published-manifests.mjs && node ./scripts/check-readme-parity.mjs",
+    "check": "biome check . && pnpm -r typecheck && node ./scripts/check-published-manifests.mjs && node ./scripts/check-readme-parity.mjs && node ./scripts/check-clawhub-skill.mjs",
     "check:published-manifests": "node ./scripts/check-published-manifests.mjs",
     "check:readme-parity": "node ./scripts/check-readme-parity.mjs",
+    "check:clawhub-skill": "node ./scripts/check-clawhub-skill.mjs",
     "docs:screenshots": "node ./scripts/sync-docs-screenshots.mjs",
     "live:smoke:heuristic": "node ./scripts/live-smoke.mjs --lane heuristic",
     "live:smoke:heuristic:browser": "node ./scripts/live-smoke.mjs --lane heuristic --browser-check",
@@ -22,6 +23,8 @@
     "live:smoke:openai": "node ./scripts/live-smoke.mjs --lane openai",
     "live:smoke:anthropic": "node ./scripts/live-smoke.mjs --lane anthropic",
     "live:oss:corpus": "node ./scripts/live-oss-corpus.mjs",
+    "skill:publish": "node ./scripts/publish-clawhub-skill.mjs",
+    "skill:inspect": "clawhub inspect swarmvault --files",
     "prepare": "lefthook install"
   },
   "devDependencies": {

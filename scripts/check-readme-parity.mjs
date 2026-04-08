@@ -47,6 +47,7 @@ const requiredSubstrings = [
   "swarmvault install --agent copilot --hook",
   "swarmvault install --agent gemini --hook",
   "swarmvault mcp",
+  "clawhub install swarmvault",
   "\"type\": \"openai\"",
   "OPENAI_API_KEY",
   "https://www.swarmvault.ai/images/screenshots/graph-workspace.png",
