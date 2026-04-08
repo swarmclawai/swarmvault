@@ -338,51 +338,33 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
       }
     } finally {
       const finishedAt = new Date();
-      await recordSession(rootDir, {
-        operation: "watch",
-        title: `Watch cycle for ${paths.inboxDir}${options.repo ? " and tracked repos" : ""}`,
-        startedAt: startedAt.toISOString(),
-        finishedAt: finishedAt.toISOString(),
-        success,
-        error,
-        changedPages,
-        lintFindingCount,
-        lines: [
-          `reasons=${runReasons.join(",") || "none"}`,
-          `imported=${importedCount}`,
-          `scanned=${scannedCount}`,
-          `attachments=${attachmentCount}`,
-          `repo_scanned=${repoScannedCount}`,
-          `repo_imported=${repoImportedCount}`,
-          `repo_updated=${repoUpdatedCount}`,
-          `repo_removed=${repoRemovedCount}`,
-          `lint=${lintFindingCount ?? 0}`
-        ]
-      });
-      await appendWatchRun(rootDir, {
-        startedAt: startedAt.toISOString(),
-        finishedAt: finishedAt.toISOString(),
-        durationMs: finishedAt.getTime() - startedAt.getTime(),
-        inputDir: paths.inboxDir,
-        reasons: runReasons,
-        importedCount: importedCount + repoImportedCount + repoUpdatedCount,
-        scannedCount: scannedCount + repoScannedCount,
-        attachmentCount,
-        changedPages,
-        repoImportedCount,
-        repoUpdatedCount,
-        repoRemovedCount,
-        repoScannedCount,
-        pendingSemanticRefreshCount,
-        pendingSemanticRefreshPaths,
-        lintFindingCount,
-        success,
-        error
-      });
-      await writeWatchStatusArtifact(rootDir, {
-        generatedAt: finishedAt.toISOString(),
-        watchedRepoRoots,
-        lastRun: {
+      try {
+        await recordSession(rootDir, {
+          operation: "watch",
+          title: `Watch cycle for ${paths.inboxDir}${options.repo ? " and tracked repos" : ""}`,
+          startedAt: startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          success,
+          error,
+          changedPages,
+          lintFindingCount,
+          lines: [
+            `reasons=${runReasons.join(",") || "none"}`,
+            `imported=${importedCount}`,
+            `scanned=${scannedCount}`,
+            `attachments=${attachmentCount}`,
+            `repo_scanned=${repoScannedCount}`,
+            `repo_imported=${repoImportedCount}`,
+            `repo_updated=${repoUpdatedCount}`,
+            `repo_removed=${repoRemovedCount}`,
+            `lint=${lintFindingCount ?? 0}`
+          ]
+        });
+      } catch {
+        process.stderr.write("[swarmvault watch] Failed to record session log.\n");
+      }
+      try {
+        await appendWatchRun(rootDir, {
           startedAt: startedAt.toISOString(),
           finishedAt: finishedAt.toISOString(),
           durationMs: finishedAt.getTime() - startedAt.getTime(),
@@ -401,9 +383,39 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
           lintFindingCount,
           success,
           error
-        },
-        pendingSemanticRefresh: await readPendingSemanticRefresh(rootDir)
-      });
+        });
+      } catch {
+        process.stderr.write("[swarmvault watch] Failed to append watch run.\n");
+      }
+      try {
+        await writeWatchStatusArtifact(rootDir, {
+          generatedAt: finishedAt.toISOString(),
+          watchedRepoRoots,
+          lastRun: {
+            startedAt: startedAt.toISOString(),
+            finishedAt: finishedAt.toISOString(),
+            durationMs: finishedAt.getTime() - startedAt.getTime(),
+            inputDir: paths.inboxDir,
+            reasons: runReasons,
+            importedCount: importedCount + repoImportedCount + repoUpdatedCount,
+            scannedCount: scannedCount + repoScannedCount,
+            attachmentCount,
+            changedPages,
+            repoImportedCount,
+            repoUpdatedCount,
+            repoRemovedCount,
+            repoScannedCount,
+            pendingSemanticRefreshCount,
+            pendingSemanticRefreshPaths,
+            lintFindingCount,
+            success,
+            error
+          },
+          pendingSemanticRefresh: await readPendingSemanticRefresh(rootDir)
+        });
+      } catch {
+        process.stderr.write("[swarmvault watch] Failed to write watch status artifact.\n");
+      }
 
       running = false;
       if (pending && !closed) {

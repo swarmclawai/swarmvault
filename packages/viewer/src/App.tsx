@@ -85,6 +85,7 @@ export function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string>("");
   const [workflowTab, setWorkflowTab] = useState("approvals");
+  const [loading, setLoading] = useState(true);
 
   const deferredQuery = useDeferredValue(query);
 
@@ -156,6 +157,7 @@ export function App() {
       setApprovalError(nextApprovalError);
       setCandidateError(nextCandidateError);
       setWatchError(nextWatchError);
+      setLoading(false);
     });
   }, []);
 
@@ -415,15 +417,26 @@ export function App() {
           pendingRefreshCount={watchStatus?.pendingSemanticRefresh.length ?? 0}
           benchmarkRatio={graphReport?.benchmark?.summary.reductionRatio ?? null}
         />
-        <GraphCanvas
-          graph={graph}
-          edgeStatusFilter={edgeStatusFilter}
-          communityFilter={communityFilter}
-          sourceClassFilter={sourceClassFilter}
-          pathResult={pathResult}
-          onNodeSelect={setSelected}
-          cyRef={cyRef}
-        />
+        {loading && !graph ? (
+          <div className="canvas canvas-loading">
+            <span className="loading-text">Loading graph data\u2026</span>
+          </div>
+        ) : !loading && graph && graph.nodes.length === 0 ? (
+          <div className="canvas canvas-loading canvas-empty">
+            <span className="canvas-empty-icon">{"\u25C8"}</span>
+            <span className="text-muted">No nodes in the current graph view.</span>
+          </div>
+        ) : (
+          <GraphCanvas
+            graph={graph}
+            edgeStatusFilter={edgeStatusFilter}
+            communityFilter={communityFilter}
+            sourceClassFilter={sourceClassFilter}
+            pathResult={pathResult}
+            onNodeSelect={setSelected}
+            cyRef={cyRef}
+          />
+        )}
         <ReportTabs
           graphReport={graphReport}
           onOpenPage={openPagePath}

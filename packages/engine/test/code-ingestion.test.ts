@@ -121,23 +121,27 @@ describe("code-aware ingestion", () => {
       ["from .util import helper", "", "def run(name):", "    return helper(name)"].join("\n"),
       "utf8"
     );
+    await fs.writeFile(path.join(rootDir, "widget_type.go"), ["package sample", "", "type Widget struct{}"].join("\n"), "utf8");
     await fs.writeFile(
-      path.join(rootDir, "widget.go"),
+      path.join(rootDir, "widget_methods.go"),
       [
         "package sample",
         "",
         'import "fmt"',
         "",
-        "type Widget struct{}",
-        "",
         "func formatName(name string) string {",
         '  return fmt.Sprintf("Go:%s", name)',
         "}",
         "",
-        "func Run(name string) string {",
+        "func (w Widget) Run(name string) string {",
         "  return formatName(name)",
         "}"
       ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "widget_entry.go"),
+      ["package sample", "", "func Execute(name string) string {", "  widget := Widget{}", "  return widget.Run(name)", "}"].join("\n"),
       "utf8"
     );
     await fs.writeFile(
@@ -178,13 +182,17 @@ describe("code-aware ingestion", () => {
 
     const pythonUtil = await ingestInput(rootDir, "pkg/util.py");
     const pythonApp = await ingestInput(rootDir, "pkg/app.py");
-    const goManifest = await ingestInput(rootDir, "widget.go");
+    const goTypeManifest = await ingestInput(rootDir, "widget_type.go");
+    const goMethodManifest = await ingestInput(rootDir, "widget_methods.go");
+    const goEntryManifest = await ingestInput(rootDir, "widget_entry.go");
     const rustManifest = await ingestInput(rootDir, "widget.rs");
     const javaManifest = await ingestInput(rootDir, "Widget.java");
 
     expect(pythonUtil.language).toBe("python");
     expect(pythonApp.language).toBe("python");
-    expect(goManifest.language).toBe("go");
+    expect(goTypeManifest.language).toBe("go");
+    expect(goMethodManifest.language).toBe("go");
+    expect(goEntryManifest.language).toBe("go");
     expect(rustManifest.language).toBe("rust");
     expect(javaManifest.language).toBe("java");
 
@@ -200,8 +208,28 @@ describe("code-aware ingestion", () => {
     expect(graph.edges.some((edge) => edge.relation === "implements")).toBe(true);
     expect(graph.edges.some((edge) => edge.relation === "extends")).toBe(true);
 
+    const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    const executeNode = graph.nodes.find((node) => node.type === "symbol" && node.label === "Execute");
+    const widgetRunNode = graph.nodes.find((node) => node.type === "symbol" && node.label === "Widget.Run");
+    const widgetNode = graph.nodes.find((node) => node.type === "symbol" && node.label === "Widget");
+    expect(executeNode).toBeTruthy();
+    expect(widgetRunNode).toBeTruthy();
+    expect(widgetNode).toBeTruthy();
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "calls" && nodeById.get(edge.source)?.label === "Execute" && nodeById.get(edge.target)?.label === "Widget.Run"
+      )
+    ).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "defines" && nodeById.get(edge.source)?.label === "Widget" && nodeById.get(edge.target)?.label === "Widget.Run"
+      )
+    ).toBe(true);
+
     const pythonModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${pythonApp.sourceId}.md`), "utf8");
-    const goModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${goManifest.sourceId}.md`), "utf8");
+    const goModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${goMethodManifest.sourceId}.md`), "utf8");
     const rustModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${rustManifest.sourceId}.md`), "utf8");
     const javaModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${javaManifest.sourceId}.md`), "utf8");
 
@@ -216,7 +244,7 @@ describe("code-aware ingestion", () => {
 
     const searchResults = await searchVault(rootDir, "Widget", 20);
     expect(searchResults.some((result) => result.path === `code/${javaManifest.sourceId}.md`)).toBe(true);
-    expect(searchResults.some((result) => result.path === `code/${goManifest.sourceId}.md`)).toBe(true);
+    expect(searchResults.some((result) => result.path === `code/${goTypeManifest.sourceId}.md`)).toBe(true);
   });
 
   it("builds parser-backed module pages for C#, PHP, C, and C++ sources", async () => {

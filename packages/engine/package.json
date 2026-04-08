@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/engine",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "Core engine for SwarmVault: ingest, compile, query, lint, and provider abstractions.",
   "type": "module",
   "main": "dist/index.js",
@@ -45,17 +45,19 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@vscode/tree-sitter-wasm": "^0.3.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
     "chokidar": "^4.0.3",
+    "fflate": "^0.8.2",
     "gray-matter": "^4.0.3",
     "ignore": "^7.0.5",
     "jsdom": "^27.0.0",
+    "mammoth": "^1.12.0",
     "mime-types": "^3.0.1",
     "pdfjs-dist": "^5.4.394",
-    "typescript": "^5.9.3",
     "turndown": "^7.2.1",
+    "typescript": "^5.9.3",
     "yaml": "^2.8.1",
     "zod": "^4.1.8"
   },

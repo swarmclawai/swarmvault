@@ -10,6 +10,10 @@ const tempDirs: string[] = [];
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const tinyFixtureDir = path.resolve(__dirname, "..", "..", "..", "smoke", "fixtures", "tiny-matrix");
+const MINIMAL_DOCX = Buffer.from(
+  "UEsDBBQAAAAIAPiQiFzT44oSCAEAAC0CAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbJVRS07DMBDd9xSWtyhxYIEQStIFnyV0UQ4wciaJhX/yuKW9PZMWAkItUpfW+/pNvdw5K7aYyATfyOuykgK9Dp3xQyPf1s/FnRSUwXdgg8dG7pHksl3U631EEiz21Mgx53ivFOkRHVAZInpG+pAcZH6mQUXQ7zCguqmqW6WDz+hzkScP2S6EqB+xh43N4mnHyLFLQktSPBy5U1wjIUZrNGTG1dZ3f4KKr5CSlQcOjSbSFROkOhcygeczfqSvPFEyHYoVpPwCjonqI6ROdUFvHIvL/51OtA19bzTO+sktpqCRiLd3tpwRB8b/+sWpKsxdpRCJp014eZXv4SZ1wSUipmxwnq5Wh2u3n1BLAwQUAAAACAD4kIhcFfb2GtcAAADCAQAACwAAAF9yZWxzLy5yZWxzjZBLSwNBDIDv/RVD7t3Z9iAiO9uLCL2J1B8QZrIP3HmQiY/+e4OoWLHYY15fvqTbvcXFvBDXOScHm6YFQ8nnMKfRwePhbn0NpgqmgEtO5OBIFXb9qnugBUVn6jSXahSSqoNJpNxYW/1EEWuTCyWtDJkjioY82oL+CUey27a9svyTAf3KmBOs2QcHvA8bMIdj0d3/4/MwzJ5us3+OlOSPLb86lIw8kjh4zRxs+Ew3igV7Vmh7udD5e20kwYCC1memdWGdZpn1vd9OqnOv6frR8eXU2ZPX9+9QSwMEFAAAAAgA+JCIXB+BgtlYAQAAnQIAABEAAABkb2NQcm9wcy9jb3JlLnhtbKWSQWvCMBTH7/sUIWdrWh0iRetB8bSxgd0mu4XkqcEmKclztd9+abWdgrdBL+X/ez/eP7zZ4qwL8gPOK2vmNBnGlIARViqzn9OPfB1NKfHIjeSFNTCnNXi6yJ5mokyFdfDubAkOFXgSRManopzTA2KZMubFATT3w0CYEO6s0xzDr9uzkosj3wMbxfGEaUAuOXLWCKOyN9KrUopeWZ5c0QqkYFCABoOeJcOE/bEITvuHA21yQ2qFdRkqPUC7sKfPXvVgVVXDatyiYf+EbV9fNm3VSJnmqQTQ7ImQmRQpKiwgy5WpyeptuSUbe3ICZsF/ja6ccMDRumxTcac/+alAkoNH35Jd2LDh2Y9QV9ZJn0krzgOCQT4gO3XGk4MwcEtc7G3viwUkCU3SS+8u+RovV/maZqN4NIni5yie5skojePwfTcL3M3fOXW4k536h7QThINqFr+/qOwXUEsDBBQAAAAIAPiQiFwatoKR/AAAAKoBAAARAAAAd29yZC9kb2N1bWVudC54bWyNUMtqwzAQvOcrFt0bpT2UYmzn0NJToYW60Ota2sQCSWu0chz/feWE3ErpZdjXzCxT78/Bw4mSOI6Nut/uFFA0bF08Nuqre717UiAZo0XPkRq1kKh9u6nnyrKZAsUMRSFKNTdqyHmstBYzUEDZ8kix7A6cAubSpqOeOdkxsSGRYhC8ftjtHnVAF1W7ASiqPdtlLS/N2BZIK+S2c3GBl/fnb/jkKRmq9TpdsRwUHH9lvbFBf6UdnCcBGXjyFuicE5oMidBi7wlymUBP5VkCjOgXcbL9n0c30HLTRS8MYyKhdCLoUZyBQLmYZPxDTsjkjwT6EkLZXFNYq1vK7Q9QSwECFAAUAAAACAD4kIhc0+OKEggBAAAtAgAAEwAAAAAAAAAAAAAAAAAAAAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUABQAAAAIAPiQiFwV9vYa1wAAAMIBAAALAAAAAAAAAAAAAAAAADkBAABfcmVscy8ucmVsc1BLAQIUABQAAAAIAPiQiFwfgYLZWAEAAJ0CAAARAAAAAAAAAAAAAAAAADkCAABkb2NQcm9wcy9jb3JlLnhtbFBLAQIUABQAAAAIAPiQiFwatoKR/AAAAKoBAAARAAAAAAAAAAAAAAAAAMADAAB3b3JkL2RvY3VtZW50LnhtbFBLBQYAAAAABAAEAPgAAADrBAAAAAA=",
+  "base64"
+);
 
 async function createTempWorkspace(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-tiny-"));
@@ -34,6 +38,7 @@ describe("tiny validation matrix", () => {
     const rootDir = await createTempWorkspace();
     const repoDir = path.join(rootDir, "repo");
     await fs.cp(tinyFixtureDir, repoDir, { recursive: true });
+    await fs.writeFile(path.join(repoDir, "docs", "brief.docx"), MINIMAL_DOCX);
 
     await initVault(rootDir);
     await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
@@ -59,7 +64,7 @@ describe("tiny validation matrix", () => {
       "ruby",
       "powershell"
     ];
-    const expectedSourceKinds: SourceKind[] = ["markdown", "text", "html", "pdf", "image", "code"];
+    const expectedSourceKinds: SourceKind[] = ["markdown", "text", "html", "pdf", "docx", "image", "code"];
 
     for (const language of expectedLanguages) {
       expect(codeLanguages.has(language), `missing language ${language}`).toBe(true);
@@ -85,6 +90,16 @@ describe("tiny validation matrix", () => {
     ) as SourceExtractionArtifact;
     expect(pdfArtifact.extractor).toBe("pdf_text");
     expect(pdfArtifact.pageCount).toBe(1);
+
+    const docxManifest = manifests.find((manifest) => manifest.repoRelativePath === "docs/brief.docx");
+    expect(docxManifest?.sourceKind).toBe("docx");
+    const docxArtifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, docxManifest?.extractedMetadataPath ?? ""), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(docxArtifact.extractor).toBe("docx_text");
+    expect(docxArtifact.metadata?.title).toBe("Tiny DOCX Source");
+    const docxExtract = await fs.readFile(path.join(rootDir, docxManifest?.extractedTextPath ?? ""), "utf8");
+    expect(docxExtract).toContain("Local DOCX files should extract readable text before analysis.");
 
     const imageManifest = manifests.find((manifest) => manifest.repoRelativePath === "docs/diagram.svg");
     const imageArtifact = JSON.parse(

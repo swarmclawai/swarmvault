@@ -311,6 +311,203 @@ function embeddedData() {
   return typeof window !== "undefined" ? window.__SWARMVAULT_EMBEDDED_DATA__ : undefined;
 }
 
+function normalizeGraphTarget(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+type EmbeddedGraphPage = NonNullable<ViewerGraphArtifact["pages"]>[number];
+
+function embeddedNodeById(graph: ViewerGraphArtifact): Map<string, ViewerGraphNode> {
+  return new Map(graph.nodes.map((node) => [node.id, node]));
+}
+
+function embeddedPageById(graph: ViewerGraphArtifact): Map<string, EmbeddedGraphPage> {
+  return new Map((graph.pages ?? []).map((page) => [page.id, page]));
+}
+
+function embeddedResolveNode(graph: ViewerGraphArtifact, target: string): ViewerGraphNode | null {
+  const normalized = normalizeGraphTarget(target);
+  return (
+    graph.nodes.find((node) => node.id === target || normalizeGraphTarget(node.label) === normalized || node.pageId === target) ?? null
+  );
+}
+
+function embeddedGraphAdjacency(graph: ViewerGraphArtifact) {
+  const adjacency = new Map<string, Array<{ nodeId: string; edge: ViewerGraphEdge; direction: "incoming" | "outgoing" }>>();
+
+  for (const node of graph.nodes) {
+    adjacency.set(node.id, []);
+  }
+
+  for (const edge of graph.edges) {
+    adjacency.get(edge.source)?.push({
+      nodeId: edge.target,
+      edge,
+      direction: "outgoing"
+    });
+    adjacency.get(edge.target)?.push({
+      nodeId: edge.source,
+      edge,
+      direction: "incoming"
+    });
+  }
+
+  return adjacency;
+}
+
+function shortestEmbeddedGraphPath(graph: ViewerGraphArtifact, from: string, to: string): ViewerGraphPathResult {
+  const start = embeddedResolveNode(graph, from);
+  const end = embeddedResolveNode(graph, to);
+  if (!start || !end) {
+    return {
+      from,
+      to,
+      resolvedFromNodeId: start?.id,
+      resolvedToNodeId: end?.id,
+      found: false,
+      nodeIds: [],
+      edgeIds: [],
+      pageIds: [],
+      summary: "Could not resolve one or both graph targets."
+    };
+  }
+
+  const adjacency = embeddedGraphAdjacency(graph);
+  const queue = [start.id];
+  const visited = new Set<string>([start.id]);
+  const previous = new Map<string, { nodeId: string; edgeId: string }>();
+
+  while (queue.length) {
+    const current = queue.shift() as string;
+    if (current === end.id) {
+      break;
+    }
+    for (const neighbor of adjacency.get(current) ?? []) {
+      if (visited.has(neighbor.nodeId)) {
+        continue;
+      }
+      visited.add(neighbor.nodeId);
+      previous.set(neighbor.nodeId, {
+        nodeId: current,
+        edgeId: neighbor.edge.id
+      });
+      queue.push(neighbor.nodeId);
+    }
+  }
+
+  if (!visited.has(end.id)) {
+    return {
+      from,
+      to,
+      resolvedFromNodeId: start.id,
+      resolvedToNodeId: end.id,
+      found: false,
+      nodeIds: [],
+      edgeIds: [],
+      pageIds: [],
+      summary: `No path found between ${start.label} and ${end.label}.`
+    };
+  }
+
+  const nodeIds: string[] = [];
+  const edgeIds: string[] = [];
+  let current = end.id;
+  while (current !== start.id) {
+    nodeIds.push(current);
+    const prev = previous.get(current);
+    if (!prev) {
+      break;
+    }
+    edgeIds.push(prev.edgeId);
+    current = prev.nodeId;
+  }
+  nodeIds.push(start.id);
+  nodeIds.reverse();
+  edgeIds.reverse();
+
+  const nodes = embeddedNodeById(graph);
+  const pageIds = [
+    ...new Set(
+      nodeIds.flatMap((nodeId) => {
+        const pageId = nodes.get(nodeId)?.pageId;
+        return pageId ? [pageId] : [];
+      })
+    )
+  ];
+
+  return {
+    from,
+    to,
+    resolvedFromNodeId: start.id,
+    resolvedToNodeId: end.id,
+    found: true,
+    nodeIds,
+    edgeIds,
+    pageIds,
+    summary: nodeIds.map((nodeId) => nodes.get(nodeId)?.label ?? nodeId).join(" -> ")
+  };
+}
+
+function explainEmbeddedGraphTarget(graph: ViewerGraphArtifact, target: string): ViewerGraphExplainResult {
+  const node = embeddedResolveNode(graph, target);
+  if (!node) {
+    throw new Error(`Could not resolve graph target: ${target}`);
+  }
+
+  const pages = embeddedPageById(graph);
+  const page = node.pageId ? pages.get(node.pageId) : undefined;
+  const nodes = embeddedNodeById(graph);
+  const neighbors: ViewerGraphExplainResult["neighbors"] = [];
+  for (const neighbor of embeddedGraphAdjacency(graph).get(node.id) ?? []) {
+    const targetNode = nodes.get(neighbor.nodeId);
+    if (!targetNode) {
+      continue;
+    }
+    neighbors.push({
+      nodeId: targetNode.id,
+      label: targetNode.label,
+      type: targetNode.type,
+      pageId: targetNode.pageId,
+      relation: neighbor.edge.relation,
+      direction: neighbor.direction,
+      confidence: neighbor.edge.confidence ?? 0,
+      evidenceClass: neighbor.edge.evidenceClass ?? "unknown"
+    });
+  }
+  neighbors.sort((left, right) => right.confidence - left.confidence || left.label.localeCompare(right.label));
+
+  const hyperedges = (graph.hyperedges ?? []).filter((hyperedge) => hyperedge.nodeIds.includes(node.id));
+  const community = graph.communities?.find((candidate) => candidate.id === node.communityId);
+
+  return {
+    target,
+    node,
+    page: page
+      ? {
+          id: page.id,
+          path: page.path,
+          title: page.title
+        }
+      : undefined,
+    community: community
+      ? {
+          id: community.id,
+          label: community.label
+        }
+      : undefined,
+    neighbors,
+    hyperedges,
+    summary: [
+      `Node: ${node.label}`,
+      `Type: ${node.type}`,
+      `Community: ${node.communityId ?? "none"}`,
+      `Neighbors: ${neighbors.length}`,
+      `Group patterns: ${hyperedges.length}`,
+      `Page: ${page?.path ?? "none"}`
+    ].join("\n")
+  };
+}
+
 function normalizeSnippet(content: string, query: string): string {
   const normalized = content.replace(/\s+/g, " ").trim();
   if (!query) {
@@ -471,6 +668,10 @@ export async function fetchGraphReport(): Promise<ViewerGraphReport | null> {
 }
 
 export async function fetchGraphPath(from: string, to: string): Promise<ViewerGraphPathResult> {
+  const embedded = embeddedData();
+  if (embedded) {
+    return shortestEmbeddedGraphPath(embedded.graph, from, to);
+  }
   const params = new URLSearchParams({
     from,
     to
@@ -483,6 +684,10 @@ export async function fetchGraphPath(from: string, to: string): Promise<ViewerGr
 }
 
 export async function fetchGraphExplain(target: string): Promise<ViewerGraphExplainResult> {
+  const embedded = embeddedData();
+  if (embedded) {
+    return explainEmbeddedGraphTarget(embedded.graph, target);
+  }
   const response = await fetch(`/api/graph/explain?target=${encodeURIComponent(target)}`);
   if (!response.ok) {
     throw new Error(`Failed to explain graph target: ${response.status} ${response.statusText}`);

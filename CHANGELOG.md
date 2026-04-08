@@ -4,6 +4,14 @@
 
 Nothing yet.
 
+## 0.1.29
+
+- Added first-class DOCX ingest with local text and metadata extraction, expanded inbox import to preserve browser-style HTML clip bundles with rewritten local assets, and refreshed the docs/README screenshot from a real packaged viewer run
+- Hardened packaged validation with an opt-in browser-backed heuristic smoke lane that exercises `graph serve` and standalone exported HTML through real Chromium selection, path highlighting, and deselection
+- Improved the local viewer with Claude’s redesigned layout and interaction polish, then added embedded-graph fallbacks for `graph path` and `graph explain` so standalone exports no longer depend on live API routes for those interactions
+- Fixed the Claude hook install to use a generated helper script plus structured `additionalContext`, hardened Cypher export escaping, improved Go same-package receiver/method resolution, and added viewer/browser regression coverage for those paths
+- Included the local hardening fixes from the parallel bug-fix pass: safer CLI integer parsing and shutdown handling, more resilient watch/log persistence, tighter JSON extraction and truncation helpers, and embedding-cache reads that skip unreadable pages without aborting the run
+
 ## 0.1.28
 
 - Added `aider` and `copilot` as first-class `swarmvault install --agent` targets, while expanding install results to return the primary `target`, all touched `targets`, and safe merge warnings

@@ -13,6 +13,7 @@ import {
   buildExtractionHash,
   createHtmlReadabilityExtractionArtifact,
   createPlainTextExtractionArtifact,
+  extractDocxText,
   extractImageWithVision,
   extractPdfText
 } from "./extraction.js";
@@ -120,6 +121,9 @@ function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKi
   }
   if (mimeType === "application/pdf" || filePath.toLowerCase().endsWith(".pdf")) {
     return "pdf";
+  }
+  if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filePath.toLowerCase().endsWith(".docx")) {
+    return "docx";
   }
   if (mimeType.startsWith("image/")) {
     return "image";
@@ -642,6 +646,25 @@ function extractMarkdownReferences(content: string): string[] {
   return references;
 }
 
+function extractHtmlLocalReferences(html: string, baseUrl: string): string[] {
+  const dom = new JSDOM(html, { url: baseUrl });
+  const document = dom.window.document;
+  const references: string[] = [];
+
+  for (const image of [...document.querySelectorAll("img[src]")]) {
+    const src = image.getAttribute("src");
+    if (!src) {
+      continue;
+    }
+    const normalized = normalizeLocalReference(src);
+    if (normalized) {
+      references.push(normalized);
+    }
+  }
+
+  return references;
+}
+
 function normalizeRemoteReference(value: string, baseUrl: string): string | null {
   const trimmed = value.trim().replace(/^<|>$/g, "");
   const [withoutTitle] = trimmed.split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/, 1);
@@ -966,6 +989,25 @@ function rewriteHtmlImageReferences(html: string, baseUrl: string, replacements:
   return dom.serialize();
 }
 
+function rewriteHtmlLocalReferences(html: string, baseUrl: string, replacements: Map<string, string>): string {
+  const dom = new JSDOM(html, { url: baseUrl });
+  const document = dom.window.document;
+
+  for (const image of [...document.querySelectorAll("img[src]")]) {
+    const src = image.getAttribute("src");
+    if (!src) {
+      continue;
+    }
+    const normalized = normalizeLocalReference(src);
+    const replacement = normalized ? replacements.get(normalized) : undefined;
+    if (replacement) {
+      image.setAttribute("src", replacement);
+    }
+  }
+
+  return dom.serialize();
+}
+
 function rewriteMarkdownImageReferences(content: string, baseUrl: string, replacements: Map<string, string>): string {
   return content.replace(/(!\[[^\]]*]\()([^)]+)(\))/g, (fullMatch, prefix, target, suffix) => {
     const normalized = normalizeRemoteReference(target, baseUrl);
@@ -1146,7 +1188,14 @@ function preparedMatchesManifest(manifest: SourceManifest, prepared: PreparedInp
 }
 
 function shouldDeferWatchSemanticRefresh(sourceKind: SourceManifest["sourceKind"]): boolean {
-  return sourceKind === "markdown" || sourceKind === "text" || sourceKind === "html" || sourceKind === "pdf" || sourceKind === "image";
+  return (
+    sourceKind === "markdown" ||
+    sourceKind === "text" ||
+    sourceKind === "html" ||
+    sourceKind === "pdf" ||
+    sourceKind === "docx" ||
+    sourceKind === "image"
+  );
 }
 
 function pendingSemanticRefreshId(changeType: "added" | "modified" | "removed", repoRoot: string, relativePath: string): string {
@@ -1449,6 +1498,12 @@ async function prepareFileInput(
     const extracted = await extractPdfText({ mimeType, bytes: payloadBytes });
     extractedText = extracted.extractedText;
     extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "docx") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractDocxText({ mimeType, bytes: payloadBytes });
+    title = extracted.artifact.metadata?.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
   } else if (sourceKind === "image") {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
     const extracted = await extractImageWithVision(rootDir, {
@@ -1574,6 +1629,11 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
       const extracted = await extractPdfText({ mimeType, bytes: payloadBytes });
       extractedText = extracted.extractedText;
       extractionArtifact = extracted.artifact;
+    } else if (sourceKind === "docx") {
+      const extracted = await extractDocxText({ mimeType, bytes: payloadBytes });
+      title = extracted.artifact.metadata?.title?.trim() || title;
+      extractedText = extracted.extractedText;
+      extractionArtifact = extracted.artifact;
     } else if (sourceKind === "image") {
       const extracted = await extractImageWithVision(rootDir, {
         title,
@@ -1610,12 +1670,15 @@ async function collectInboxAttachmentRefs(inputDir: string, files: string[]): Pr
   for (const absolutePath of files) {
     const mimeType = guessMimeType(absolutePath);
     const sourceKind = inferKind(mimeType, absolutePath);
-    if (sourceKind !== "markdown") {
+    if (sourceKind !== "markdown" && sourceKind !== "html") {
       continue;
     }
 
     const content = await fs.readFile(absolutePath, "utf8");
-    const refs = extractMarkdownReferences(content);
+    const refs =
+      sourceKind === "html"
+        ? extractHtmlLocalReferences(content, pathToFileURL(absolutePath).toString())
+        : extractMarkdownReferences(content);
     if (!refs.length) {
       continue;
     }
@@ -1708,8 +1771,55 @@ async function prepareInboxMarkdownInput(absolutePath: string, attachmentRefs: I
   };
 }
 
+async function prepareInboxHtmlInput(absolutePath: string, attachmentRefs: InboxAttachmentRef[]): Promise<PreparedInput> {
+  const originalBytes = await fs.readFile(absolutePath);
+  const originalHtml = originalBytes.toString("utf8");
+  const initialConversion = await convertHtmlToMarkdown(originalHtml, pathToFileURL(absolutePath).toString());
+
+  const attachments: PreparedAttachment[] = [];
+  for (const attachmentRef of attachmentRefs) {
+    const bytes = await fs.readFile(attachmentRef.absolutePath);
+    attachments.push({
+      relativePath: sanitizeAssetRelativePath(attachmentRef.relativeRef),
+      mimeType: guessMimeType(attachmentRef.absolutePath),
+      originalPath: toPosix(attachmentRef.absolutePath),
+      bytes
+    });
+  }
+
+  const contentHash = buildCompositeHash(originalBytes, attachments);
+  const fallbackTitle = path.basename(absolutePath, path.extname(absolutePath));
+  const title = initialConversion.title || fallbackTitle;
+  const sourceId = `${slugify(title)}-${contentHash.slice(0, 8)}`;
+  const replacements = new Map(
+    attachmentRefs.map((attachmentRef) => [
+      attachmentRef.relativeRef.replace(/\\/g, "/"),
+      `../assets/${sourceId}/${sanitizeAssetRelativePath(attachmentRef.relativeRef)}`
+    ])
+  );
+  const rewrittenHtml = rewriteHtmlLocalReferences(originalHtml, pathToFileURL(absolutePath).toString(), replacements);
+  const converted =
+    rewrittenHtml === originalHtml ? initialConversion : await convertHtmlToMarkdown(rewrittenHtml, pathToFileURL(absolutePath).toString());
+  const extractionArtifact = createHtmlReadabilityExtractionArtifact("html", "text/html");
+
+  return {
+    title: converted.title || title,
+    originType: "file",
+    sourceKind: "html",
+    originalPath: toPosix(absolutePath),
+    mimeType: "text/html",
+    storedExtension: path.extname(absolutePath) || ".html",
+    payloadBytes: Buffer.from(rewrittenHtml, "utf8"),
+    extractedText: converted.markdown,
+    extractionArtifact,
+    extractionHash: buildExtractionHash(converted.markdown, extractionArtifact),
+    attachments,
+    contentHash
+  };
+}
+
 function isSupportedInboxKind(sourceKind: SourceManifest["sourceKind"]): boolean {
-  return ["markdown", "text", "html", "pdf", "image"].includes(sourceKind);
+  return ["markdown", "text", "html", "pdf", "docx", "image"].includes(sourceKind);
 }
 
 export async function ingestInput(rootDir: string, input: string, options?: IngestOptions): Promise<SourceManifest> {
@@ -1900,7 +2010,9 @@ export async function importInbox(rootDir: string, inputDir?: string): Promise<I
     const prepared =
       sourceKind === "markdown" && refsBySource.has(absolutePath)
         ? await prepareInboxMarkdownInput(absolutePath, refsBySource.get(absolutePath) ?? [])
-        : await prepareFileInput(rootDir, absolutePath);
+        : sourceKind === "html" && refsBySource.has(absolutePath)
+          ? await prepareInboxHtmlInput(absolutePath, refsBySource.get(absolutePath) ?? [])
+          : await prepareFileInput(rootDir, absolutePath);
 
     const result = await persistPreparedInput(rootDir, prepared, paths);
     if (!result.isNew) {

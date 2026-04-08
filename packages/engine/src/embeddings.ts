@@ -61,8 +61,13 @@ async function loadPageContents(rootDir: string, graph: GraphArtifact): Promise<
   await Promise.all(
     graph.pages.map(async (page) => {
       const absolutePath = path.join(paths.wikiDir, page.path);
-      const content = await fs.readFile(absolutePath, "utf8").catch(() => "");
-      contents.set(page.id, content);
+      const content = await fs.readFile(absolutePath, "utf8").catch(() => {
+        process.stderr.write(`[swarmvault] Warning: could not read page ${page.path} for embedding\n`);
+        return "";
+      });
+      if (content) {
+        contents.set(page.id, content);
+      }
     })
   );
 

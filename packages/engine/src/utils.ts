@@ -30,12 +30,15 @@ export async function fileExists(filePath: string): Promise<boolean> {
 }
 
 export async function readJsonFile<T>(filePath: string): Promise<T | null> {
-  if (!(await fileExists(filePath))) {
-    return null;
+  try {
+    const content = await fs.readFile(filePath, "utf8");
+    return JSON.parse(content) as T;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
   }
-
-  const content = await fs.readFile(filePath, "utf8");
-  return JSON.parse(content) as T;
 }
 
 export async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
@@ -95,9 +98,17 @@ export function extractJson(text: string): string {
   }
 
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    return text.slice(start, end + 1);
+  if (start !== -1) {
+    let end = text.lastIndexOf("}");
+    while (end > start) {
+      const candidate = text.slice(start, end + 1);
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        end = text.lastIndexOf("}", end - 1);
+      }
+    }
   }
 
   throw new Error("Could not locate JSON object in provider response.");
@@ -110,6 +121,9 @@ export function normalizeWhitespace(value: string): string {
 export function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
+  }
+  if (maxLength < 4) {
+    return value.slice(0, maxLength);
   }
   return `${value.slice(0, maxLength - 3)}...`;
 }

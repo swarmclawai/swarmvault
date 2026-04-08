@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
@@ -32,6 +33,33 @@ import type { GraphArtifact, SourceAnalysis, SourceExtractionArtifact } from "..
 
 const tempDirs: string[] = [];
 type ToolContent = Array<{ type?: string; text?: string }>;
+
+async function runNodeScript(scriptPath: string, args: string[], input: string, cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", [scriptPath, ...args], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+      reject(new Error(`node ${scriptPath} exited with ${code}: ${stderr || stdout}`));
+    });
+    child.stdin.write(input);
+    child.stdin.end();
+  });
+}
 
 async function createTempWorkspace(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-engine-"));
@@ -164,6 +192,10 @@ function createSimplePdf(text: string): Buffer {
 }
 
 const MINIMAL_PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
+const MINIMAL_DOCX = Buffer.from(
+  "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",
+  "base64"
+);
 
 function attachmentRelativePath(sourceId: string, storedAttachmentPath: string): string {
   return storedAttachmentPath.replace(new RegExp(`^raw/assets/${sourceId}/`), "");
@@ -232,17 +264,66 @@ describe("swarmvault workflow", () => {
 
     const claudeTarget = await installAgent(rootDir, "claude", { hook: true });
     expect(claudeTarget.target).toBe(path.join(rootDir, "CLAUDE.md"));
+    expect(claudeTarget.targets).toContain(path.join(rootDir, ".claude", "hooks", "swarmvault-graph-first.js"));
 
     const settingsPath = path.join(rootDir, ".claude", "settings.json");
+    const scriptPath = path.join(rootDir, ".claude", "hooks", "swarmvault-graph-first.js");
     const settings = JSON.parse(await fs.readFile(settingsPath, "utf8")) as {
-      hooks?: { PreToolUse?: Array<{ matcher?: string; hooks?: Array<{ command?: string }> }> };
+      hooks?: {
+        SessionStart?: Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>;
+        PreToolUse?: Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>;
+      };
     };
+    expect(settings.hooks?.SessionStart?.some((entry) => entry.matcher === "startup")).toBe(true);
     expect(settings.hooks?.PreToolUse?.some((entry) => entry.matcher === "Glob|Grep")).toBe(true);
-    expect(JSON.stringify(settings)).toContain("wiki/graph/report.md");
+    expect(JSON.stringify(settings)).toContain("swarmvault-graph-first.js");
+    expect(await fs.readFile(scriptPath, "utf8")).toContain("hookSpecificOutput");
+    expect(await fs.readFile(scriptPath, "utf8")).toContain("additionalContext");
+
+    await fs.mkdir(path.join(rootDir, "wiki", "graph"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "wiki", "graph", "report.md"), "# Graph report\n", "utf8");
+
+    const sessionStart = JSON.parse(await runNodeScript(scriptPath, ["session-start"], JSON.stringify({ cwd: rootDir }), rootDir)) as {
+      hookSpecificOutput?: { hookEventName?: string; additionalContext?: string };
+    };
+    expect(sessionStart.hookSpecificOutput?.hookEventName).toBe("SessionStart");
+    expect(sessionStart.hookSpecificOutput?.additionalContext).toContain("wiki/graph/report.md");
+
+    const firstSearch = JSON.parse(
+      await runNodeScript(
+        scriptPath,
+        ["pre-tool-use"],
+        JSON.stringify({ cwd: rootDir, tool_name: "Glob", tool_input: { pattern: "**/*.ts" } }),
+        rootDir
+      )
+    ) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: string } };
+    expect(firstSearch.hookSpecificOutput?.hookEventName).toBe("PreToolUse");
+    expect(firstSearch.hookSpecificOutput?.additionalContext).toContain("wiki/graph/report.md");
+
+    const reportRead = JSON.parse(
+      await runNodeScript(
+        scriptPath,
+        ["pre-tool-use"],
+        JSON.stringify({ cwd: rootDir, tool_name: "Read", tool_input: { file_path: "wiki/graph/report.md" } }),
+        rootDir
+      )
+    ) as Record<string, never>;
+    expect(reportRead).toEqual({});
+
+    const secondSearch = JSON.parse(
+      await runNodeScript(
+        scriptPath,
+        ["pre-tool-use"],
+        JSON.stringify({ cwd: rootDir, tool_name: "Grep", tool_input: { pattern: "Widget" } }),
+        rootDir
+      )
+    ) as Record<string, never>;
+    expect(secondSearch).toEqual({});
 
     await installAgent(rootDir, "claude", { hook: true });
     const settingsAgain = await fs.readFile(settingsPath, "utf8");
     expect(settingsAgain.match(/Glob\|Grep/g)?.length ?? 0).toBe(1);
+    expect(settingsAgain.match(/swarmvault-graph-first\.js/g)?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("installs gemini and opencode graph-first hook artifacts when requested", async () => {
@@ -395,6 +476,37 @@ describe("swarmvault workflow", () => {
     expect(analysis.extractionHash).toBe(manifest.extractionHash);
   });
 
+  it("extracts DOCX text and metadata into sidecars", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(path.join(rootDir, "brief.docx"), MINIMAL_DOCX);
+
+    const manifest = await ingestInput(rootDir, "brief.docx");
+    expect(manifest.sourceKind).toBe("docx");
+    expect(manifest.title).toBe("Tiny DOCX Source");
+    expect(manifest.extractedTextPath).toBeTruthy();
+    expect(manifest.extractedMetadataPath).toBeTruthy();
+    expect(manifest.extractionHash).toBeTruthy();
+
+    const extractedText = await fs.readFile(path.join(rootDir, manifest.extractedTextPath as string), "utf8");
+    expect(extractedText).toContain("Local DOCX files should extract readable text before analysis.");
+
+    const extractionArtifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, manifest.extractedMetadataPath as string), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(extractionArtifact.extractor).toBe("docx_text");
+    expect(extractionArtifact.metadata?.title).toBe("Tiny DOCX Source");
+    expect(extractionArtifact.metadata?.author).toBe("SwarmVault Tests");
+
+    await compileVault(rootDir);
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.summary).toContain("Local DOCX files should extract readable text before analysis.");
+    expect(analysis.extractionHash).toBe(manifest.extractionHash);
+  });
+
   it("uses the configured vision provider to analyze image sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -513,6 +625,49 @@ describe("swarmvault workflow", () => {
 
     const storedMarkdown = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");
     expect(storedMarkdown).toContain(`../assets/${manifest.sourceId}/assets/diagram.png`);
+  });
+
+  it("imports inbox HTML bundles with copied attachments and readable extracts", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const inboxDir = path.join(rootDir, "inbox");
+    const assetsDir = path.join(inboxDir, "assets");
+    await fs.mkdir(assetsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(inboxDir, "clip.html"),
+      [
+        "<html><head><title>Browser Clip HTML</title></head><body>",
+        "<article>",
+        "<h1>Browser Clip HTML</h1>",
+        "<p>Inbox import should preserve local HTML image references.</p>",
+        '<img alt="Diagram" src="assets/diagram.svg" />',
+        "</article>",
+        "</body></html>"
+      ].join(""),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(assetsDir, "diagram.svg"),
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
+      "utf8"
+    );
+
+    const result = await importInbox(rootDir);
+    expect(result.imported).toHaveLength(1);
+    expect(result.attachmentCount).toBe(1);
+    expect(result.skipped.some((item) => item.reason === "referenced_attachment")).toBe(true);
+
+    const manifest = result.imported[0];
+    expect(manifest.sourceKind).toBe("html");
+    expect(manifest.attachments).toHaveLength(1);
+    expect(manifest.extractedTextPath).toBeTruthy();
+
+    const storedHtml = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");
+    expect(storedHtml).toContain(`../assets/${manifest.sourceId}/assets/diagram.svg`);
+
+    const extractedText = await fs.readFile(path.join(rootDir, manifest.extractedTextPath as string), "utf8");
+    expect(extractedText).toContain("Inbox import should preserve local HTML image references.");
   });
 
   it("ingests HTML URLs with localized remote image assets", async () => {
@@ -848,6 +1003,75 @@ describe("swarmvault workflow", () => {
     expect(await fs.readFile(svg.outputPath, "utf8")).toContain("<svg");
     expect(await fs.readFile(graphml.outputPath, "utf8")).toContain("<graphml");
     expect(await fs.readFile(cypher.outputPath, "utf8")).toContain("MERGE (n:SwarmNode");
+  });
+
+  it("escapes Cypher export string literals safely", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const graph: GraphArtifact = {
+      generatedAt: new Date().toISOString(),
+      nodes: [
+        {
+          id: "node:'alpha'\n",
+          type: "concept",
+          label: 'quote \' slash \\\\ newline\njson {"ok":true}',
+          freshness: "fresh",
+          confidence: 1,
+          sourceIds: ["source:'one'"],
+          projectIds: []
+        },
+        {
+          id: "node:beta",
+          type: "entity",
+          label: "Beta",
+          freshness: "fresh",
+          confidence: 1,
+          sourceIds: ["source:two"],
+          projectIds: []
+        }
+      ],
+      edges: [
+        {
+          id: "edge:'alpha'\n",
+          source: "node:'alpha'\n",
+          target: "node:beta",
+          relation: "semantically_similar_to",
+          status: "inferred",
+          evidenceClass: "inferred",
+          confidence: 0.84,
+          provenance: ["prov:'one'\n"],
+          similarityReasons: ["shared_concept"]
+        }
+      ],
+      hyperedges: [
+        {
+          id: "group:'alpha'",
+          label: "Group 'Alpha'",
+          relation: "participate_in",
+          nodeIds: ["node:'alpha'\n", "node:beta"],
+          evidenceClass: "inferred",
+          confidence: 0.72,
+          sourcePageIds: ["page:'alpha'"],
+          why: "Contains 'quotes', backslashes \\\\, and newlines\nfor export safety."
+        }
+      ],
+      communities: [],
+      sources: [],
+      pages: []
+    };
+
+    await fs.writeFile(path.join(rootDir, "state", "graph.json"), `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const exported = await exportGraphFormat(rootDir, "cypher", path.join(rootDir, "exports", "graph.cypher"));
+    const cypher = await fs.readFile(exported.outputPath, "utf8");
+
+    expect(cypher).toContain("MERGE (n:SwarmNode");
+    expect(cypher).toContain("node:\\'alpha\\'\\n");
+    expect(cypher).toContain("quote \\' slash \\\\\\\\ newline\\njson");
+    expect(cypher).toContain("why: 'Contains \\'quotes\\', backslashes \\\\\\\\, and newlines\\nfor export safety.'");
+    expect(cypher).toContain("r:SEMANTICALLY_SIMILAR_TO");
+    expect(cypher).toContain("GROUP_MEMBER");
   });
 
   it("enriches the graph with semantic similarity, group patterns, and richer graph-tool metadata", async () => {

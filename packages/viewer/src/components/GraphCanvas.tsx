@@ -11,6 +11,18 @@ const COLORS: Record<string, string> = {
   entity: "#22c55e"
 };
 
+declare global {
+  interface Window {
+    __SWARMVAULT_TEST__?: {
+      getNodeIds: () => string[];
+      getConnectedNodePair: () => { from: string; to: string } | null;
+      getRenderedNodePosition: (nodeId: string) => { x: number; y: number } | null;
+      clearSelection: () => void;
+      hasClass: (elementId: string, className: string) => boolean;
+    };
+  }
+}
+
 type GraphCanvasProps = {
   graph: ViewerGraphArtifact | null;
   edgeStatusFilter: string;
@@ -58,6 +70,47 @@ export function GraphCanvas({
       }
     }
   });
+  const exposeTestApi = useEffectEvent((cy: Core) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.__SWARMVAULT_TEST__ = {
+      getNodeIds: () => cy.nodes().map((node) => node.id()),
+      getConnectedNodePair: () => {
+        const edge = cy.edges()[0];
+        if (!edge || edge.empty()) {
+          return null;
+        }
+        return {
+          from: edge.source().id(),
+          to: edge.target().id()
+        };
+      },
+      getRenderedNodePosition: (nodeId: string) => {
+        const node = cy.getElementById(nodeId);
+        if (!node || node.empty()) {
+          return null;
+        }
+        const position = node.renderedPosition();
+        return { x: position.x, y: position.y };
+      },
+      clearSelection: () => {
+        cy.elements(":selected").unselect();
+      },
+      hasClass: (elementId: string, className: string) => {
+        const element = cy.getElementById(elementId);
+        return !element.empty() && element.hasClass(className);
+      }
+    };
+  });
+  const clearTestApi = useEffectEvent((currentGraph: Core) => {
+    if (typeof window !== "undefined" && window.__SWARMVAULT_TEST__) {
+      if (cyRef.current === currentGraph) {
+        delete window.__SWARMVAULT_TEST__;
+      }
+    }
+  });
   const resizeGraph = useEffectEvent(() => {
     cyRef.current?.resize();
   });
@@ -91,8 +144,13 @@ export function GraphCanvas({
       layout: {
         name: "cose",
         animate: false,
-        idealEdgeLength: 120,
-        nodeRepulsion: 8_000
+        idealEdgeLength: 280,
+        nodeRepulsion: 120_000,
+        nodeOverlap: 60,
+        gravity: 0.08,
+        nestingFactor: 1.2,
+        edgeElasticity: 100,
+        numIter: 3000
       },
       style: [
         {
@@ -100,11 +158,23 @@ export function GraphCanvas({
           style: {
             label: "data(label)",
             "background-color": "data(color)",
-            color: "#f8fafc",
-            "text-outline-color": "#020617",
-            "text-outline-width": 2,
-            "font-family": '"IBM Plex Mono", "SF Mono", monospace',
-            "font-size": 10
+            "background-opacity": 0.85,
+            color: "#f1f5f9",
+            "font-family": '"Inter", "Segoe UI", system-ui, sans-serif',
+            "font-size": 11,
+            "font-weight": "normal",
+            "text-halign": "center",
+            "text-valign": "bottom",
+            "text-margin-y": 7,
+            "text-max-width": "100px",
+            "text-wrap": "ellipsis",
+            "min-zoomed-font-size": 10,
+            "text-background-opacity": 0.55,
+            "text-background-color": "#020617",
+            "text-background-padding": "2px",
+            "text-background-shape": "roundrectangle",
+            "border-width": 0,
+            "overlay-padding": 4
           }
         },
         {
@@ -112,76 +182,151 @@ export function GraphCanvas({
           style: {
             width: 56,
             height: 56,
-            "border-width": 3,
-            "border-color": "#fef08a"
+            "border-width": 1.5,
+            "border-color": "rgba(254, 240, 138, 0.35)",
+            "border-opacity": 1,
+            "background-opacity": 1,
+            "font-size": 12,
+            "font-weight": "bold",
+            "text-max-width": "140px",
+            "z-index": 12
           }
         },
         {
           selector: 'node[type = "module"]',
           style: {
             shape: "round-rectangle",
-            width: 48,
-            height: 30
+            width: 44,
+            height: 28,
+            "font-size": 11,
+            "text-max-width": "120px",
+            "background-opacity": 0.88,
+            "z-index": 8
           }
         },
         {
           selector: 'node[type = "symbol"]',
           style: {
             shape: "diamond",
-            width: 28,
-            height: 28,
-            "font-size": 9
+            width: 20,
+            height: 20,
+            "font-size": 9,
+            "text-max-width": "70px",
+            "background-opacity": 0.6,
+            "z-index": 3
           }
         },
         {
           selector: 'node[type = "rationale"]',
           style: {
             shape: "hexagon",
+            width: 28,
+            height: 28,
+            "background-opacity": 0.75,
+            "z-index": 6
+          }
+        },
+        {
+          selector: 'node[type = "source"]',
+          style: {
+            shape: "ellipse",
+            width: 32,
+            height: 32,
+            "background-opacity": 0.95,
+            "z-index": 10
+          }
+        },
+        {
+          selector: 'node[type = "concept"]',
+          style: {
+            shape: "round-rectangle",
             width: 34,
-            height: 34
+            height: 22,
+            "background-opacity": 0.7,
+            "z-index": 5
+          }
+        },
+        {
+          selector: 'node[type = "entity"]',
+          style: {
+            shape: "ellipse",
+            width: 26,
+            height: 26,
+            "background-opacity": 0.7,
+            "z-index": 5
           }
         },
         {
           selector: "edge",
           style: {
-            width: 1.5,
-            "line-color": "#475569",
-            "target-arrow-shape": "triangle",
-            "target-arrow-color": "#475569",
+            width: 0.8,
+            "line-color": "rgba(71, 85, 105, 0.35)",
+            "target-arrow-shape": "triangle-backcurve",
+            "target-arrow-color": "rgba(71, 85, 105, 0.35)",
+            "arrow-scale": 0.6,
             "curve-style": "bezier",
-            label: "data(relation)",
+            label: "",
             "font-size": 8,
-            color: "#64748b"
+            color: "rgba(148, 163, 184, 0.8)",
+            "text-background-opacity": 0,
+            "text-background-color": "#020617",
+            "text-background-padding": "2px",
+            "text-background-shape": "roundrectangle",
+            "text-rotation": "autorotate",
+            "text-margin-y": -8
+          }
+        },
+        {
+          selector: "edge:selected",
+          style: {
+            label: "data(relation)",
+            width: 2,
+            "line-color": "#94a3b8",
+            "target-arrow-color": "#94a3b8",
+            "text-background-opacity": 0.7
           }
         },
         {
           selector: ".similarity-edge",
           style: {
             "line-style": "dashed",
-            "line-color": "#f97316",
-            "target-arrow-color": "#f97316"
+            "line-color": "rgba(249, 115, 22, 0.4)",
+            "target-arrow-color": "rgba(249, 115, 22, 0.4)",
+            "line-dash-pattern": [6, 4]
           }
         },
         {
           selector: ".path-node",
           style: {
-            "border-width": 4,
-            "border-color": "#38bdf8"
+            "border-width": 3,
+            "border-color": "#38bdf8",
+            "background-opacity": 1,
+            "z-index": 100
           }
         },
         {
           selector: ".path-edge",
           style: {
-            width: 3,
+            width: 2.5,
             "line-color": "#38bdf8",
-            "target-arrow-color": "#38bdf8"
+            "target-arrow-color": "#38bdf8",
+            label: "data(relation)",
+            "text-background-opacity": 0.7,
+            "z-index": 100
           }
         },
         {
           selector: ":selected",
           style: {
-            "border-width": 3,
-            "border-color": "#f8fafc"
+            "border-width": 2,
+            "border-color": "#e2e8f0"
+          }
+        },
+        {
+          selector: "node:active",
+          style: {
+            "overlay-color": "#38bdf8",
+            "overlay-opacity": 0.12
           }
         }
       ]
@@ -194,8 +339,58 @@ export function GraphCanvas({
       handleNodeSelect(null);
     });
 
+    // Show edge labels on hover with background pill
+    cy.on("mouseover", "edge", (event) => {
+      event.target.style("label", event.target.data("relation") ?? "");
+      event.target.style("width", 1.8);
+      event.target.style("line-color", "rgba(148, 163, 184, 0.7)");
+      event.target.style("target-arrow-color", "rgba(148, 163, 184, 0.7)");
+      event.target.style("text-background-opacity", 0.7);
+      event.target.style("z-index", 999);
+    });
+    cy.on("mouseout", "edge", (event) => {
+      if (!event.target.selected() && !event.target.hasClass("path-edge")) {
+        event.target.removeStyle("label");
+        event.target.removeStyle("width");
+        event.target.removeStyle("line-color");
+        event.target.removeStyle("target-arrow-color");
+        event.target.removeStyle("text-background-opacity");
+        event.target.removeStyle("z-index");
+      }
+    });
+
+    // Expand label and highlight connected edges on node hover
+    cy.on("mouseover", "node", (event) => {
+      event.target.style("text-max-width", "200px");
+      event.target.style("text-wrap", "wrap");
+      event.target.style("z-index", 999);
+      const connectedEdges = event.target.connectedEdges();
+      connectedEdges.style("line-color", "rgba(148, 163, 184, 0.6)");
+      connectedEdges.style("target-arrow-color", "rgba(148, 163, 184, 0.6)");
+      connectedEdges.style("width", 1.3);
+    });
+    cy.on("mouseout", "node", (event) => {
+      if (!event.target.selected()) {
+        event.target.removeStyle("text-max-width");
+        event.target.removeStyle("text-wrap");
+        event.target.removeStyle("z-index");
+      }
+      const connectedEdges = event.target.connectedEdges();
+      connectedEdges.forEach((edge: cytoscape.EdgeSingular) => {
+        if (!edge.selected() && !edge.hasClass("path-edge")) {
+          edge.removeStyle("line-color");
+          edge.removeStyle("target-arrow-color");
+          edge.removeStyle("width");
+        }
+      });
+    });
+
     replaceGraphInstance(cy);
-    return () => clearGraphInstance(cy);
+    exposeTestApi(cy);
+    return () => {
+      clearTestApi(cy);
+      clearGraphInstance(cy);
+    };
   }, [communityFilter, edgeStatusFilter, graph, sourceClassFilter]);
 
   useEffect(() => {
@@ -213,5 +408,5 @@ export function GraphCanvas({
     return () => observer.disconnect();
   }, []);
 
-  return <div className="canvas" ref={containerRef} />;
+  return <div className="canvas" data-testid="graph-canvas" ref={containerRef} />;
 }

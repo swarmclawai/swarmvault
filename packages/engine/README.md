@@ -161,11 +161,12 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local file path or URL
 - `addInput(rootDir, input, { author, contributor })` captures supported URLs into normalized markdown before ingesting them, or falls back to generic URL ingest
 - `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore, extractClasses })` recursively ingests a local directory as a repo-aware code/content source tree
-- `importInbox(rootDir, inputDir?)` recursively imports supported inbox files and browser-clipper style bundles
+- `importInbox(rootDir, inputDir?)` recursively imports supported inbox files plus markdown and HTML browser-clipper style bundles
 - JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
 - repo-aware manifests, graph nodes, and graph pages can also carry `sourceClass` so first-party, third-party, resource, and generated material can be filtered and reported separately
 - HTML and markdown URL ingests localize remote image references into `raw/assets/<sourceId>/` by default and rewrite the stored markdown to local relative paths
+- PDF and DOCX ingests now write extracted-text and metadata sidecars under `state/extracts/`, and image ingest keeps the same sidecar model for vision extraction
 
 ### Compile + Query
 

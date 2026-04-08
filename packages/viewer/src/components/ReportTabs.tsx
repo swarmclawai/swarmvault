@@ -12,7 +12,13 @@ type ReportTabsProps = {
 export function ReportTabs({ graphReport, onOpenPage, onNavigateNode, onHighlightSurprise }: ReportTabsProps) {
   const [activeTab, setActiveTab] = useState("overview");
 
-  if (!graphReport) return null;
+  if (!graphReport) {
+    return (
+      <div className="report-tabs">
+        <div className="report-tabs-empty">Loading graph report...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="report-tabs">
@@ -52,7 +58,9 @@ export function ReportTabs({ graphReport, onOpenPage, onNavigateNode, onHighligh
                 <div className="card-list">
                   {graphReport.warnings.map((warning) => (
                     <article key={warning} className="card card-warning">
-                      <p className="text-sm">{warning}</p>
+                      <p className="text-sm">
+                        {"\u26A0"} {warning}
+                      </p>
                     </article>
                   ))}
                 </div>

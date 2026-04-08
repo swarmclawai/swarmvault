@@ -27,6 +27,7 @@ const lane = args.lane ?? "heuristic";
 const version = args.version ?? (await readPackageVersion());
 const installSpecs = args.installSpecs?.length ? args.installSpecs : [`@swarmvaultai/cli@${version}`];
 const keepArtifacts = args.keepArtifacts ?? process.env.KEEP_LIVE_SMOKE_ARTIFACTS === "1";
+const browserCheck = args.browserCheck ?? process.env.SWARMVAULT_BROWSER_CHECK === "1";
 const artifactDir =
   args.artifactDir ??
   path.join(repoRoot, ".live-smoke-artifacts", `${lane}-${new Date().toISOString().replaceAll(":", "-")}`);
@@ -49,7 +50,12 @@ let graphServer;
 let chartPrimaryAssetPath = "";
 let widgetModulePath = "";
 let pendingApprovalId = "";
+let exportedGraphHtmlPath = "";
 const MINIMAL_PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
+const MINIMAL_DOCX = Buffer.from(
+  "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",
+  "base64"
+);
 
 await fs.mkdir(logsDir, { recursive: true });
 await fs.mkdir(npmCacheDir, { recursive: true });
@@ -141,13 +147,25 @@ try {
     await runStep("inbox-import", async () => {
       await copyInboxBundle();
       const result = await runCliJson(["inbox", "import"]);
-      assert.equal(result.imported.length, 1, "expected exactly one imported inbox source");
+      assert.equal(result.imported.length, 2, "expected both markdown and html inbox sources to import");
       assert.ok(result.skipped.some((entry) => entry.reason === "referenced_attachment"), "expected referenced asset to be skipped");
-      const imported = result.imported[0];
-      assert.ok(Array.isArray(imported.attachments) && imported.attachments.length > 0, "expected copied attachments");
-      for (const attachment of imported.attachments) {
-        await assertExists(path.join(workspaceDir, attachment.path));
+      const markdownImport = result.imported.find((entry) => entry.sourceKind === "markdown");
+      const htmlImport = result.imported.find((entry) => entry.sourceKind === "html");
+      assert.ok(markdownImport, "expected an imported markdown inbox source");
+      assert.ok(htmlImport, "expected an imported html inbox source");
+      for (const imported of [markdownImport, htmlImport]) {
+        assert.ok(Array.isArray(imported.attachments) && imported.attachments.length > 0, "expected copied attachments");
+        for (const attachment of imported.attachments) {
+          await assertExists(path.join(workspaceDir, attachment.path));
+        }
       }
+      const storedHtml = await fs.readFile(path.join(workspaceDir, htmlImport.storedPath), "utf8");
+      assert.ok(storedHtml.includes(`../assets/${htmlImport.sourceId}/assets/graph.svg`), "html inbox import did not rewrite the local asset path");
+      const htmlExtract = await fs.readFile(path.join(workspaceDir, htmlImport.extractedTextPath), "utf8");
+      assert.ok(
+        htmlExtract.includes("This HTML clip references a local asset so inbox import has to preserve attachments too."),
+        "html inbox import did not produce readable extracted text"
+      );
       await runCliJson(["compile"]);
     });
 
@@ -312,22 +330,31 @@ try {
 
       await fs.writeFile(path.join(workspaceDir, "diagram.png"), MINIMAL_PNG);
       await fs.writeFile(path.join(workspaceDir, "paper.pdf"), createSimplePdf("SwarmVault PDF extraction keeps documents searchable."));
+      await fs.writeFile(path.join(workspaceDir, "brief.docx"), MINIMAL_DOCX);
 
       const imageManifest = await runCliJson(["ingest", "diagram.png"]);
       const pdfManifest = await runCliJson(["ingest", "paper.pdf"]);
+      const docxManifest = await runCliJson(["ingest", "brief.docx"]);
       assert.ok(imageManifest.extractedMetadataPath, "image ingest did not record extraction metadata");
       assert.ok(imageManifest.extractedTextPath, "image ingest did not write extracted markdown");
       assert.ok(pdfManifest.extractedMetadataPath, "pdf ingest did not record extraction metadata");
       assert.ok(pdfManifest.extractedTextPath, "pdf ingest did not write extracted markdown");
+      assert.ok(docxManifest.extractedMetadataPath, "docx ingest did not record extraction metadata");
+      assert.ok(docxManifest.extractedTextPath, "docx ingest did not write extracted markdown");
 
       const imageArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, imageManifest.extractedMetadataPath), "utf8"));
       const pdfArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pdfManifest.extractedMetadataPath), "utf8"));
+      const docxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, docxManifest.extractedMetadataPath), "utf8"));
       assert.equal(imageArtifact.extractor, "image_vision", "image extraction did not use the vision extractor");
       assert.equal(pdfArtifact.extractor, "pdf_text", "pdf extraction did not use the pdf extractor");
       assert.equal(pdfArtifact.pageCount, 1, "pdf extraction did not record the page count");
+      assert.equal(docxArtifact.extractor, "docx_text", "docx extraction did not use the docx extractor");
+      assert.equal(docxArtifact.metadata?.title, "Tiny DOCX Source", "docx extraction did not preserve core title metadata");
 
       const pdfExtract = await fs.readFile(path.join(workspaceDir, pdfManifest.extractedTextPath), "utf8");
       assert.ok(pdfExtract.includes("SwarmVault PDF extraction"), "pdf extraction did not preserve document text");
+      const docxExtract = await fs.readFile(path.join(workspaceDir, docxManifest.extractedTextPath), "utf8");
+      assert.ok(docxExtract.includes("Local DOCX files should extract readable text before analysis."), "docx extraction did not preserve document text");
 
       await runCliJson(["compile"]);
       const imageAnalysis = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "analyses", `${imageManifest.sourceId}.json`), "utf8"));
@@ -337,6 +364,7 @@ try {
     await runStep("tiny-language-matrix", async () => {
       const repoDir = path.join(workspaceDir, "tiny-matrix");
       await fs.cp(tinyMatrixFixtureDir, repoDir, { recursive: true });
+      await fs.writeFile(path.join(repoDir, "docs", "brief.docx"), MINIMAL_DOCX);
 
       const ingest = await runCliJson(["ingest", repoDir, "--repo-root", repoDir]);
       assert.ok(Array.isArray(ingest.imported) && ingest.imported.length >= 10, "tiny matrix did not import the expected sources");
@@ -352,6 +380,10 @@ try {
       for (const sourceKind of ["markdown", "text", "html", "pdf", "image", "code"]) {
         assert.ok(sourceKinds.has(sourceKind), `tiny matrix missing source kind ${sourceKind}`);
       }
+      assert.ok(
+        manifests.some((manifest) => manifest.sourceKind === "docx"),
+        "heuristic lane did not preserve any docx source manifest"
+      );
 
       const codeIndex = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "code-index.json"), "utf8"));
       const tinySourceIds = new Set(tinyManifests.map((manifest) => manifest.sourceId));
@@ -387,6 +419,9 @@ try {
       const pdfManifest = tinyManifests.find((manifest) => manifest.repoRelativePath === "docs/paper.pdf");
       const pdfArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pdfManifest.extractedMetadataPath), "utf8"));
       assert.equal(pdfArtifact.extractor, "pdf_text", "tiny matrix pdf did not use pdf_text extraction");
+      const docxManifest = manifests.find((manifest) => manifest.sourceKind === "docx");
+      const docxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, docxManifest.extractedMetadataPath), "utf8"));
+      assert.equal(docxArtifact.extractor, "docx_text", "tiny matrix docx did not use docx_text extraction");
       const htmlSourcePagePath = path.join(workspaceDir, "wiki", "sources", `${htmlManifest.sourceId}.md`);
       const htmlSourcePage = await fs.readFile(htmlSourcePagePath, "utf8");
       assert.ok(htmlSourcePage.includes("Tiny HTML Source"), "tiny matrix source page did not include html title");
@@ -848,6 +883,7 @@ try {
       const result = await runCliJson(["graph", "export", "--html", outputPath]);
       assert.equal(result.outputPath, outputPath, "graph export returned an unexpected output path");
       await assertExists(outputPath);
+      exportedGraphHtmlPath = outputPath;
       const html = await fs.readFile(outputPath, "utf8");
       assert.ok(html.includes("data:"), "graph export did not embed local asset data");
 
@@ -942,6 +978,11 @@ try {
       assert.ok(html.includes("<!doctype html") || html.includes("<html"), "graph viewer did not return HTML");
       assert.ok(Array.isArray(graph.nodes), "graph API did not return nodes");
       assert.ok(Array.isArray(graph.pages), "graph API did not return pages");
+      if (browserCheck) {
+        assert.ok(exportedGraphHtmlPath, "graph export path missing for browser validation");
+        await runBrowserValidation(`http://127.0.0.1:${port}/`, "graph-serve");
+        await runBrowserValidation(pathToFileURL(exportedGraphHtmlPath).toString(), "graph-export");
+      }
       await stopProcess(graphServer.child, graphServer.label);
       graphServer = undefined;
     });
@@ -1059,7 +1100,7 @@ try {
 
     await runStep("install-agent", async () => {
       const codex = await runCliJson(["install", "--agent", "codex"]);
-      const claude = await runCliJson(["install", "--agent", "claude"]);
+      const claude = await runCliJson(["install", "--agent", "claude", "--hook"]);
       const opencode = await runCliJson(["install", "--agent", "opencode", "--hook"]);
       const gemini = await runCliJson(["install", "--agent", "gemini", "--hook"]);
       const copilot = await runCliJson(["install", "--agent", "copilot", "--hook"]);
@@ -1081,6 +1122,8 @@ try {
 
       await assertExists(path.join(workspaceDir, "AGENTS.md"));
       await assertExists(path.join(workspaceDir, "CLAUDE.md"));
+      await assertExists(path.join(workspaceDir, ".claude", "settings.json"));
+      await assertExists(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js"));
       await assertExists(path.join(workspaceDir, "GEMINI.md"));
       await assertExists(path.join(workspaceDir, "CONVENTIONS.md"));
       await assertExists(path.join(workspaceDir, ".gemini", "settings.json"));
@@ -1092,14 +1135,19 @@ try {
       await assertExists(path.join(workspaceDir, ".aider.conf.yml"));
       const agentsContent = await fs.readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
       const claudeContent = await fs.readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+      const claudeSettingsContent = await fs.readFile(path.join(workspaceDir, ".claude", "settings.json"), "utf8");
+      const claudeHookContent = await fs.readFile(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js"), "utf8");
       const geminiContent = await fs.readFile(path.join(workspaceDir, "GEMINI.md"), "utf8");
       const copilotContent = await fs.readFile(path.join(workspaceDir, ".github", "copilot-instructions.md"), "utf8");
       const conventionsContent = await fs.readFile(path.join(workspaceDir, "CONVENTIONS.md"), "utf8");
       assert.ok(agentsContent.includes("# SwarmVault Rules"), "AGENTS.md missing managed rules");
       assert.ok(claudeContent.includes("# SwarmVault Rules"), "CLAUDE.md missing managed rules");
+      assert.ok(claudeSettingsContent.includes("swarmvault-graph-first.js"), "claude settings missing hook helper");
+      assert.ok(claudeHookContent.includes("additionalContext"), "claude hook helper missing additionalContext output");
       assert.ok(geminiContent.includes("# SwarmVault Rules"), "GEMINI.md missing managed rules");
       assert.ok(copilotContent.includes("# SwarmVault Repository Instructions"), "copilot instructions missing managed rules");
       assert.ok(conventionsContent.includes("# SwarmVault Conventions"), "CONVENTIONS.md missing managed rules");
+      assert.ok(Array.isArray(claude.targets) && claude.targets.includes(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js")));
       assert.ok(Array.isArray(opencode.targets) && opencode.targets.includes(path.join(workspaceDir, ".opencode", "plugins", "swarmvault-graph-first.js")));
       assert.ok(Array.isArray(gemini.targets) && gemini.targets.includes(path.join(workspaceDir, ".gemini", "settings.json")));
       assert.ok(Array.isArray(copilot.targets) && copilot.targets.includes(path.join(workspaceDir, "AGENTS.md")));
@@ -1252,10 +1300,15 @@ function parseArgs(argv) {
       parsed.keepArtifacts = true;
       continue;
     }
-  if (value === "--install-spec") {
+    if (value === "--browser-check") {
+      parsed.browserCheck = true;
+      continue;
+    }
+    if (value === "--install-spec") {
       parsed.installSpecs ??= [];
       parsed.installSpecs.push(argv[index + 1]);
       index += 1;
+      continue;
     }
   }
   return parsed;
@@ -1565,6 +1618,90 @@ async function stopProcess(child, label) {
     await waitFor(async () => child.exitCode !== null, 5_000, `${label} did not exit after SIGKILL`);
   });
   return exited;
+}
+
+async function runBrowserValidation(targetUrl, label) {
+  let chromium;
+  try {
+    ({ chromium } = await import("playwright"));
+  } catch (error) {
+    throw new Error(
+      `Browser validation requires Playwright. Run \`pnpm --dir ${repoRoot} exec playwright install chromium\`. ${error instanceof Error ? error.message : ""}`.trim()
+    );
+  }
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (error) {
+    throw new Error(
+      `Browser validation could not launch Chromium. Run \`pnpm --dir ${repoRoot} exec playwright install chromium\`. ${error instanceof Error ? error.message : ""}`.trim()
+    );
+  }
+
+  const page = await browser.newPage({ viewport: { width: 1440, height: 920 } });
+  try {
+    await page.goto(targetUrl, { waitUntil: "networkidle" });
+    await page.locator('[data-testid="graph-canvas"]').waitFor({ state: "visible" });
+    await page.waitForFunction(() => Array.isArray(window.__SWARMVAULT_TEST__?.getNodeIds?.()) && window.__SWARMVAULT_TEST__.getNodeIds().length > 0);
+
+    const firstNodeId = await page.evaluate(() => window.__SWARMVAULT_TEST__?.getNodeIds?.()[0] ?? null);
+    assert.ok(firstNodeId, `${label} did not expose a selectable graph node`);
+    const connectedNodePair = await page.evaluate(() => window.__SWARMVAULT_TEST__?.getConnectedNodePair?.() ?? null);
+    assert.ok(connectedNodePair?.from && connectedNodePair?.to, `${label} did not expose a connected node pair for path validation`);
+
+    const canvas = page.locator('[data-testid="graph-canvas"]');
+    const canvasBox = await canvas.boundingBox();
+    assert.ok(canvasBox, `${label} graph canvas did not produce a bounding box`);
+
+    const renderedPosition = await page.evaluate((nodeId) => window.__SWARMVAULT_TEST__?.getRenderedNodePosition?.(nodeId), firstNodeId);
+    assert.ok(renderedPosition, `${label} did not expose a rendered node position`);
+
+    await page.mouse.click(canvasBox.x + renderedPosition.x, canvasBox.y + renderedPosition.y);
+    await page.waitForFunction(
+      (nodeId) => document.querySelector('[data-testid="selection-panel"]')?.getAttribute("data-selected-node-id") === nodeId,
+      firstNodeId
+    );
+
+    await page.locator('[data-testid="graph-path-from"]').fill(connectedNodePair.from);
+    await page.locator('[data-testid="graph-path-to"]').fill(connectedNodePair.to);
+    await page.locator('[data-testid="graph-path-highlight"]').click();
+    await page.locator('[data-testid="graph-path-summary"]').waitFor({ state: "visible" });
+    const [hasFromPathClass, hasToPathClass] = await Promise.all([
+      page.evaluate((nodeId) => window.__SWARMVAULT_TEST__?.hasClass?.(nodeId, "path-node") ?? false, connectedNodePair.from),
+      page.evaluate((nodeId) => window.__SWARMVAULT_TEST__?.hasClass?.(nodeId, "path-node") ?? false, connectedNodePair.to)
+    ]);
+    assert.equal(hasFromPathClass, true, `${label} path highlight did not mark the source node`);
+    assert.equal(hasToPathClass, true, `${label} path highlight did not mark the target node`);
+
+    const emptyPoint = await page.evaluate(({ width, height }) => {
+      const positions =
+        window.__SWARMVAULT_TEST__?.getNodeIds?.()
+          .map((nodeId) => window.__SWARMVAULT_TEST__?.getRenderedNodePosition?.(nodeId))
+          .filter(Boolean) ?? [];
+      const candidates = [
+        { x: 12, y: 12 },
+        { x: width - 12, y: 12 },
+        { x: 12, y: height - 12 },
+        { x: width - 12, y: height - 12 }
+      ];
+
+      const minDistance = (candidate) =>
+        Math.min(
+          ...positions.map((position) => Math.hypot(position.x - candidate.x, position.y - candidate.y)),
+          Number.POSITIVE_INFINITY
+        );
+
+      return candidates.sort((left, right) => minDistance(right) - minDistance(left))[0];
+    }, { width: canvasBox.width, height: canvasBox.height });
+    await page.mouse.click(canvasBox.x + emptyPoint.x, canvasBox.y + emptyPoint.y);
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="selection-panel"]')?.getAttribute("data-selected-node-id") === ""
+    );
+  } finally {
+    await page.close();
+    await browser.close();
+  }
 }
 
 async function waitForJsonLine(stream, timeoutMs) {

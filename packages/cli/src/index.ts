@@ -55,10 +55,16 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.28";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.29";
   } catch {
-    return "0.1.28";
+    return "0.1.29";
   }
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function isJson(): boolean {
@@ -150,8 +156,11 @@ program
       }
     ) => {
       const maxAssetSize =
-        typeof options.maxAssetSize === "string" && options.maxAssetSize.trim() ? Number.parseInt(options.maxAssetSize, 10) : undefined;
-      const maxFiles = typeof options.maxFiles === "string" && options.maxFiles.trim() ? Number.parseInt(options.maxFiles, 10) : undefined;
+        typeof options.maxAssetSize === "string" && options.maxAssetSize.trim()
+          ? parsePositiveInt(options.maxAssetSize, 0) || undefined
+          : undefined;
+      const maxFiles =
+        typeof options.maxFiles === "string" && options.maxFiles.trim() ? parsePositiveInt(options.maxFiles, 0) || undefined : undefined;
       const extractClasses: SourceClass[] = [
         "first_party",
         ...(options.includeThirdParty ? (["third_party"] as const) : []),
@@ -160,11 +169,11 @@ program
       ];
       const commonOptions = {
         includeAssets: options.includeAssets,
-        maxAssetSize: Number.isFinite(maxAssetSize) ? maxAssetSize : undefined,
+        maxAssetSize,
         repoRoot: options.repoRoot,
         include: options.include,
         exclude: options.exclude,
-        maxFiles: Number.isFinite(maxFiles) ? maxFiles : undefined,
+        maxFiles,
         gitignore: options.gitignore,
         extractClasses
       };
@@ -281,10 +290,10 @@ program
       .default("markdown")
   )
   .action(async (question: string, options: { steps?: string; format?: "markdown" | "report" | "slides" | "chart" | "image" }) => {
-    const stepCount = Number.parseInt(options.steps ?? "3", 10);
+    const stepCount = parsePositiveInt(options.steps, 3);
     const result = await exploreVault(process.cwd(), {
       question,
-      steps: Number.isFinite(stepCount) ? stepCount : 3,
+      steps: stepCount,
       format: options.format
     });
     if (isJson()) {
@@ -341,7 +350,7 @@ graph
   .description("Serve the local graph viewer.")
   .option("--port <port>", "Port override")
   .action(async (options: { port?: string }) => {
-    const port = options.port ? Number.parseInt(options.port, 10) : undefined;
+    const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
     const server = await startGraphServer(process.cwd(), port);
     if (isJson()) {
       emitJson({ port: server.port, url: `http://localhost:${server.port}` });
@@ -349,7 +358,9 @@ graph
       log(`Graph viewer running at http://localhost:${server.port}`);
     }
     process.on("SIGINT", async () => {
-      await server.close();
+      try {
+        await server.close();
+      } catch {}
       process.exit(0);
     });
   });
@@ -392,10 +403,10 @@ graph
   .option("--dfs", "Prefer a depth-first traversal instead of breadth-first", false)
   .option("--budget <n>", "Maximum number of graph nodes to summarize")
   .action(async (question: string, options: { dfs?: boolean; budget?: string }) => {
-    const budget = options.budget ? Number.parseInt(options.budget, 10) : undefined;
+    const budget = options.budget ? parsePositiveInt(options.budget, 0) || undefined : undefined;
     const result = await queryGraphVault(process.cwd(), question, {
       traversal: options.dfs ? "dfs" : "bfs",
-      budget: Number.isFinite(budget) ? budget : undefined
+      budget
     });
     if (isJson()) {
       emitJson(result);
@@ -436,8 +447,8 @@ graph
   .description("List the highest-connectivity non-source graph nodes.")
   .option("--limit <n>", "Maximum number of nodes to return", "10")
   .action(async (options: { limit?: string }) => {
-    const limit = Number.parseInt(options.limit ?? "10", 10);
-    const result = await listGodNodes(process.cwd(), Number.isFinite(limit) ? limit : 10);
+    const limit = parsePositiveInt(options.limit, 10);
+    const result = await listGodNodes(process.cwd(), limit);
     if (isJson()) {
       emitJson(result);
       return;
@@ -565,12 +576,12 @@ const watch = program
   .option("--once", "Run one import/refresh cycle immediately instead of starting a watcher", false)
   .option("--debounce <ms>", "Debounce window in milliseconds", "900")
   .action(async (options: { lint?: boolean; repo?: boolean; once?: boolean; debounce?: string }) => {
-    const debounceMs = Number.parseInt(options.debounce ?? "900", 10);
+    const debounceMs = parsePositiveInt(options.debounce, 900);
     if (options.once) {
       const result = await runWatchCycle(process.cwd(), {
         lint: options.lint ?? false,
         repo: options.repo ?? false,
-        debounceMs: Number.isFinite(debounceMs) ? debounceMs : 900
+        debounceMs
       });
       if (isJson()) {
         emitJson(result);
@@ -585,7 +596,7 @@ const watch = program
     const controller = await watchVault(process.cwd(), {
       lint: options.lint ?? false,
       repo: options.repo ?? false,
-      debounceMs: Number.isFinite(debounceMs) ? debounceMs : 900
+      debounceMs
     });
     if (isJson()) {
       emitJson({ status: "watching", inboxDir: paths.inboxDir, repo: options.repo ?? false });
@@ -593,42 +604,29 @@ const watch = program
       log(`Watching inbox${options.repo ? " and tracked repos" : ""} for changes. Press Ctrl+C to stop.`);
     }
     process.on("SIGINT", async () => {
-      await controller.close();
+      try {
+        await controller.close();
+      } catch {}
       process.exit(0);
     });
   });
 
-watch
-  .command("status")
-  .description("Show the latest watch run plus pending semantic refresh entries.")
-  .action(async () => {
-    const result = await getWatchStatus(process.cwd());
-    if (isJson()) {
-      emitJson(result);
-      return;
-    }
-    log(`Watched repo roots: ${result.watchedRepoRoots.length}`);
-    log(`Pending semantic refresh: ${result.pendingSemanticRefresh.length}`);
-    for (const entry of result.pendingSemanticRefresh.slice(0, 8)) {
-      log(`- ${entry.changeType} ${entry.path}`);
-    }
-  });
+async function showWatchStatus(): Promise<void> {
+  const result = await getWatchStatus(process.cwd());
+  if (isJson()) {
+    emitJson(result);
+    return;
+  }
+  log(`Watched repo roots: ${result.watchedRepoRoots.length}`);
+  log(`Pending semantic refresh: ${result.pendingSemanticRefresh.length}`);
+  for (const entry of result.pendingSemanticRefresh.slice(0, 8)) {
+    log(`- ${entry.changeType} ${entry.path}`);
+  }
+}
 
-program
-  .command("watch-status")
-  .description("Show the latest watch run plus pending semantic refresh entries.")
-  .action(async () => {
-    const result = await getWatchStatus(process.cwd());
-    if (isJson()) {
-      emitJson(result);
-      return;
-    }
-    log(`Watched repo roots: ${result.watchedRepoRoots.length}`);
-    log(`Pending semantic refresh: ${result.pendingSemanticRefresh.length}`);
-    for (const entry of result.pendingSemanticRefresh.slice(0, 8)) {
-      log(`- ${entry.changeType} ${entry.path}`);
-    }
-  });
+watch.command("status").description("Show the latest watch run plus pending semantic refresh entries.").action(showWatchStatus);
+
+program.command("watch-status").description("Show the latest watch run plus pending semantic refresh entries.").action(showWatchStatus);
 
 const hook = program.command("hook").description("Install local git hooks that keep tracked repos and the vault in sync.");
 hook
@@ -716,15 +714,17 @@ schedule
   .description("Run the local schedule loop.")
   .option("--poll <ms>", "Polling interval in milliseconds", "30000")
   .action(async (options: { poll?: string }) => {
-    const pollMs = Number.parseInt(options.poll ?? "30000", 10);
-    const controller = await serveSchedules(process.cwd(), Number.isFinite(pollMs) ? pollMs : 30_000);
+    const pollMs = parsePositiveInt(options.poll, 30_000);
+    const controller = await serveSchedules(process.cwd(), pollMs);
     if (isJson()) {
-      emitJson({ status: "serving", pollMs: Number.isFinite(pollMs) ? pollMs : 30_000 });
+      emitJson({ status: "serving", pollMs });
     } else {
       log("Serving schedules. Press Ctrl+C to stop.");
     }
     process.on("SIGINT", async () => {
-      await controller.close();
+      try {
+        await controller.close();
+      } catch {}
       process.exit(0);
     });
   });
@@ -738,7 +738,9 @@ program
     }
     const controller = await startMcpServer(process.cwd());
     process.on("SIGINT", async () => {
-      await controller.close();
+      try {
+        await controller.close();
+      } catch {}
       process.exit(0);
     });
   });

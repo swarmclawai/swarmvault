@@ -34,7 +34,7 @@ export function GraphTools({
   onNavigateNode
 }: GraphToolsProps) {
   return (
-    <section className="panel">
+    <section className="panel" data-testid="graph-tools">
       <h3 className="panel-heading">Graph Tools</h3>
       {graphError ? <p className="text-error">{graphError}</p> : null}
       <div className="card-list">
@@ -43,11 +43,13 @@ export function GraphTools({
           <input
             type="search"
             className="input"
+            data-testid="graph-query-input"
+            aria-label="Graph query"
             value={graphQueryInput}
             onChange={(event) => onGraphQueryInputChange(event.target.value)}
-            placeholder="Ask the local graph"
+            placeholder="Ask a question about the graph\u2026"
           />
-          <button type="button" className="btn btn-primary" onClick={onRunQuery}>
+          <button type="button" className="btn btn-primary" data-testid="graph-query-run" onClick={onRunQuery}>
             Run
           </button>
           {graphQueryResult ? (
@@ -89,15 +91,29 @@ export function GraphTools({
           <input
             type="text"
             className="input"
+            data-testid="graph-path-from"
+            aria-label="Path from node"
             value={pathFrom}
             onChange={(event) => onPathFromChange(event.target.value)}
-            placeholder="From"
+            placeholder="From node ID or label\u2026"
           />
-          <input type="text" className="input" value={pathTo} onChange={(event) => onPathToChange(event.target.value)} placeholder="To" />
-          <button type="button" className="btn btn-primary" onClick={onHighlightPath}>
+          <input
+            type="text"
+            className="input"
+            data-testid="graph-path-to"
+            aria-label="Path to node"
+            value={pathTo}
+            onChange={(event) => onPathToChange(event.target.value)}
+            placeholder="To node ID or label\u2026"
+          />
+          <button type="button" className="btn btn-primary" data-testid="graph-path-highlight" onClick={onHighlightPath}>
             Highlight
           </button>
-          {pathResult ? <p className="text-secondary text-sm">{pathResult.summary}</p> : null}
+          {pathResult ? (
+            <p className="text-secondary text-sm" data-testid="graph-path-summary">
+              {pathResult.summary}
+            </p>
+          ) : null}
         </article>
       </div>
     </section>

@@ -1027,6 +1027,84 @@ function resetGraphNodeMetrics(nodes: GraphNode[]): GraphNode[] {
   return nodes.map(({ communityId: _communityId, degree: _degree, bridgeScore: _bridgeScore, isGodNode: _isGodNode, ...node }) => node);
 }
 
+type GoPackageSymbolLookup = {
+  byName: Map<string, string>;
+  uniqueMethodIdsByShortName: Map<string, string>;
+};
+
+function manifestRepoPath(manifest: SourceManifest): string {
+  return toPosix(manifest.repoRelativePath ?? path.basename(manifest.originalPath ?? manifest.storedPath));
+}
+
+function goPackageScopeKey(manifest: SourceManifest, analysis: SourceAnalysis): string | null {
+  if (analysis.code?.language !== "go") {
+    return null;
+  }
+  const packageName = analysis.code.namespace?.trim();
+  if (!packageName) {
+    return null;
+  }
+  return `${packageName}:${path.posix.dirname(manifestRepoPath(manifest))}`;
+}
+
+function buildGoPackageSymbolLookups(
+  analyses: SourceAnalysis[],
+  manifestsById: Map<string, SourceManifest>
+): Map<string, GoPackageSymbolLookup> {
+  const lookups = new Map<
+    string,
+    {
+      byName: Map<string, string>;
+      methodIdsByShortName: Map<string, Set<string>>;
+    }
+  >();
+
+  for (const analysis of analyses) {
+    if (analysis.code?.language !== "go") {
+      continue;
+    }
+    const manifest = manifestsById.get(analysis.sourceId);
+    if (!manifest) {
+      continue;
+    }
+    const scopeKey = goPackageScopeKey(manifest, analysis);
+    if (!scopeKey) {
+      continue;
+    }
+    const current = lookups.get(scopeKey) ?? {
+      byName: new Map<string, string>(),
+      methodIdsByShortName: new Map<string, Set<string>>()
+    };
+
+    for (const symbol of analysis.code.symbols) {
+      current.byName.set(symbol.name, symbol.id);
+      const separator = symbol.name.lastIndexOf(".");
+      if (separator > 0) {
+        const shortName = symbol.name.slice(separator + 1);
+        const matches = current.methodIdsByShortName.get(shortName) ?? new Set<string>();
+        matches.add(symbol.id);
+        current.methodIdsByShortName.set(shortName, matches);
+      }
+    }
+
+    lookups.set(scopeKey, current);
+  }
+
+  return new Map(
+    [...lookups.entries()].map(([scopeKey, value]) => [
+      scopeKey,
+      {
+        byName: value.byName,
+        uniqueMethodIdsByShortName: new Map(
+          [...value.methodIdsByShortName.entries()]
+            .filter(([, ids]) => ids.size === 1)
+            .map(([shortName, ids]) => [shortName, [...ids][0] as string])
+        )
+      } satisfies GoPackageSymbolLookup
+    ])
+  );
+}
+
 function buildGraph(
   manifests: SourceManifest[],
   analyses: SourceAnalysis[],
@@ -1035,6 +1113,7 @@ function buildGraph(
   _codeIndex: CodeIndexArtifact
 ): GraphArtifact {
   const manifestsById = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
+  const goPackageSymbolLookups = buildGoPackageSymbolLookups(analyses, manifestsById);
   const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
     id: `source:${manifest.sourceId}`,
     type: "source",
@@ -1193,6 +1272,13 @@ function buildGraph(
       }
 
       const symbolIdsByName = new Map(analysis.code.symbols.map((symbol) => [symbol.name, symbol.id]));
+      const goPackageLookup =
+        analysis.code.language === "go" ? goPackageSymbolLookups.get(goPackageScopeKey(manifest, analysis) ?? "") : undefined;
+      const localSymbolIdsByName = goPackageLookup?.byName ?? symbolIdsByName;
+      const localGoMethodIdsByShortName = goPackageLookup?.uniqueMethodIdsByShortName ?? new Map<string, string>();
+      const resolveLocalSymbolId = (targetName: string): string | undefined =>
+        localSymbolIdsByName.get(targetName) ??
+        (analysis.code?.language === "go" ? localGoMethodIdsByShortName.get(targetName) : undefined);
 
       for (const rationale of analysis.rationales) {
         const targetSymbolId = rationale.symbolName ? symbolIdsByName.get(rationale.symbolName) : undefined;
@@ -1249,9 +1335,32 @@ function buildGraph(
         }
       }
 
+      if (analysis.code.language === "go") {
+        for (const symbol of analysis.code.symbols) {
+          const separator = symbol.name.lastIndexOf(".");
+          if (separator <= 0) {
+            continue;
+          }
+          const receiverTypeId = localSymbolIdsByName.get(symbol.name.slice(0, separator));
+          if (!receiverTypeId || receiverTypeId === symbol.id) {
+            continue;
+          }
+          pushEdge({
+            id: `${receiverTypeId}->${symbol.id}:defines:receiver`,
+            source: receiverTypeId,
+            target: symbol.id,
+            relation: "defines",
+            status: "extracted",
+            evidenceClass: "extracted",
+            confidence: 1,
+            provenance: [analysis.sourceId]
+          });
+        }
+      }
+
       for (const symbol of analysis.code.symbols) {
         for (const targetName of symbol.calls) {
-          const targetId = symbolIdsByName.get(targetName);
+          const targetId = resolveLocalSymbolId(targetName);
           if (!targetId || targetId === symbol.id) {
             continue;
           }
@@ -1268,7 +1377,7 @@ function buildGraph(
         }
 
         for (const targetName of symbol.extends) {
-          const targetId = symbolIdsByName.get(targetName) ?? importedSymbolIdsByName.get(targetName);
+          const targetId = resolveLocalSymbolId(targetName) ?? importedSymbolIdsByName.get(targetName);
           if (!targetId) {
             continue;
           }
@@ -1285,7 +1394,7 @@ function buildGraph(
         }
 
         for (const targetName of symbol.implements) {
-          const targetId = symbolIdsByName.get(targetName) ?? importedSymbolIdsByName.get(targetName);
+          const targetId = resolveLocalSymbolId(targetName) ?? importedSymbolIdsByName.get(targetName);
           if (!targetId) {
             continue;
           }

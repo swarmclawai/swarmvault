@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { strFromU8, unzipSync } from "fflate";
+import { JSDOM } from "jsdom";
 import { z } from "zod";
 import { getProviderForTask } from "./providers/registry.js";
 import type { ProviderAdapter, SourceExtractionArtifact, SourceKind } from "./types.js";
@@ -225,6 +227,62 @@ function normalizePdfMetadata(raw: unknown): Record<string, string> | undefined 
   return Object.keys(metadata).length ? metadata : undefined;
 }
 
+function normalizeDocumentText(raw: string): string {
+  return raw
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((section) => normalizeWhitespace(section))
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+function parseDocxCoreMetadata(bytes: Buffer): Record<string, string> | undefined {
+  try {
+    const archive = unzipSync(new Uint8Array(bytes));
+    const coreXml = archive["docProps/core.xml"];
+    if (!coreXml) {
+      return undefined;
+    }
+
+    const dom = new JSDOM(strFromU8(coreXml), { contentType: "text/xml" });
+    const document = dom.window.document;
+    const valuesByLocalName = new Map<string, string>();
+
+    for (const node of Array.from(document.getElementsByTagName("*"))) {
+      const localName = node.localName?.trim().toLowerCase();
+      const text = normalizeWhitespace(node.textContent ?? "");
+      if (!localName || !text || valuesByLocalName.has(localName)) {
+        continue;
+      }
+      valuesByLocalName.set(localName, text);
+    }
+
+    const metadata: Record<string, string> = {};
+    const mappings: Array<[string, string]> = [
+      ["title", "title"],
+      ["author", "creator"],
+      ["subject", "subject"],
+      ["description", "description"],
+      ["keywords", "keywords"],
+      ["last_modified_by", "lastmodifiedby"],
+      ["created", "created"],
+      ["modified", "modified"]
+    ];
+
+    for (const [targetKey, sourceKey] of mappings) {
+      const value = valuesByLocalName.get(sourceKey);
+      if (value) {
+        metadata[targetKey] = value;
+      }
+    }
+
+    return Object.keys(metadata).length ? metadata : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function extractPdfText(input: {
   mimeType: string;
   bytes: Buffer;
@@ -278,6 +336,45 @@ export async function extractPdfText(input: {
       artifact: {
         ...extractionMetadata("pdf", input.mimeType, "pdf_text"),
         warnings: [`PDF text extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+export async function extractDocxText(input: {
+  mimeType: string;
+  bytes: Buffer;
+}): Promise<{ extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({
+      buffer: input.bytes
+    });
+    const extractedText = normalizeDocumentText(result.value);
+    const warnings = result.messages
+      .map((message) => normalizeWhitespace(message.message))
+      .filter(Boolean)
+      .map((message) => truncate(message, 240));
+
+    const artifact: SourceExtractionArtifact = {
+      ...extractionMetadata("docx", input.mimeType, "docx_text"),
+      metadata: parseDocxCoreMetadata(input.bytes),
+      warnings: warnings.length ? warnings : undefined
+    };
+
+    if (!extractedText) {
+      artifact.warnings = [...(artifact.warnings ?? []), "DOCX text extraction completed but produced no extractable text."];
+    }
+
+    return {
+      extractedText: extractedText || undefined,
+      artifact
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("docx", input.mimeType, "docx_text"),
+        warnings: [`DOCX text extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
       }
     };
   }

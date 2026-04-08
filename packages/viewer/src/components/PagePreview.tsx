@@ -17,7 +17,7 @@ type PagePreviewProps = {
 
 export function PagePreview({ activePage, pageError, backlinkPages, relatedPages, graphPageLinks, onOpenPage }: PagePreviewProps) {
   return (
-    <section className="panel page-panel">
+    <section className="panel page-panel" data-testid="page-preview">
       <h3 className="panel-heading">Page Preview</h3>
       {pageError ? <p className="text-error">{pageError}</p> : null}
       {activePage ? (
@@ -95,9 +95,15 @@ export function PagePreview({ activePage, pageError, backlinkPages, relatedPages
             </div>
           ) : null}
           <pre className="content-pre">{activePage.content.slice(0, 1200)}</pre>
+          {activePage.content.length > 1200 ? (
+            <span className="content-truncation-note">Showing first 1,200 of {activePage.content.length.toLocaleString()} characters</span>
+          ) : null}
         </>
       ) : (
-        <p className="text-muted text-sm">Open a search result, review entry, candidate, or graph node page.</p>
+        <div className="empty-state">
+          <span className="empty-state-icon">{"\uD83D\uDCC4"}</span>
+          <p className="text-muted text-sm">Open a search result, review entry, candidate, or graph node page.</p>
+        </div>
       )}
     </section>
   );

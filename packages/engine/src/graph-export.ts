@@ -23,8 +23,38 @@ function xmlEscape(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-function cypherEscape(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+function cypherStringLiteral(value: string): string {
+  let escaped = "";
+  for (const char of value) {
+    switch (char) {
+      case "\\":
+        escaped += "\\\\";
+        break;
+      case "'":
+        escaped += "\\'";
+        break;
+      case "\n":
+        escaped += "\\n";
+        break;
+      case "\r":
+        escaped += "\\r";
+        break;
+      case "\t":
+        escaped += "\\t";
+        break;
+      case "\b":
+        escaped += "\\b";
+        break;
+      case "\f":
+        escaped += "\\f";
+        break;
+      default: {
+        const code = char.codePointAt(0) ?? 0;
+        escaped += code < 0x20 || code === 0x2028 || code === 0x2029 ? `\\u${code.toString(16).padStart(4, "0")}` : char;
+      }
+    }
+  }
+  return `'${escaped}'`;
 }
 
 function relationType(relation: string): string {
@@ -331,35 +361,35 @@ function renderCypher(graph: GraphArtifact): string {
   for (const node of [...graph.nodes].sort((left, right) => left.id.localeCompare(right.id))) {
     const page = node.pageId ? pageById.get(node.pageId) : undefined;
     const props = [
-      `id: '${cypherEscape(node.id)}'`,
-      `label: '${cypherEscape(node.label)}'`,
-      `type: '${cypherEscape(node.type)}'`,
-      `sourceIds: '${cypherEscape(JSON.stringify(node.sourceIds))}'`,
-      `projectIds: '${cypherEscape(JSON.stringify(node.projectIds))}'`,
-      node.pageId ? `pageId: '${cypherEscape(node.pageId)}'` : "",
-      page?.path ? `pagePath: '${cypherEscape(page.path)}'` : "",
-      node.language ? `language: '${cypherEscape(node.language)}'` : "",
-      node.symbolKind ? `symbolKind: '${cypherEscape(node.symbolKind)}'` : "",
-      node.communityId ? `communityId: '${cypherEscape(node.communityId)}'` : "",
+      `id: ${cypherStringLiteral(node.id)}`,
+      `label: ${cypherStringLiteral(node.label)}`,
+      `type: ${cypherStringLiteral(node.type)}`,
+      `sourceIds: ${cypherStringLiteral(JSON.stringify(node.sourceIds))}`,
+      `projectIds: ${cypherStringLiteral(JSON.stringify(node.projectIds))}`,
+      node.pageId ? `pageId: ${cypherStringLiteral(node.pageId)}` : "",
+      page?.path ? `pagePath: ${cypherStringLiteral(page.path)}` : "",
+      node.language ? `language: ${cypherStringLiteral(node.language)}` : "",
+      node.symbolKind ? `symbolKind: ${cypherStringLiteral(node.symbolKind)}` : "",
+      node.communityId ? `communityId: ${cypherStringLiteral(node.communityId)}` : "",
       node.degree !== undefined ? `degree: ${node.degree}` : "",
       node.bridgeScore !== undefined ? `bridgeScore: ${node.bridgeScore}` : "",
       node.isGodNode !== undefined ? `isGodNode: ${node.isGodNode}` : ""
     ]
       .filter(Boolean)
       .join(", ");
-    lines.push(`MERGE (n:SwarmNode {id: '${cypherEscape(node.id)}'}) SET n += { ${props} };`);
+    lines.push(`MERGE (n:SwarmNode {id: ${cypherStringLiteral(node.id)}}) SET n += { ${props} };`);
   }
   lines.push("");
   for (const hyperedge of [...(graph.hyperedges ?? [])].sort((left, right) => left.id.localeCompare(right.id))) {
     const hyperedgeNodeId = exportHyperedgeNodeId(hyperedge);
     lines.push(
-      `MERGE (h:SwarmNode {id: '${cypherEscape(hyperedgeNodeId)}'}) SET h += { id: '${cypherEscape(hyperedgeNodeId)}', label: '${cypherEscape(
+      `MERGE (h:SwarmNode {id: ${cypherStringLiteral(hyperedgeNodeId)}}) SET h += { id: ${cypherStringLiteral(hyperedgeNodeId)}, label: ${cypherStringLiteral(
         hyperedge.label
-      )}', type: 'hyperedge', relation: '${cypherEscape(hyperedge.relation)}', evidenceClass: '${cypherEscape(
+      )}, type: ${cypherStringLiteral("hyperedge")}, relation: ${cypherStringLiteral(hyperedge.relation)}, evidenceClass: ${cypherStringLiteral(
         hyperedge.evidenceClass
-      )}', confidence: ${hyperedge.confidence}, sourcePageIds: '${cypherEscape(JSON.stringify(hyperedge.sourcePageIds))}', why: '${cypherEscape(
+      )}, confidence: ${hyperedge.confidence}, sourcePageIds: ${cypherStringLiteral(JSON.stringify(hyperedge.sourcePageIds))}, why: ${cypherStringLiteral(
         hyperedge.why
-      )}' };`
+      )} };`
     );
   }
   if ((graph.hyperedges ?? []).length) {
@@ -369,23 +399,23 @@ function renderCypher(graph: GraphArtifact): string {
     const hyperedgeNodeId = exportHyperedgeNodeId(hyperedge);
     for (const nodeId of hyperedge.nodeIds) {
       lines.push(
-        `MATCH (h:SwarmNode {id: '${cypherEscape(hyperedgeNodeId)}'}), (n:SwarmNode {id: '${cypherEscape(nodeId)}'})`,
-        `MERGE (h)-[r:GROUP_MEMBER {id: '${cypherEscape(`member:${hyperedge.id}:${nodeId}`)}'}]->(n)`,
-        `SET r += { relation: 'group_member', status: 'inferred', evidenceClass: '${cypherEscape(
+        `MATCH (h:SwarmNode {id: ${cypherStringLiteral(hyperedgeNodeId)}}), (n:SwarmNode {id: ${cypherStringLiteral(nodeId)}})`,
+        `MERGE (h)-[r:GROUP_MEMBER {id: ${cypherStringLiteral(`member:${hyperedge.id}:${nodeId}`)}}]->(n)`,
+        `SET r += { relation: ${cypherStringLiteral("group_member")}, status: ${cypherStringLiteral("inferred")}, evidenceClass: ${cypherStringLiteral(
           hyperedge.evidenceClass
-        )}', confidence: ${hyperedge.confidence}, provenance: '${cypherEscape(JSON.stringify(hyperedge.sourcePageIds))}' };`
+        )}, confidence: ${hyperedge.confidence}, provenance: ${cypherStringLiteral(JSON.stringify(hyperedge.sourcePageIds))} };`
       );
     }
   }
   lines.push("");
   for (const edge of [...graph.edges].sort((left, right) => left.id.localeCompare(right.id))) {
     lines.push(
-      `MATCH (a:SwarmNode {id: '${cypherEscape(edge.source)}'}), (b:SwarmNode {id: '${cypherEscape(edge.target)}'})`,
-      `MERGE (a)-[r:${relationType(edge.relation)} {id: '${cypherEscape(edge.id)}'}]->(b)`,
-      `SET r += { relation: '${cypherEscape(edge.relation)}', status: '${cypherEscape(edge.status)}', evidenceClass: '${cypherEscape(
+      `MATCH (a:SwarmNode {id: ${cypherStringLiteral(edge.source)}}), (b:SwarmNode {id: ${cypherStringLiteral(edge.target)}})`,
+      `MERGE (a)-[r:${relationType(edge.relation)} {id: ${cypherStringLiteral(edge.id)}}]->(b)`,
+      `SET r += { relation: ${cypherStringLiteral(edge.relation)}, status: ${cypherStringLiteral(edge.status)}, evidenceClass: ${cypherStringLiteral(
         edge.evidenceClass
-      )}', confidence: ${edge.confidence}, provenance: '${cypherEscape(JSON.stringify(edge.provenance))}'${
-        edge.similarityReasons?.length ? `, similarityReasons: '${cypherEscape(JSON.stringify(edge.similarityReasons))}'` : ""
+      )}, confidence: ${edge.confidence}, provenance: ${cypherStringLiteral(JSON.stringify(edge.provenance))}${
+        edge.similarityReasons?.length ? `, similarityReasons: ${cypherStringLiteral(JSON.stringify(edge.similarityReasons))}` : ""
       } };`
     );
   }

@@ -11,6 +11,8 @@ From the OSS repo:
 ```bash
 pnpm install
 pnpm live:smoke:heuristic
+pnpm exec playwright install chromium
+pnpm live:smoke:heuristic:browser
 pnpm live:oss:corpus
 ```
 
@@ -51,6 +53,7 @@ Optional flags:
 ```bash
 node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.14 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
+node ./scripts/live-smoke.mjs --lane heuristic --browser-check
 node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.1.26 --keep-artifacts
 node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
 node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
@@ -80,9 +83,9 @@ That Swift canary is not part of the default gated lane.
 - install the published CLI from npm into an isolated temporary prefix
 - initialize a fresh workspace
 - ingest and compile a markdown fixture
-- ingest the tiny local fixture matrix under `smoke/fixtures/tiny-matrix/` and verify every shipped code language plus local `markdown`, `text`, `html`, `pdf`, `image`, and `code` source kinds
+- ingest the tiny local fixture matrix under `smoke/fixtures/tiny-matrix/` and verify every shipped code language plus local `markdown`, `text`, `html`, `pdf`, `docx`, `image`, and `code` source kinds
 - ingest remote HTML and markdown fixtures over HTTP and verify remote image localization into `raw/assets/`
-- import an inbox markdown bundle with a linked local asset
+- import inbox markdown and HTML bundles with linked local assets
 - run `query`
 - run saved `query --format chart` and `query --format image`
 - configure project roots, re-run `init --obsidian`, ingest JS/TS code sources, and verify module pages plus project rollups
@@ -90,6 +93,7 @@ That Swift canary is not part of the default gated lane.
 - run `explore`
 - run `lint` and `lint --deep`
 - run `graph export --html` and verify the standalone HTML embeds local asset data
+- when `--browser-check` is enabled, open both `graph serve` and the exported HTML in a real headless Chromium session, select a graph node, verify the details panel updates, trigger path highlighting, and verify deselection
 - run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
 - start `graph serve` and verify HTML plus `/api/graph`, `/api/search`, `/api/page`, `/api/asset`, `/api/candidates`, and `/api/reviews`
 - promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
@@ -153,10 +157,10 @@ Use `--keep-artifacts` or `KEEP_LIVE_SMOKE_ARTIFACTS=1` to preserve them during 
 
 ## Manual Live Checklist
 
-These checks stay manual for now:
+These checks remain complementary manual gut-checks:
 
 1. Install the published package in a fresh directory on a real machine with Node 24.
-2. Run `swarmvault graph serve` and confirm the viewer loads in a real browser without console errors.
+2. Run `swarmvault graph serve` and confirm the viewer looks right in a real browser, beyond the automated headless browser check.
 3. Launch `swarmvault mcp` from a real MCP client configuration and confirm tool discovery works.
 4. Verify `swarmvault ingest <url>` localizes remote images as expected, including `--no-include-assets` and `--max-asset-size` behavior.
 5. Compare heuristic output quality versus the Ollama and OpenAI lanes on the same fixture vault.

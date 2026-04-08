@@ -1,7 +1,7 @@
 {
   "name": "swarmvault-opensource",
   "private": true,
-  "version": "0.1.28",
+  "version": "0.1.29",
   "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {
@@ -15,6 +15,7 @@
     "check:published-manifests": "node ./scripts/check-published-manifests.mjs",
     "docs:screenshots": "node ./scripts/sync-docs-screenshots.mjs",
     "live:smoke:heuristic": "node ./scripts/live-smoke.mjs --lane heuristic",
+    "live:smoke:heuristic:browser": "node ./scripts/live-smoke.mjs --lane heuristic --browser-check",
     "live:smoke:ollama": "node ./scripts/live-smoke.mjs --lane ollama",
     "live:smoke:openai": "node ./scripts/live-smoke.mjs --lane openai",
     "live:smoke:anthropic": "node ./scripts/live-smoke.mjs --lane anthropic",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@evilmartians/lefthook": "^2.1.5",
+    "playwright": "^1.59.1",
     "typescript": "^5.9.3"
   }
 }

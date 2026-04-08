@@ -11,9 +11,8 @@ const managedEnd = "<!-- swarmvault:managed:end -->";
 const legacyManagedStart = "<!-- vault:managed:start -->";
 const legacyManagedEnd = "<!-- vault:managed:end -->";
 
-const claudeHookMatcher = "Glob|Grep";
-const claudeHookCommand =
-  "if [ -f wiki/graph/report.md ]; then echo 'swarmvault: Graph report exists. Read wiki/graph/report.md before broad raw-file searching.'; fi";
+const claudeSearchMatcher = "Glob|Grep";
+const claudeSessionMatchers = ["startup", "resume", "clear", "compact"] as const;
 
 const geminiSessionMatcher = "startup";
 const geminiSearchMatcher = "glob|grep|search|find";
@@ -26,6 +25,10 @@ type JsonWarningResult<T> = {
 
 type ClaudeSettings = {
   hooks?: {
+    SessionStart?: Array<{
+      matcher?: string;
+      hooks?: Array<{ type?: string; command?: string }>;
+    }>;
     PreToolUse?: Array<{
       matcher?: string;
       hooks?: Array<{ type?: string; command?: string }>;
@@ -124,6 +127,8 @@ function primaryTargetPathForAgent(rootDir: string, agent: AgentType): string {
 
 function hookScriptPathForAgent(rootDir: string, agent: AgentType): string | null {
   switch (agent) {
+    case "claude":
+      return path.join(rootDir, ".claude", "hooks", "swarmvault-graph-first.js");
     case "opencode":
       return path.join(rootDir, ".opencode", "plugins", "swarmvault-graph-first.js");
     case "gemini":
@@ -220,6 +225,8 @@ async function readJsonWithWarnings<T extends object>(filePath: string, fallback
 
 async function installClaudeHook(rootDir: string): Promise<{ path: string; warnings: string[] }> {
   const settingsPath = path.join(rootDir, ".claude", "settings.json");
+  const scriptPath = path.join(rootDir, ".claude", "hooks", "swarmvault-graph-first.js");
+  await writeOwnedFile(scriptPath, buildClaudeHookScript(), true);
   await ensureDir(path.dirname(settingsPath));
 
   const { data: settings, warnings } = await readJsonWithWarnings<ClaudeSettings>(settingsPath, {}, ".claude/settings.json");
@@ -228,18 +235,100 @@ async function installClaudeHook(rootDir: string): Promise<{ path: string; warni
   }
 
   const hooks = settings.hooks ?? {};
+  const sessionStart = hooks.SessionStart ?? [];
   const preToolUse = hooks.PreToolUse ?? [];
-  const exists = preToolUse.some((entry) => entry.matcher === claudeHookMatcher && JSON.stringify(entry).includes("swarmvault:"));
-  if (!exists) {
+  const sessionCommand = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/swarmvault-graph-first.js" session-start';
+  const preToolUseCommand = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/swarmvault-graph-first.js" pre-tool-use';
+
+  for (const matcher of claudeSessionMatchers) {
+    if (!sessionStart.some((entry) => entry.matcher === matcher && JSON.stringify(entry).includes("swarmvault-graph-first.js"))) {
+      sessionStart.push({
+        matcher,
+        hooks: [{ type: "command", command: sessionCommand }]
+      });
+    }
+  }
+
+  if (!preToolUse.some((entry) => entry.matcher === claudeSearchMatcher && JSON.stringify(entry).includes("swarmvault-graph-first.js"))) {
     preToolUse.push({
-      matcher: claudeHookMatcher,
-      hooks: [{ type: "command", command: claudeHookCommand }]
+      matcher: claudeSearchMatcher,
+      hooks: [{ type: "command", command: preToolUseCommand }]
     });
   }
 
-  settings.hooks = { ...hooks, PreToolUse: preToolUse };
+  settings.hooks = { ...hooks, SessionStart: sessionStart, PreToolUse: preToolUse };
   await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   return { path: settingsPath, warnings: [] };
+}
+
+function buildClaudeHookScript(): string {
+  return `#!/usr/bin/env node
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+${markerStateSnippet("claude").trim()}
+
+async function readInput() {
+  let body = "";
+  for await (const chunk of process.stdin) {
+    body += chunk;
+  }
+  if (!body.trim()) {
+    return {};
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return {};
+  }
+}
+
+function emit(value) {
+  process.stdout.write(\`\${JSON.stringify(value)}\\n\`);
+}
+
+const mode = process.argv[2] ?? "";
+const input = await readInput();
+const cwd = resolveInputCwd(input);
+const reportNote = "SwarmVault graph report exists at wiki/graph/report.md. Read it before broad grep/glob searching.";
+
+if (!(await hasReport(cwd))) {
+  emit({});
+  process.exit(0);
+}
+
+if (mode === "session-start") {
+  await resetSession(cwd);
+  emit({
+    hookSpecificOutput: {
+      hookEventName: "SessionStart",
+      additionalContext: reportNote
+    }
+  });
+  process.exit(0);
+}
+
+const toolName = resolveToolName(input);
+if (collectCandidatePaths(input).some((value) => isReportPath(value, cwd))) {
+  await markReportRead(cwd);
+  emit({});
+  process.exit(0);
+}
+
+if (isBroadSearchTool(toolName) && !(await hasSeenReport(cwd))) {
+  emit({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      additionalContext: reportNote
+    }
+  });
+  process.exit(0);
+}
+
+emit({});
+`;
 }
 
 function markerStateSnippet(agentKey: string): string {
@@ -283,7 +372,9 @@ function collectCandidatePaths(node, acc = []) {
   for (const [key, value] of Object.entries(node)) {
     if (["path", "filePath", "file_path", "paths", "target", "targets"].includes(key)) {
       collectCandidatePaths(value, acc);
+      continue;
     }
+    collectCandidatePaths(value, acc);
   }
   return acc;
 }

@@ -2,7 +2,7 @@
 
 **A local-first knowledge compiler for AI agents.**
 
-SwarmVault turns raw files, URLs, screenshots, PDFs, saved answers, and code into a durable working vault. Instead of losing useful work inside chat history, you get a reviewable markdown wiki, a structured graph, a local search index, session logs, and saved outputs that stay on disk.
+SwarmVault turns raw files, URLs, screenshots, PDFs, DOCX files, browser clip bundles, saved answers, and code into a durable working vault. Instead of losing useful work inside chat history, you get a reviewable markdown wiki, a structured graph, a local search index, session logs, and saved outputs that stay on disk.
 
 It is built for the compounding loop most coding agents still miss:
 
@@ -48,6 +48,7 @@ my-vault/
 - Optional embedding-backed semantic graph query with a cached `state/embeddings.json` index and lexical fallback when no embedding provider is configured
 - Automatic benchmark artifacts plus worked examples for measuring graph-guided context reduction after compile and repo-refresh runs
 - Research-aware URL capture for arXiv, DOI, article, and X/Twitter sources with normalized frontmatter
+- First-class local extraction for PDFs, DOCX files, HTML, images, and browser-style inbox bundles with canonical asset copies
 - Save-first `query` and `explore` workflows, including `report`, `slides`, `chart`, and `image` outputs
 - Reviewable approval and candidate queues instead of silent page mutation
 - Local full-text search and a graph workspace for graph, search, preview, and review
@@ -98,6 +99,7 @@ cd my-vault
 swarmvault init --obsidian
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
+swarmvault ingest ./brief.docx
 swarmvault ingest https://example.com/article
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault add 10.5555/example-doi
@@ -142,7 +144,7 @@ If you want something richer than a quickstart, use the small example vaults tha
 - `worked/capture/` for research-aware `swarmvault add` capture
 - `worked/mixed-corpus/` for compile, review, and save-first output loops
 
-The site examples guide walks through those flows with commands and screenshots:
+The site examples guide walks through those flows with commands, screenshots, and real installed-package validation examples:
 
 - https://www.swarmvault.ai/docs/getting-started/examples
 
@@ -168,12 +170,16 @@ If you want Claude Code to bias toward SwarmVault's graph-orientation pages befo
 swarmvault install --agent claude --hook
 ```
 
+That install now writes `CLAUDE.md`, `.claude/settings.json`, and `.claude/hooks/swarmvault-graph-first.js`. The Claude hook is advisory and model-visible: it injects graph-first context through structured hook JSON instead of a plain shell `echo`.
+
 OpenCode and Gemini CLI also support graph-first hook installs:
 
 ```bash
 swarmvault install --agent opencode --hook
 swarmvault install --agent gemini --hook
 ```
+
+Gemini's hook is also advisory and model-visible. OpenCode's current plugin surface is advisory/log-only, so SwarmVault nudges rather than blocks there.
 
 GitHub Copilot CLI supports repository hooks too:
 

@@ -2,7 +2,7 @@
 
 `@swarmvaultai/cli` is the global command-line entry point for SwarmVault.
 
-It gives you the `swarmvault` command for building a local-first knowledge vault from files, URLs, browser clips, saved query outputs, and guided exploration runs.
+It gives you the `swarmvault` command for building a local-first knowledge vault from files, DOCX documents, URLs, browser clips, saved query outputs, and guided exploration runs.
 
 ## Install
 
@@ -70,6 +70,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - directory ingest respects `.gitignore` unless you pass `--no-gitignore`
 - repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
 - URL ingest still localizes remote image references by default
+- local file ingest supports markdown, text, HTML, PDF, DOCX, images, and code
 - code-aware directory ingest currently covers JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell
 
 Useful flags:
@@ -101,7 +102,7 @@ Capture supported URLs through a normalized markdown layer before ingesting them
 
 ### `swarmvault inbox import [dir]`
 
-Import supported files from the configured inbox directory. This is meant for browser-clipper style markdown bundles and other capture workflows. Local image and asset references are preserved and copied into canonical storage under `raw/assets/`.
+Import supported files from the configured inbox directory. This is meant for browser-clipper style markdown bundles, HTML clip bundles, and other capture workflows. Local image and asset references are preserved and copied into canonical storage under `raw/assets/`.
 
 ### `swarmvault compile [--approve]`
 
@@ -276,6 +277,13 @@ Agent target mapping:
 - `aider` writes `CONVENTIONS.md` and merges `.aider.conf.yml`
 - `copilot` writes `.github/copilot-instructions.md` plus `AGENTS.md`
 - `cursor` writes `.cursor/rules/swarmvault.mdc`
+
+Hook semantics:
+
+- `claude --hook` writes `.claude/settings.json` plus `.claude/hooks/swarmvault-graph-first.js` and adds model-visible advisory context through structured hook JSON
+- `gemini --hook` writes `.gemini/settings.json` plus `.gemini/hooks/swarmvault-graph-first.js` and stays advisory/model-visible
+- `opencode --hook` writes `.opencode/plugins/swarmvault-graph-first.js` and stays advisory/log-only
+- `copilot --hook` writes `.github/hooks/swarmvault-graph-first.json` plus `.github/hooks/swarmvault-graph-first.js` and remains decision-based rather than advisory
 
 `aider` is intentionally file/config-based in this release rather than hook-based.
 

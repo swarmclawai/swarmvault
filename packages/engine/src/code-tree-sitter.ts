@@ -27,6 +27,11 @@ type DraftCodeSymbol = {
   bodyText?: string;
 };
 
+type GoReceiverBinding = {
+  typeName?: string;
+  variableName?: string;
+};
+
 type TreePoint = {
   row: number;
   column: number;
@@ -204,6 +209,69 @@ function collectCallNamesFromText(text: string | undefined, availableNames: Set<
     }
   }
   return uniqueBy(names, (name) => name);
+}
+
+function goReceiverBinding(node: TreeNode | null | undefined): GoReceiverBinding {
+  if (!node) {
+    return {};
+  }
+  const names = uniqueBy(
+    node
+      .descendantsOfType(["identifier", "type_identifier"])
+      .filter((item): item is TreeNode => item !== null)
+      .map((item) => normalizeSymbolReference(item.text))
+      .filter(Boolean),
+    (item) => item
+  );
+  if (names.length === 0) {
+    return {};
+  }
+  if (names.length === 1) {
+    return { typeName: names[0] };
+  }
+  return {
+    variableName: names[0],
+    typeName: names.at(-1)
+  };
+}
+
+function goCalledSymbolName(node: TreeNode | null | undefined, receiver: GoReceiverBinding): string | undefined {
+  if (!node) {
+    return undefined;
+  }
+
+  if (node.type === "selector_expression") {
+    const targetName = normalizeSymbolReference(
+      extractIdentifier(node.childForFieldName("operand") ?? node.childForFieldName("object") ?? node.namedChildren.at(0) ?? null) ?? ""
+    );
+    const fieldName = normalizeSymbolReference(
+      extractIdentifier(node.childForFieldName("field") ?? findNamedChild(node, "field_identifier") ?? node.namedChildren.at(-1) ?? null) ??
+        ""
+    );
+    if (!fieldName) {
+      return undefined;
+    }
+    if (receiver.variableName && receiver.typeName && targetName === receiver.variableName) {
+      return `${receiver.typeName}.${fieldName}`;
+    }
+    return fieldName;
+  }
+
+  return normalizeSymbolReference(extractIdentifier(node) ?? "");
+}
+
+function goCallNamesFromBody(bodyNode: TreeNode | null | undefined, receiver: GoReceiverBinding): string[] {
+  if (!bodyNode) {
+    return [];
+  }
+  return uniqueBy(
+    bodyNode
+      .descendantsOfType("call_expression")
+      .filter((item): item is TreeNode => item !== null)
+      .map((callNode) => goCalledSymbolName(callNode.childForFieldName("function") ?? callNode.namedChildren.at(0) ?? null, receiver))
+      .filter((name): name is string => Boolean(name)),
+    (name) => name
+  );
 }
 
 function finalizeCodeAnalysis(
@@ -823,10 +891,9 @@ function goCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostic
       if (!name) {
         continue;
       }
-      const receiverType =
-        child.type === "method_declaration"
-          ? normalizeSymbolReference(nodeText(child.childForFieldName("receiver")).replace(/[()]/g, " ").split(/\s+/).at(-1) ?? "")
-          : "";
+      const receiver = child.type === "method_declaration" ? goReceiverBinding(child.childForFieldName("receiver")) : {};
+      const receiverType = receiver.typeName ?? "";
+      const bodyNode = child.childForFieldName("body");
       const symbolName = receiverType ? `${receiverType}.${name}` : name;
       const exported = exportedByCapitalization(name);
       draftSymbols.push({
@@ -834,10 +901,10 @@ function goCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostic
         kind: "function",
         signature: singleLineSignature(child.text),
         exported,
-        callNames: [],
+        callNames: goCallNamesFromBody(bodyNode, receiver),
         extendsNames: [],
         implementsNames: [],
-        bodyText: nodeText(child.childForFieldName("body"))
+        bodyText: nodeText(bodyNode)
       });
       if (exported) {
         exportLabels.push(symbolName);
