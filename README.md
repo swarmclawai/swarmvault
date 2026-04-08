@@ -58,7 +58,7 @@ my-vault/
 - Pending semantic refresh tracking for non-code repo changes, surfaced in `watch status` and the local graph workspace
 - Human-only `wiki/insights/` pages that SwarmVault can read but does not rewrite
 - Session artifacts for compile, query, explore, lint, watch, and schedule runs
-- CLI, MCP, and installable agent instructions for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, and OpenCode
+- CLI, MCP, and installable agent instructions for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, and GitHub Copilot CLI
 - Pluggable providers including OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible APIs, and custom adapters
 
 ## How It Works
@@ -157,14 +157,31 @@ The site examples guide walks through those flows with commands and screenshots:
 | Pi | `swarmvault install --agent pi` |
 | Gemini CLI | `swarmvault install --agent gemini` |
 | OpenCode | `swarmvault install --agent opencode` |
+| Aider | `swarmvault install --agent aider` |
+| GitHub Copilot CLI | `swarmvault install --agent copilot` |
 
-Codex, Goose, Pi, and OpenCode share the same canonical `AGENTS.md` managed block. Claude Code uses `CLAUDE.md`, Gemini CLI uses `GEMINI.md`, and Cursor writes `.cursor/rules/swarmvault.mdc`.
+Codex, Goose, Pi, and OpenCode share the same canonical `AGENTS.md` managed block. Claude Code uses `CLAUDE.md`, Gemini CLI uses `GEMINI.md`, Aider uses `CONVENTIONS.md` plus `.aider.conf.yml`, GitHub Copilot CLI uses `.github/copilot-instructions.md` plus `AGENTS.md`, and Cursor writes `.cursor/rules/swarmvault.mdc`.
 
 If you want Claude Code to bias toward SwarmVault's graph-orientation pages before broad file search, install it with:
 
 ```bash
 swarmvault install --agent claude --hook
 ```
+
+OpenCode and Gemini CLI also support graph-first hook installs:
+
+```bash
+swarmvault install --agent opencode --hook
+swarmvault install --agent gemini --hook
+```
+
+GitHub Copilot CLI supports repository hooks too:
+
+```bash
+swarmvault install --agent copilot --hook
+```
+
+The Copilot hook is intentionally stricter than the others because the current Copilot CLI hook surface is decision-based rather than advisory: it guards broad grep/glob tool use until `wiki/graph/report.md` has been read in the current session.
 
 ## Workspace Layout
 
@@ -251,7 +268,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault graph god-nodes [--limit <n>]`: list the most connected bridge-heavy nodes in the current graph
 - `swarmvault graph serve`: open the local graph workspace with graph, search, and page preview
 - `swarmvault graph export --html|--svg|--graphml|--cypher <output>`: export the graph workspace as HTML, SVG, GraphML, or Cypher
-- `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode`: install agent-specific rules
+- `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot`: install agent-specific rules
 
 Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
 

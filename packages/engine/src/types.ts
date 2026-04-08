@@ -30,7 +30,7 @@ export const providerTypeSchema = z.enum([
 ]);
 
 export type ProviderType = z.infer<typeof providerTypeSchema>;
-export const agentTypeSchema = z.enum(["codex", "claude", "cursor", "goose", "pi", "gemini", "opencode"]);
+export const agentTypeSchema = z.enum(["codex", "claude", "cursor", "goose", "pi", "gemini", "opencode", "aider", "copilot"]);
 export type AgentType = z.infer<typeof agentTypeSchema>;
 
 export type PageKind = "index" | "source" | "module" | "concept" | "entity" | "output" | "insight" | "graph_report" | "community_summary";
@@ -769,7 +769,14 @@ export interface WatchController {
 }
 
 export interface InstallAgentOptions {
-  claudeHook?: boolean;
+  hook?: boolean;
+}
+
+export interface InstallAgentResult {
+  agent: AgentType;
+  target: string;
+  targets: string[];
+  warnings?: string[];
 }
 
 export interface GitHookStatus {

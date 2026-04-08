@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Operate SwarmVault knowledge bases from the CLI: initialize vaults, shape swarmvault.schema.md, ingest sources, compile/query/lint/watch/hook, and expose the vault over MCP when agents need durable markdown, graph, and search artifacts on disk."
-version: "0.1.27"
+version: "0.1.28"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -55,6 +55,7 @@ Use this skill when the user wants a local-first knowledge base whose outputs st
 
 ## Agent integration
 
-- `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode` installs agent-specific rules into the current project.
-- `swarmvault install --agent claude --hook` also installs the recommended Claude Code graph-first pre-search hook.
+- `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot` installs agent-specific rules into the current project.
+- `swarmvault install --agent claude|opencode|gemini|copilot --hook` installs graph-first hook or plugin support for the agents that expose project hook APIs.
+- `swarmvault install --agent aider` installs `CONVENTIONS.md` and wires `.aider.conf.yml` to read it when that config is valid YAML.
 - `swarmvault mcp` exposes tools and resources for page search, page reads, source listing, query, ingest, compile, and lint.

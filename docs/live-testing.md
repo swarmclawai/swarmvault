@@ -95,8 +95,14 @@ That Swift canary is not part of the default gated lane.
 - promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
 - run `watch --lint` against the published install and verify `state/jobs.ndjson` plus watch sessions
 - start `mcp` and call tools over stdio, including `search_pages` and chart-format `query_vault`
-- run `install --agent codex|claude|opencode`
-- when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, and OpenCode against `AGENTS.md` using Ollama
+- run `install --agent codex`
+- run `install --agent claude`
+- run `install --agent opencode --hook`
+- run `install --agent gemini --hook`
+- run `install --agent copilot --hook`
+- run `install --agent aider`
+- verify the installed package writes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`, `.aider.conf.yml`, `.github/copilot-instructions.md`, and the expected hook/plugin artifacts
+- when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, OpenCode against `AGENTS.md` using Ollama, and Gemini CLI against `GEMINI.md`
 
 ### OpenAI lane
 

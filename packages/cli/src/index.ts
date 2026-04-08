@@ -55,9 +55,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.27";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.28";
   } catch {
-    return "0.1.27";
+    return "0.1.28";
   }
 }
 
@@ -746,19 +746,31 @@ program
 program
   .command("install")
   .description("Install SwarmVault instructions for an agent in the current project.")
-  .requiredOption("--agent <agent>", "codex, claude, cursor, goose, pi, gemini, or opencode")
-  .option("--hook", "Also install the recommended Claude pre-search hook when agent=claude", false)
-  .action(async (options: { agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" | "opencode"; hook?: boolean }) => {
-    if (options.hook && options.agent !== "claude") {
-      throw new Error("--hook is only supported for --agent claude");
+  .requiredOption("--agent <agent>", "codex, claude, cursor, goose, pi, gemini, opencode, aider, or copilot")
+  .option("--hook", "Also install hook/plugin guidance when the target agent supports it", false)
+  .action(
+    async (options: {
+      agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" | "opencode" | "aider" | "copilot";
+      hook?: boolean;
+    }) => {
+      const hookCapableAgents = new Set(["claude", "opencode", "gemini", "copilot"]);
+      if (options.hook && !hookCapableAgents.has(options.agent)) {
+        throw new Error("--hook is only supported for --agent claude, opencode, gemini, or copilot");
+      }
+      const result = await installAgent(process.cwd(), options.agent, { hook: options.hook ?? false });
+      if (isJson()) {
+        emitJson({ ...result, hook: options.hook ?? false });
+      } else {
+        log(`Installed rules into ${result.target}`);
+        if (result.targets.length > 1) {
+          log(`Also wrote: ${result.targets.filter((entry) => entry !== result.target).join(", ")}`);
+        }
+        for (const warning of result.warnings ?? []) {
+          emitNotice(warning);
+        }
+      }
     }
-    const target = await installAgent(process.cwd(), options.agent, { claudeHook: options.hook ?? false });
-    if (isJson()) {
-      emitJson({ agent: options.agent, target, hook: options.hook ?? false });
-    } else {
-      log(`Installed rules into ${target}`);
-    }
-  });
+  );
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);

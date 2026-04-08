@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 import type { GitHookStatus } from "./types.js";
 import { ensureDir, fileExists } from "./utils.js";
 
@@ -33,12 +34,28 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+function resolveSwarmvaultExecutableCandidate(): string {
+  const argvPath = process.argv[1];
+  if (
+    typeof argvPath === "string" &&
+    argvPath.trim() &&
+    (argvPath.includes(`${path.sep}@swarmvaultai${path.sep}cli${path.sep}`) ||
+      argvPath.includes(`${path.sep}packages${path.sep}cli${path.sep}`))
+  ) {
+    return path.resolve(argvPath);
+  }
+  return "swarmvault";
+}
+
 function managedHookBlock(vaultRoot: string): string {
+  const resolvedExecutable = resolveSwarmvaultExecutableCandidate();
   return [
     hookStart,
     `cd ${shellQuote(vaultRoot)} || exit 0`,
-    "if command -v swarmvault >/dev/null 2>&1; then",
-    "  swarmvault watch --repo --once >/dev/null 2>&1 || printf '[swarmvault hook] refresh failed\\n' >&2",
+    `swarmvault_bin=${shellQuote(resolvedExecutable)}`,
+    '[ ! -x "$swarmvault_bin" ] && swarmvault_bin=$(command -v swarmvault 2>/dev/null || true)',
+    'if [ -n "$swarmvault_bin" ] && [ -x "$swarmvault_bin" ]; then',
+    "  \"$swarmvault_bin\" watch --repo --once >/dev/null 2>&1 || printf '[swarmvault hook] refresh failed\\n' >&2",
     "fi",
     hookEnd,
     ""

@@ -193,6 +193,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `syncTrackedRepos(rootDir)` refreshes previously ingested repo roots, updates changed manifests, and removes deleted repo manifests
 - `syncTrackedReposForWatch(rootDir)` is the repo-watch sync path that defers non-code semantic refresh into `state/watch/`
 - `installGitHooks(rootDir)`, `uninstallGitHooks(rootDir)`, and `getGitHookStatus(rootDir)` manage local `post-commit` and `post-checkout` hook blocks for the nearest git repository
+- `installAgent(rootDir, agent, { hook })` writes agent instructions and returns the primary `target`, all touched `targets`, and optional merge warnings for agents such as Aider
 - `lintVault(rootDir, options)` runs structural lint, optional deep lint, and optional web-augmented evidence gathering
 - `listSchedules(rootDir)`, `runSchedule(rootDir, jobId)`, and `serveSchedules(rootDir)` manage recurring local jobs from config
 - compile, query, explore, lint, and watch also write canonical markdown session artifacts to `state/sessions/`

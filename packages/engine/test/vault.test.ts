@@ -74,17 +74,39 @@ async function startFixtureServer(
     response.end(body);
   });
 
-  const address = await new Promise<{ port: number }>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const resolved = server.address();
-      if (!resolved || typeof resolved === "string") {
-        reject(new Error("Failed to bind fixture server."));
-        return;
+  const listen = async (host?: string): Promise<{ port: number }> =>
+    await new Promise<{ port: number }>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        const resolved = server.address();
+        if (!resolved || typeof resolved === "string") {
+          reject(new Error("Failed to bind fixture server."));
+          return;
+        }
+        resolve({ port: resolved.port });
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      if (host) {
+        server.listen(0, host);
+      } else {
+        server.listen(0);
       }
-      resolve({ port: resolved.port });
     });
-  });
+
+  let address: { port: number };
+  try {
+    address = await listen("127.0.0.1");
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("EPERM")) {
+      throw error;
+    }
+    address = await listen();
+  }
 
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
@@ -172,33 +194,44 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, ".obsidian", "workspace.json"))).resolves.toBeUndefined();
   });
 
-  it("installs agent instructions for goose, pi, opencode, and gemini targets", async () => {
+  it("installs agent instructions for goose, pi, opencode, aider, copilot, and gemini targets", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
 
     const gooseTarget = await installAgent(rootDir, "goose");
     const piTarget = await installAgent(rootDir, "pi");
     const opencodeTarget = await installAgent(rootDir, "opencode");
+    const aiderTarget = await installAgent(rootDir, "aider");
+    const copilotTarget = await installAgent(rootDir, "copilot");
     const geminiTarget = await installAgent(rootDir, "gemini");
 
-    expect(gooseTarget).toBe(path.join(rootDir, "AGENTS.md"));
-    expect(piTarget).toBe(path.join(rootDir, "AGENTS.md"));
-    expect(opencodeTarget).toBe(path.join(rootDir, "AGENTS.md"));
-    expect(geminiTarget).toBe(path.join(rootDir, "GEMINI.md"));
+    expect(gooseTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
+    expect(piTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
+    expect(opencodeTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
+    expect(aiderTarget.target).toBe(path.join(rootDir, "CONVENTIONS.md"));
+    expect(copilotTarget.target).toBe(path.join(rootDir, ".github", "copilot-instructions.md"));
+    expect(geminiTarget.target).toBe(path.join(rootDir, "GEMINI.md"));
+    expect(aiderTarget.targets).toContain(path.join(rootDir, ".aider.conf.yml"));
+    expect(copilotTarget.targets).toContain(path.join(rootDir, "AGENTS.md"));
 
-    const agentsContent = await fs.readFile(gooseTarget, "utf8");
-    const geminiContent = await fs.readFile(geminiTarget, "utf8");
+    const agentsContent = await fs.readFile(gooseTarget.target, "utf8");
+    const geminiContent = await fs.readFile(geminiTarget.target, "utf8");
+    const conventionsContent = await fs.readFile(aiderTarget.target, "utf8");
+    const copilotContent = await fs.readFile(copilotTarget.target, "utf8");
     expect(agentsContent).toContain("# SwarmVault Rules");
     expect(agentsContent.match(/swarmvault:managed:start/g)?.length ?? 0).toBe(1);
     expect(geminiContent).toContain("# SwarmVault Rules");
+    expect(conventionsContent).toContain("# SwarmVault Conventions");
+    expect(copilotContent).toContain("# SwarmVault Repository Instructions");
+    expect(await fs.readFile(path.join(rootDir, ".aider.conf.yml"), "utf8")).toContain("CONVENTIONS.md");
   });
 
   it("installs Claude rules with an optional graph-first pre-search hook", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
 
-    const claudeTarget = await installAgent(rootDir, "claude", { claudeHook: true });
-    expect(claudeTarget).toBe(path.join(rootDir, "CLAUDE.md"));
+    const claudeTarget = await installAgent(rootDir, "claude", { hook: true });
+    expect(claudeTarget.target).toBe(path.join(rootDir, "CLAUDE.md"));
 
     const settingsPath = path.join(rootDir, ".claude", "settings.json");
     const settings = JSON.parse(await fs.readFile(settingsPath, "utf8")) as {
@@ -207,9 +240,48 @@ describe("swarmvault workflow", () => {
     expect(settings.hooks?.PreToolUse?.some((entry) => entry.matcher === "Glob|Grep")).toBe(true);
     expect(JSON.stringify(settings)).toContain("wiki/graph/report.md");
 
-    await installAgent(rootDir, "claude", { claudeHook: true });
+    await installAgent(rootDir, "claude", { hook: true });
     const settingsAgain = await fs.readFile(settingsPath, "utf8");
     expect(settingsAgain.match(/Glob\|Grep/g)?.length ?? 0).toBe(1);
+  });
+
+  it("installs gemini and opencode graph-first hook artifacts when requested", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const geminiTarget = await installAgent(rootDir, "gemini", { hook: true });
+    const opencodeTarget = await installAgent(rootDir, "opencode", { hook: true });
+
+    expect(geminiTarget.targets).toContain(path.join(rootDir, ".gemini", "settings.json"));
+    expect(geminiTarget.targets).toContain(path.join(rootDir, ".gemini", "hooks", "swarmvault-graph-first.js"));
+    expect(opencodeTarget.targets).toContain(path.join(rootDir, ".opencode", "plugins", "swarmvault-graph-first.js"));
+
+    const geminiSettings = JSON.parse(await fs.readFile(path.join(rootDir, ".gemini", "settings.json"), "utf8")) as {
+      hooks?: { SessionStart?: Array<{ matcher?: string }>; BeforeTool?: Array<{ matcher?: string }> };
+    };
+    expect(geminiSettings.hooks?.SessionStart?.some((entry) => entry.matcher === "startup")).toBe(true);
+    expect(geminiSettings.hooks?.BeforeTool?.some((entry) => entry.matcher === "glob|grep|search|find")).toBe(true);
+    expect(await fs.readFile(path.join(rootDir, ".opencode", "plugins", "swarmvault-graph-first.js"), "utf8")).toContain(
+      "tool.execute.before"
+    );
+  });
+
+  it("installs copilot hook files and preserves invalid aider config with warnings", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.mkdir(path.join(rootDir, ".github", "hooks"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, ".aider.conf.yml"), "read: [keep-this\n", "utf8");
+
+    const copilotTarget = await installAgent(rootDir, "copilot", { hook: true });
+    const aiderTarget = await installAgent(rootDir, "aider");
+
+    expect(copilotTarget.targets).toContain(path.join(rootDir, ".github", "hooks", "swarmvault-graph-first.json"));
+    expect(copilotTarget.targets).toContain(path.join(rootDir, ".github", "hooks", "swarmvault-graph-first.js"));
+    expect(await fs.readFile(path.join(rootDir, ".github", "hooks", "swarmvault-graph-first.json"), "utf8")).toContain('"version": 1');
+    expect(aiderTarget.warnings).toEqual([
+      "Could not parse .aider.conf.yml. Left the existing file unchanged; add `read: CONVENTIONS.md` manually."
+    ]);
+    expect(await fs.readFile(path.join(rootDir, ".aider.conf.yml"), "utf8")).toContain("keep-this");
   });
 
   it("installs, reports, and removes git hook blocks idempotently", async () => {
@@ -224,8 +296,10 @@ describe("swarmvault workflow", () => {
     expect(installed.postCheckout).toBe("installed");
 
     const postCommit = await fs.readFile(path.join(rootDir, ".git", "hooks", "post-commit"), "utf8");
-    expect(postCommit).toContain("swarmvault watch --repo --once");
+    expect(postCommit).toContain("watch --repo --once");
     expect(postCommit).toContain("echo existing");
+    expect(postCommit).toContain("swarmvault_bin=");
+    expect(postCommit).toContain("command -v swarmvault");
 
     const status = await getGitHookStatus(rootDir);
     expect(status.postCommit).toBe("installed");
@@ -233,14 +307,14 @@ describe("swarmvault workflow", () => {
 
     await installGitHooks(rootDir);
     const postCommitAgain = await fs.readFile(path.join(rootDir, ".git", "hooks", "post-commit"), "utf8");
-    expect(postCommitAgain.match(/swarmvault watch --repo --once/g)?.length ?? 0).toBe(1);
+    expect(postCommitAgain.match(/watch --repo --once/g)?.length ?? 0).toBe(1);
 
     const removed = await uninstallGitHooks(rootDir);
     expect(removed.postCommit).toBe("other_content");
     expect(removed.postCheckout).toBe("not_installed");
     const postCommitAfter = await fs.readFile(path.join(rootDir, ".git", "hooks", "post-commit"), "utf8");
     expect(postCommitAfter).toContain("echo existing");
-    expect(postCommitAfter).not.toContain("swarmvault watch --repo --once");
+    expect(postCommitAfter).not.toContain("watch --repo --once");
   });
 
   it("ingests, compiles, queries, and lints using the heuristic provider", async () => {

@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.28
+
+- Added `aider` and `copilot` as first-class `swarmvault install --agent` targets, while expanding install results to return the primary `target`, all touched `targets`, and safe merge warnings
+- Added graph-first hook/plugin installs for `opencode`, `gemini`, and `copilot`, alongside the existing Claude hook path, and kept Aider intentionally file/config-based with a YAML-backed `.aider.conf.yml` merge
+- Hardened generated git hooks so they prefer the resolved `swarmvault` executable path and only fall back to `command -v swarmvault`, avoiding PATH-only install failures
+- Expanded engine tests, installed-artifact smoke coverage, OSS docs, site docs, and skill metadata for the new agent targets, hook artifacts, and live installed-package validation path
+
 ## 0.1.27
 
 - Added a small pinned live OSS validation corpus plus a per-language/per-source-type tiny matrix, keeping the release gate focused on small real repos and fast deterministic fixtures instead of expensive large-repo runs

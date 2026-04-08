@@ -255,15 +255,29 @@ Export the current graph as one of four formats:
 - `--graphml` for graph-tool interoperability
 - `--cypher` for Neo4j-style import scripts
 
-### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode>`
+### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot>`
 
 Install agent-specific rules into the current project so an agent understands the SwarmVault workspace contract and workflow.
 
-For Claude Code, you can also install the recommended graph-first pre-search hook:
+Hook-capable installs:
 
 ```bash
 swarmvault install --agent claude --hook
+swarmvault install --agent gemini --hook
+swarmvault install --agent opencode --hook
+swarmvault install --agent copilot --hook
 ```
+
+Agent target mapping:
+
+- `codex`, `goose`, `pi`, and `opencode` share `AGENTS.md`
+- `claude` writes `CLAUDE.md`
+- `gemini` writes `GEMINI.md`
+- `aider` writes `CONVENTIONS.md` and merges `.aider.conf.yml`
+- `copilot` writes `.github/copilot-instructions.md` plus `AGENTS.md`
+- `cursor` writes `.cursor/rules/swarmvault.mdc`
+
+`aider` is intentionally file/config-based in this release rather than hook-based.
 
 ## Provider Configuration
 

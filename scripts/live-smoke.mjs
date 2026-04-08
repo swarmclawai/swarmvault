@@ -1060,22 +1060,50 @@ try {
     await runStep("install-agent", async () => {
       const codex = await runCliJson(["install", "--agent", "codex"]);
       const claude = await runCliJson(["install", "--agent", "claude"]);
-      const opencode = await runCliJson(["install", "--agent", "opencode"]);
+      const opencode = await runCliJson(["install", "--agent", "opencode", "--hook"]);
+      const gemini = await runCliJson(["install", "--agent", "gemini", "--hook"]);
+      const copilot = await runCliJson(["install", "--agent", "copilot", "--hook"]);
+      const aider = await runCliJson(["install", "--agent", "aider"]);
 
       assert.equal(codex.agent, "codex", "install command returned wrong codex agent");
       assert.equal(claude.agent, "claude", "install command returned wrong claude agent");
       assert.equal(opencode.agent, "opencode", "install command returned wrong opencode agent");
+      assert.equal(gemini.agent, "gemini", "install command returned wrong gemini agent");
+      assert.equal(copilot.agent, "copilot", "install command returned wrong copilot agent");
+      assert.equal(aider.agent, "aider", "install command returned wrong aider agent");
 
       assert.equal(codex.target, path.join(workspaceDir, "AGENTS.md"), "codex target path mismatch");
       assert.equal(claude.target, path.join(workspaceDir, "CLAUDE.md"), "claude target path mismatch");
       assert.equal(opencode.target, path.join(workspaceDir, "AGENTS.md"), "opencode target path mismatch");
+      assert.equal(gemini.target, path.join(workspaceDir, "GEMINI.md"), "gemini target path mismatch");
+      assert.equal(copilot.target, path.join(workspaceDir, ".github", "copilot-instructions.md"), "copilot target path mismatch");
+      assert.equal(aider.target, path.join(workspaceDir, "CONVENTIONS.md"), "aider target path mismatch");
 
       await assertExists(path.join(workspaceDir, "AGENTS.md"));
       await assertExists(path.join(workspaceDir, "CLAUDE.md"));
+      await assertExists(path.join(workspaceDir, "GEMINI.md"));
+      await assertExists(path.join(workspaceDir, "CONVENTIONS.md"));
+      await assertExists(path.join(workspaceDir, ".gemini", "settings.json"));
+      await assertExists(path.join(workspaceDir, ".gemini", "hooks", "swarmvault-graph-first.js"));
+      await assertExists(path.join(workspaceDir, ".opencode", "plugins", "swarmvault-graph-first.js"));
+      await assertExists(path.join(workspaceDir, ".github", "copilot-instructions.md"));
+      await assertExists(path.join(workspaceDir, ".github", "hooks", "swarmvault-graph-first.json"));
+      await assertExists(path.join(workspaceDir, ".github", "hooks", "swarmvault-graph-first.js"));
+      await assertExists(path.join(workspaceDir, ".aider.conf.yml"));
       const agentsContent = await fs.readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
       const claudeContent = await fs.readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+      const geminiContent = await fs.readFile(path.join(workspaceDir, "GEMINI.md"), "utf8");
+      const copilotContent = await fs.readFile(path.join(workspaceDir, ".github", "copilot-instructions.md"), "utf8");
+      const conventionsContent = await fs.readFile(path.join(workspaceDir, "CONVENTIONS.md"), "utf8");
       assert.ok(agentsContent.includes("# SwarmVault Rules"), "AGENTS.md missing managed rules");
       assert.ok(claudeContent.includes("# SwarmVault Rules"), "CLAUDE.md missing managed rules");
+      assert.ok(geminiContent.includes("# SwarmVault Rules"), "GEMINI.md missing managed rules");
+      assert.ok(copilotContent.includes("# SwarmVault Repository Instructions"), "copilot instructions missing managed rules");
+      assert.ok(conventionsContent.includes("# SwarmVault Conventions"), "CONVENTIONS.md missing managed rules");
+      assert.ok(Array.isArray(opencode.targets) && opencode.targets.includes(path.join(workspaceDir, ".opencode", "plugins", "swarmvault-graph-first.js")));
+      assert.ok(Array.isArray(gemini.targets) && gemini.targets.includes(path.join(workspaceDir, ".gemini", "settings.json")));
+      assert.ok(Array.isArray(copilot.targets) && copilot.targets.includes(path.join(workspaceDir, "AGENTS.md")));
+      assert.ok(Array.isArray(aider.targets) && aider.targets.includes(path.join(workspaceDir, ".aider.conf.yml")));
     });
 
     await runStep("agent-clis", async () => {
@@ -1166,6 +1194,20 @@ try {
         const opencodeTranscript = `${opencodeResult.stdout}\n${opencodeResult.stderr}`;
         assert.ok(opencodeTranscript.includes("AGENTS.md"), "opencode smoke did not use AGENTS.md");
         assert.ok(opencodeTranscript.includes("swarmvault "), "opencode smoke did not recommend a SwarmVault command");
+      }
+
+      if (await commandOnPath("gemini") && (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) {
+        const geminiResult = await runCommand(
+          "gemini-agent-smoke",
+          "gemini",
+          ["-p", "Read GEMINI.md from the workspace and reply with exactly two lines. First line: file=GEMINI.md. Second line: command=<one swarmvault command that GEMINI.md recommends>."],
+          {
+            cwd: workspaceDir
+          }
+        );
+        const geminiTranscript = `${geminiResult.stdout}\n${geminiResult.stderr}`;
+        assert.ok(geminiTranscript.includes("GEMINI.md"), "gemini smoke did not use GEMINI.md");
+        assert.ok(geminiTranscript.includes("swarmvault "), "gemini smoke did not recommend a SwarmVault command");
       }
     });
   }
