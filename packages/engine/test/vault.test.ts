@@ -1774,4 +1774,25 @@ describe("swarmvault workflow", () => {
     const report = await fs.readFile(path.join(rootDir, "wiki", "graph", "report.md"), "utf8");
     expect(report).toContain("Contradictions");
   });
+
+  it("lint --conflicts surfaces deterministic contradiction findings", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(
+      path.join(rootDir, "yes.md"),
+      "# Auth\n\nAuthentication is required for all API endpoints. The system enforces strict authentication.",
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "no.md"),
+      "# Auth\n\nAuthentication is not required for API endpoints. The system does not enforce authentication.",
+      "utf8"
+    );
+    await ingestInput(rootDir, "yes.md");
+    await ingestInput(rootDir, "no.md");
+    await compileVault(rootDir);
+    const findings = await lintVault(rootDir, { deep: false, web: false, conflicts: true });
+    const contradictionFindings = findings.filter((f) => f.code === "contradiction");
+    expect(contradictionFindings.length).toBeGreaterThan(0);
+  });
 });

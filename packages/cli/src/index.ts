@@ -327,10 +327,12 @@ program
   .description("Run anti-drift and wiki-health checks.")
   .option("--deep", "Run LLM-powered advisory lint", false)
   .option("--web", "Augment deep lint with configured web search", false)
-  .action(async (options: { deep?: boolean; web?: boolean }) => {
+  .option("--conflicts", "Filter to contradiction findings only", false)
+  .action(async (options: { deep?: boolean; web?: boolean; conflicts?: boolean }) => {
     const findings = await lintVault(process.cwd(), {
       deep: options.deep ?? false,
-      web: options.web ?? false
+      web: options.web ?? false,
+      conflicts: options.conflicts ?? false
     });
     if (isJson()) {
       emitJson(findings);

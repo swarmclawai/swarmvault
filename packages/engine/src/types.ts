@@ -816,6 +816,7 @@ export interface CompileState {
 export interface LintOptions {
   deep?: boolean;
   web?: boolean;
+  conflicts?: boolean;
 }
 
 export interface ExploreOptions {

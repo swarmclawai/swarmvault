@@ -17,7 +17,14 @@ const deepLintResponseSchema = z.object({
     .array(
       z.object({
         severity: z.string().optional().default("info"),
-        code: z.enum(["coverage_gap", "contradiction_candidate", "missing_citation", "candidate_page", "follow_up_question"]),
+        code: z.enum([
+          "coverage_gap",
+          "contradiction_candidate",
+          "contradiction",
+          "missing_citation",
+          "candidate_page",
+          "follow_up_question"
+        ]),
         message: z.string().min(1),
         relatedSourceIds: z.array(z.string()).default([]),
         relatedPageIds: z.array(z.string()).default([]),
@@ -189,6 +196,7 @@ export async function runDeepLint(
           "You are an auditor for a local-first LLM knowledge vault. Return advisory findings only. Do not propose direct file edits.",
         prompt: [
           "Review this SwarmVault state and return high-signal advisory findings.",
+          "Look for claims that contradict each other across different sources. When you find a genuine contradiction, use code 'contradiction' and include both source IDs in relatedSourceIds.",
           "",
           "Schema:",
           schema.content,

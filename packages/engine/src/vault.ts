@@ -4321,12 +4321,55 @@ export async function lintVault(rootDir: string, options: LintOptions = {}): Pro
       finishedAt: new Date().toISOString(),
       success: true,
       lintFindingCount: findings.length,
-      lines: [`findings=${findings.length}`, `deep=${Boolean(options.deep)}`, `web=${Boolean(options.web)}`]
+      lines: [
+        `findings=${findings.length}`,
+        `deep=${Boolean(options.deep)}`,
+        `web=${Boolean(options.web)}`,
+        `conflicts=${Boolean(options.conflicts)}`
+      ]
     });
     return findings;
   }
 
+  // Build deterministic contradiction findings from graph edges
+  const contradictionFindings: LintFinding[] = options.conflicts
+    ? graph.edges
+        .filter((edge) => edge.relation === "contradicts")
+        .map((edge) => {
+          const sourceIdA = edge.provenance[0] ?? edge.source.replace(/^source:/, "");
+          const sourceIdB = edge.provenance[1] ?? edge.target.replace(/^source:/, "");
+          return {
+            severity: "warning" as const,
+            code: "contradiction",
+            message: `Contradicting claims detected between source "${sourceIdA}" and source "${sourceIdB}".`,
+            relatedSourceIds: [sourceIdA, sourceIdB]
+          };
+        })
+    : [];
+
+  // If conflicts-only mode (no deep or structural lint requested), return only contradiction findings
+  if (options.conflicts && !options.deep) {
+    await recordSession(rootDir, {
+      operation: "lint",
+      title: `Linted ${graph.pages.length} page(s)`,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      success: true,
+      relatedPageIds: graph.pages.map((page) => page.id),
+      relatedSourceIds: uniqueStrings(graph.pages.flatMap((page) => page.sourceIds)),
+      lintFindingCount: contradictionFindings.length,
+      lines: [`findings=${contradictionFindings.length}`, `deep=false`, `web=false`, `conflicts=true`]
+    });
+    return contradictionFindings;
+  }
+
   const findings = await structuralLintFindings(rootDir, paths, graph, schemas, manifests, sourceProjects);
+
+  // Include deterministic contradiction findings when conflicts flag is set
+  if (options.conflicts) {
+    findings.push(...contradictionFindings);
+  }
+
   if (options.deep) {
     findings.push(...(await runDeepLint(rootDir, findings, { web: options.web })));
   }
@@ -4342,7 +4385,12 @@ export async function lintVault(rootDir: string, options: LintOptions = {}): Pro
     relatedPageIds: graph.pages.map((page) => page.id),
     relatedSourceIds: uniqueStrings(graph.pages.flatMap((page) => page.sourceIds)),
     lintFindingCount: findings.length,
-    lines: [`findings=${findings.length}`, `deep=${Boolean(options.deep)}`, `web=${Boolean(options.web)}`]
+    lines: [
+      `findings=${findings.length}`,
+      `deep=${Boolean(options.deep)}`,
+      `web=${Boolean(options.web)}`,
+      `conflicts=${Boolean(options.conflicts)}`
+    ]
   });
 
   return findings;
