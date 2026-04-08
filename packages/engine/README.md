@@ -45,6 +45,7 @@ import {
   loadVaultSchema,
   loadVaultSchemas,
   pathGraphVault,
+  pushGraphNeo4j,
   queryGraphVault,
   queryVault,
   runWatchCycle,
@@ -65,13 +66,18 @@ The engine also exports the main runtime types for providers, graph artifacts, p
 
 ```ts
 import {
+  addInput,
+  benchmarkVault,
   compileVault,
   exploreVault,
   exportGraphHtml,
+  exportGraphFormat,
+  getWatchStatus,
   importInbox,
   initVault,
   installGitHooks,
   loadVaultSchemas,
+  pushGraphNeo4j,
   queryGraphVault,
   queryVault,
   runWatchCycle,
@@ -100,6 +106,12 @@ console.log(exploration.hubPath);
 
 await exportGraphHtml(rootDir, "./exports/graph.html");
 await exportGraphFormat(rootDir, "graphml", "./exports/graph.graphml");
+await pushGraphNeo4j(rootDir, {
+  uri: "bolt://127.0.0.1:7687",
+  username: "neo4j",
+  passwordEnv: "NEO4J_PASSWORD",
+  dryRun: true
+});
 
 await runWatchCycle(rootDir, { repo: true });
 console.log(await getWatchStatus(rootDir));
@@ -212,6 +224,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `startMcpServer(rootDir)` runs the MCP server over stdio
 - `exportGraphHtml(rootDir, outputPath)` exports the graph workspace as a standalone HTML file
 - `exportGraphFormat(rootDir, "svg" | "graphml" | "cypher", outputPath)` exports the graph into interoperable file formats
+- `pushGraphNeo4j(rootDir, options)` upserts the current graph into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing
 
 The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, ingestion, compile, lint, graph report reads, hyperedge reads, and graph-native read operations such as graph query, node explain, neighbor lookup, shortest path, and god-node listing, along with resources for config, graph, manifests, schema, page content, and session artifacts.
 

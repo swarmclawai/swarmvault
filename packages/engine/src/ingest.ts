@@ -315,7 +315,52 @@ function prepareCapturedMarkdownInput(input: {
   };
 }
 
+function isPrivateIp(ip: string): boolean {
+  if (ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return false;
+  return (
+    parts[0] === 0 ||
+    parts[0] === 127 ||
+    parts[0] === 10 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168) ||
+    (parts[0] === 169 && parts[1] === 254)
+  );
+}
+
+function allowPrivateUrlsForProcess(): boolean {
+  return process.env.SWARMVAULT_ALLOW_PRIVATE_URLS === "1";
+}
+
+function isReservedTestHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return lower.endsWith(".test") || lower.endsWith(".example") || lower.endsWith(".invalid");
+}
+
+async function validateUrlSafety(url: string): Promise<void> {
+  const parsed = new URL(url);
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error(`Blocked protocol: ${parsed.protocol}`);
+  }
+  if (allowPrivateUrlsForProcess() || isReservedTestHostname(parsed.hostname)) {
+    return;
+  }
+  let address: string;
+  try {
+    const { lookup } = await import("node:dns/promises");
+    const result = await lookup(parsed.hostname);
+    address = result.address;
+  } catch {
+    return; // DNS failure during fetch-mock or offline — let fetch itself fail
+  }
+  if (isPrivateIp(address)) {
+    throw new Error(`Blocked private/reserved IP ${address} (resolved from ${parsed.hostname})`);
+  }
+}
+
 async function fetchText(url: string): Promise<string> {
+  await validateUrlSafety(url);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
@@ -324,6 +369,7 @@ async function fetchText(url: string): Promise<string> {
 }
 
 async function fetchResolvedText(url: string): Promise<{ text: string; finalUrl: string; contentType: string }> {
+  await validateUrlSafety(url);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
@@ -910,6 +956,7 @@ async function readResponseBytesWithinLimit(response: Response, maxBytes: number
 }
 
 async function fetchRemoteImageAttachment(assetUrl: string, maxAssetSize: number): Promise<PreparedAttachment> {
+  await validateUrlSafety(assetUrl);
   const response = await fetch(assetUrl);
   if (!response.ok) {
     throw new Error(`failed with ${response.status} ${response.statusText}`);
@@ -1536,6 +1583,7 @@ async function prepareFileInput(
 }
 
 async function prepareUrlInput(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput> {
+  await validateUrlSafety(input);
   const response = await fetch(input);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${input}: ${response.status} ${response.statusText}`);

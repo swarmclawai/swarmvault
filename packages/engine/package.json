@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/engine",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "description": "Core engine for SwarmVault: ingest, compile, query, lint, and provider abstractions.",
   "type": "module",
   "main": "dist/index.js",
@@ -41,7 +41,7 @@
   },
   "scripts": {
     "build": "test -f ../viewer/dist/index.html || pnpm --dir ../viewer build; tsup src/index.ts --format esm --dts && rm -rf dist/viewer && mkdir -p dist/viewer && cp -R ../viewer/dist/. dist/viewer/",
-    "test": "vitest run",
+    "test": "SWARMVAULT_ALLOW_PRIVATE_URLS=1 vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -55,6 +55,7 @@
     "jsdom": "^27.0.0",
     "mammoth": "^1.12.0",
     "mime-types": "^3.0.1",
+    "neo4j-driver": "^5.28.3",
     "pdfjs-dist": "^5.4.394",
     "turndown": "^7.2.1",
     "typescript": "^5.9.3",

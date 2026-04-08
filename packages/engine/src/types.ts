@@ -197,6 +197,9 @@ export interface VaultConfig {
     classifyGlobs?: Partial<Record<SourceClass, string[]>>;
     extractClasses?: SourceClass[];
   };
+  graphSinks?: {
+    neo4j?: Neo4jGraphSinkConfig;
+  };
   webSearch?: {
     providers: Record<string, WebSearchProviderConfig>;
     tasks: {
@@ -902,6 +905,49 @@ export interface SceneSpec {
 export interface GraphExportResult {
   format: GraphExportFormat;
   outputPath: string;
+}
+
+export interface Neo4jGraphSinkConfig {
+  uri: string;
+  username: string;
+  passwordEnv: string;
+  database?: string;
+  vaultId?: string;
+  includeClasses?: SourceClass[];
+  batchSize?: number;
+}
+
+export interface GraphPushNeo4jOptions {
+  uri?: string;
+  username?: string;
+  passwordEnv?: string;
+  database?: string;
+  vaultId?: string;
+  includeClasses?: SourceClass[];
+  batchSize?: number;
+  dryRun?: boolean;
+}
+
+export interface GraphPushCounts {
+  sources: number;
+  pages: number;
+  nodes: number;
+  relationships: number;
+  hyperedges: number;
+  groupMembers: number;
+}
+
+export interface GraphPushResult {
+  sink: "neo4j";
+  uri: string;
+  database: string;
+  vaultId: string;
+  dryRun: boolean;
+  graphHash: string;
+  includedSourceClasses: SourceClass[];
+  counts: GraphPushCounts;
+  skipped: GraphPushCounts;
+  warnings: string[];
 }
 
 export interface AddOptions extends IngestOptions {

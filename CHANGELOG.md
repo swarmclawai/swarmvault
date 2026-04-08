@@ -4,6 +4,14 @@
 
 Nothing yet.
 
+## 0.1.30
+
+- Added `swarmvault graph push neo4j` plus `graphSinks.neo4j` config, shared-database-safe `vaultId` namespacing, first-party-default filtering, dry-run reporting, and upsert-only Bolt/Aura sync through the official Neo4j driver
+- Refactored graph interchange mapping so Cypher export and Neo4j push share the same stable node, relationship, hyperedge, and group-member normalization logic instead of drifting between two schemas
+- Added direct graph-sink tests plus a Docker-backed Neo4j live-smoke lane, while documenting the local Docker daemon requirement for that validation path
+- Hardened URL-based ingest and remote asset fetches by validating resolved addresses and blocking private or reserved IP targets before fetch
+- Fixed the site docs renderer so richer markdown no longer hangs static generation on deeper heading levels, and replaced the worst inline markdown regex loop with a bounded scanner
+
 ## 0.1.29
 
 - Added first-class DOCX ingest with local text and metadata extraction, expanded inbox import to preserve browser-style HTML clip bundles with rewritten local assets, and refreshed the docs/README screenshot from a real packaged viewer run

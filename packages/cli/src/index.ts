@@ -28,6 +28,7 @@ import {
   loadVaultConfig,
   pathGraphVault,
   promoteCandidate,
+  pushGraphNeo4j,
   queryGraphVault,
   queryVault,
   readApproval,
@@ -55,9 +56,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.29";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.30";
   } catch {
-    return "0.1.29";
+    return "0.1.30";
   }
 }
 
@@ -345,6 +346,70 @@ program
   });
 
 const graph = program.command("graph").description("Graph-related commands.");
+const graphPush = graph.command("push").description("Push the compiled graph into external sinks.");
+
+graphPush
+  .command("neo4j")
+  .description("Push the compiled graph directly into Neo4j over Bolt/Aura.")
+  .option("--uri <bolt-uri>", "Neo4j Bolt or Aura URI")
+  .option("--username <user>", "Neo4j username")
+  .option("--password-env <env-var>", "Environment variable containing the Neo4j password")
+  .option("--database <name>", "Neo4j database name")
+  .option("--vault-id <id>", "Stable vault identifier used for shared-database namespacing")
+  .option("--batch-size <n>", "Maximum rows to write per Neo4j transaction batch")
+  .option("--include-third-party", "Also push third-party repo material", false)
+  .option("--include-resources", "Also push resource-like content", false)
+  .option("--include-generated", "Also push generated output", false)
+  .option("--dry-run", "Show what would be pushed without writing to Neo4j", false)
+  .action(
+    async (options: {
+      uri?: string;
+      username?: string;
+      passwordEnv?: string;
+      database?: string;
+      vaultId?: string;
+      batchSize?: string;
+      includeThirdParty?: boolean;
+      includeResources?: boolean;
+      includeGenerated?: boolean;
+      dryRun?: boolean;
+    }) => {
+      const batchSize =
+        typeof options.batchSize === "string" && options.batchSize.trim() ? parsePositiveInt(options.batchSize, 0) || undefined : undefined;
+      const includeClasses: SourceClass[] = [
+        "first_party",
+        ...(options.includeThirdParty ? (["third_party"] as const) : []),
+        ...(options.includeResources ? (["resource"] as const) : []),
+        ...(options.includeGenerated ? (["generated"] as const) : [])
+      ];
+      const result = await pushGraphNeo4j(process.cwd(), {
+        uri: options.uri,
+        username: options.username,
+        passwordEnv: options.passwordEnv,
+        database: options.database,
+        vaultId: options.vaultId,
+        batchSize,
+        includeClasses,
+        dryRun: options.dryRun ?? false
+      });
+      if (isJson()) {
+        emitJson(result);
+      } else {
+        log(
+          `${result.dryRun ? "Planned" : "Pushed"} ${result.counts.nodes} nodes, ${result.counts.relationships} relationships, ${result.counts.hyperedges} hyperedges, and ${result.counts.groupMembers} group-member links to ${result.uri}/${result.database} as ${result.vaultId}.`
+        );
+        if (result.skipped.nodes || result.skipped.relationships || result.skipped.hyperedges) {
+          log(
+            `Skipped ${result.skipped.nodes} node(s), ${result.skipped.relationships} relationship(s), and ${result.skipped.hyperedges} hyperedge(s) outside the selected source classes.`
+          );
+        }
+        for (const warning of result.warnings) {
+          log(`Warning: ${warning}`);
+        }
+      }
+    }
+  );
+
 graph
   .command("serve")
   .description("Serve the local graph viewer.")

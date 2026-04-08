@@ -135,6 +135,77 @@ try {
     await assertExists(path.join(workspaceDir, "wiki", "index.md"));
   });
 
+  if (lane === "neo4j") {
+    await runStep("neo4j-push", async () => {
+      const password = "swarmvault-neo4j-password";
+      const neo4jContainer = await startNeo4jContainer(password);
+      try {
+        const dryRun = await runCliJson(
+          [
+            "graph",
+            "push",
+            "neo4j",
+            "--uri",
+            neo4jContainer.boltUri,
+            "--username",
+            "neo4j",
+            "--password-env",
+            "SWARMVAULT_NEO4J_PASSWORD",
+            "--database",
+            "neo4j",
+            "--dry-run"
+          ],
+          {
+            env: {
+              SWARMVAULT_NEO4J_PASSWORD: password
+            }
+          }
+        );
+        assert.equal(dryRun.dryRun, true, "Neo4j dry-run did not report dryRun=true");
+        assert.ok(dryRun.counts.nodes > 0, "Neo4j dry-run found no nodes to push");
+
+        const pushed = await runCliJson(
+          [
+            "graph",
+            "push",
+            "neo4j",
+            "--uri",
+            neo4jContainer.boltUri,
+            "--username",
+            "neo4j",
+            "--password-env",
+            "SWARMVAULT_NEO4J_PASSWORD",
+            "--database",
+            "neo4j"
+          ],
+          {
+            env: {
+              SWARMVAULT_NEO4J_PASSWORD: password
+            }
+          }
+        );
+        assert.equal(pushed.dryRun, false, "Neo4j push unexpectedly reported dryRun=true");
+        assert.ok(pushed.vaultId, "Neo4j push did not report a vaultId");
+
+        const pushedNodes = Number(await neo4jContainer.query(`MATCH (n:SwarmNode {vaultId: '${pushed.vaultId}'}) RETURN count(n) AS count`));
+        const pushedRelationships = Number(
+          await neo4jContainer.query(`MATCH ()-[r]->() WHERE r.vaultId = '${pushed.vaultId}' RETURN count(r) AS count`)
+        );
+        const syncNodes = Number(
+          await neo4jContainer.query(`MATCH (s:SwarmVaultSync {vaultId: '${pushed.vaultId}'}) RETURN count(s) AS count`)
+        );
+        assert.ok(pushedNodes >= pushed.counts.nodes + pushed.counts.hyperedges, "Neo4j push did not create the expected node records");
+        assert.ok(
+          pushedRelationships >= pushed.counts.relationships + pushed.counts.groupMembers,
+          "Neo4j push did not create the expected relationship records"
+        );
+        assert.equal(syncNodes, 1, "Neo4j push did not create exactly one sync metadata node");
+      } finally {
+        await neo4jContainer.close();
+      }
+    });
+  }
+
   await runStep("json-notice-suppression", async () => {
     const result = await runInstalledCliCommand("review-list-json", ["review", "list", "--json"], {
       cwd: workspaceDir
@@ -213,7 +284,9 @@ try {
           "</body></html>"
         ].join("");
 
-        const htmlManifest = await runCliJson(["ingest", `${server.baseUrl}/article`]);
+        const fixtureEnv = { SWARMVAULT_ALLOW_PRIVATE_URLS: "1" };
+
+        const htmlManifest = await runCliJson(["ingest", `${server.baseUrl}/article`], { env: fixtureEnv });
         assert.equal(htmlManifest.attachments.length, 2, "expected HTML URL ingest to localize both remote images");
         const htmlStored = await fs.readFile(path.join(workspaceDir, htmlManifest.storedPath), "utf8");
         for (const attachment of htmlManifest.attachments) {
@@ -223,7 +296,7 @@ try {
         }
         assert.ok(!htmlStored.includes(`${server.baseUrl}/images/absolute.png`), "HTML ingest left a remote absolute asset reference");
 
-        const markdownManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md`]);
+        const markdownManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md`], { env: fixtureEnv });
         assert.equal(markdownManifest.attachments.length, 1, "expected markdown URL ingest to localize one remote image");
         const markdownStored = await fs.readFile(path.join(workspaceDir, markdownManifest.storedPath), "utf8");
         const markdownAsset = markdownManifest.attachments[0];
@@ -233,12 +306,16 @@ try {
           "markdown URL ingest did not rewrite to a local asset path"
         );
 
-        const skippedManifest = await runCliJson(["ingest", `${server.baseUrl}/large.md`, "--max-asset-size", "8"]);
+        const skippedManifest = await runCliJson(["ingest", `${server.baseUrl}/large.md`, "--max-asset-size", "8"], {
+          env: fixtureEnv
+        });
         assert.ok(!skippedManifest.attachments?.length, "oversized asset should not have been attached");
         const skippedStored = await fs.readFile(path.join(workspaceDir, skippedManifest.storedPath), "utf8");
         assert.ok(skippedStored.includes("./images/large.png"), "oversized asset should leave the original markdown reference intact");
 
-        const disabledManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md?no-assets=1`, "--no-include-assets"]);
+        const disabledManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md?no-assets=1`, "--no-include-assets"], {
+          env: fixtureEnv
+        });
         assert.ok(!disabledManifest.attachments?.length, "--no-include-assets should skip remote asset downloads");
         const disabledStored = await fs.readFile(path.join(workspaceDir, disabledManifest.storedPath), "utf8");
         assert.ok(disabledStored.includes("./images/diagram.png"), "--no-include-assets should leave the original markdown reference intact");
@@ -271,7 +348,8 @@ try {
       });
       try {
         const articleUrl = `${server.baseUrl}/article`;
-        const article = await runCliJson(["add", articleUrl, "--contributor", "Smoke"]);
+        const fixtureEnv = { SWARMVAULT_ALLOW_PRIVATE_URLS: "1" };
+        const article = await runCliJson(["add", articleUrl, "--contributor", "Smoke"], { env: fixtureEnv });
         assert.equal(article.captureType, "article", "article capture did not report article");
         assert.equal(article.fallback, false, "article capture unexpectedly fell back");
         const articleSource = await fs.readFile(path.join(workspaceDir, article.manifest.storedPath), "utf8");
@@ -279,7 +357,7 @@ try {
         assert.ok(articleSource.includes("canonical_url:"), "article capture did not record canonical_url");
         assert.ok(articleSource.includes(articleUrl), "article capture did not preserve canonical_url");
 
-        const result = await runCliJson(["add", `${server.baseUrl}/capture.md`, "--author", "Wayde"]);
+        const result = await runCliJson(["add", `${server.baseUrl}/capture.md`, "--author", "Wayde"], { env: fixtureEnv });
         assert.equal(result.captureType, "url", "add fallback did not report url capture");
         assert.equal(result.fallback, true, "add fallback did not report fallback=true");
         await assertExists(path.join(workspaceDir, result.manifest.storedPath));
@@ -1371,10 +1449,10 @@ async function runStep(name, fn) {
   }
 }
 
-async function runCliJson(args) {
+async function runCliJson(args, options = {}) {
   const result = await runInstalledCliCommand(args.join("-").replaceAll(path.sep, "_"), ["--json", ...args], {
     cwd: workspaceDir,
-    env: inheritedEnv()
+    env: { ...inheritedEnv(), ...(options.env ?? {}) }
   });
   const lines = result.stdout
     .split("\n")
@@ -1575,6 +1653,88 @@ async function reservePort() {
       });
     });
   });
+}
+
+async function startNeo4jContainer(password) {
+  try {
+    await runCommand("docker-info", "docker", ["info"]);
+  } catch (error) {
+    throw new Error(
+      `Neo4j live-smoke requires a running Docker daemon. Start Docker and rerun \`pnpm --dir ${repoRoot} live:smoke:neo4j\`. ${
+        error instanceof Error ? error.message : String(error)
+      }`.trim()
+    );
+  }
+  const name = `swarmvault-neo4j-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const boltPort = await reservePort();
+  const httpPort = await reservePort();
+  await runCommand("docker-run-neo4j", "docker", [
+    "run",
+    "-d",
+    "--rm",
+    "--name",
+    name,
+    "-p",
+    `127.0.0.1:${boltPort}:7687`,
+    "-p",
+    `127.0.0.1:${httpPort}:7474`,
+    "-e",
+    `NEO4J_AUTH=neo4j/${password}`,
+    "neo4j:5.28.2-community"
+  ]);
+
+  await waitFor(
+    async () => {
+      try {
+        const result = await runCommand("neo4j-ready-check", "docker", [
+          "exec",
+          name,
+          "cypher-shell",
+          "-u",
+          "neo4j",
+          "-p",
+          password,
+          "--non-interactive",
+          "--format",
+          "plain",
+          "RETURN 1 AS ready"
+        ]);
+        return result.stdout.includes("1");
+      } catch {
+        return false;
+      }
+    },
+    60_000,
+    "Timed out waiting for Neo4j to accept Bolt connections."
+  );
+
+  return {
+    name,
+    boltUri: `bolt://127.0.0.1:${boltPort}`,
+    async query(cypher) {
+      const result = await runCommand("neo4j-query", "docker", [
+        "exec",
+        name,
+        "cypher-shell",
+        "-u",
+        "neo4j",
+        "-p",
+        password,
+        "--non-interactive",
+        "--format",
+        "plain",
+        cypher
+      ]);
+      return result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1);
+    },
+    async close() {
+      await runCommand("docker-rm-neo4j", "docker", ["rm", "-f", name]).catch(() => {});
+    }
+  };
 }
 
 async function startCliServer(label, args, cwd) {

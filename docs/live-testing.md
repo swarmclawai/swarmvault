@@ -13,6 +13,7 @@ pnpm install
 pnpm live:smoke:heuristic
 pnpm exec playwright install chromium
 pnpm live:smoke:heuristic:browser
+pnpm live:smoke:neo4j
 pnpm live:oss:corpus
 ```
 
@@ -41,6 +42,8 @@ SWARMVAULT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 SWARMVAULT_OPENCODE_OLLAMA_MODEL=gpt-oss:20b-cloud
 ```
 
+The Neo4j live-smoke lane uses a local Docker-managed Neo4j container and does not require a hosted Neo4j account, but it does require a running Docker daemon.
+
 To test a real provider path with OpenAI:
 
 ```bash
@@ -54,6 +57,7 @@ Optional flags:
 node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.14 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 node ./scripts/live-smoke.mjs --lane heuristic --browser-check
+node ./scripts/live-smoke.mjs --lane neo4j --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.1.26 --keep-artifacts
 node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
 node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
@@ -141,6 +145,18 @@ The default cloud model is `gpt-oss:20b-cloud`, and the runner defaults to `SWAR
 - run `lint --deep`
 
 The default Anthropic model is `claude-sonnet-4-20250514`, and you can override it with `SWARMVAULT_ANTHROPIC_MODEL`.
+
+### Neo4j lane
+
+- install the published CLI from npm or supplied tarballs
+- initialize a fresh workspace
+- ingest and compile a markdown fixture
+- start a temporary local Neo4j container over Bolt
+- run `swarmvault graph push neo4j --dry-run`
+- run `swarmvault graph push neo4j`
+- verify `SwarmNode`, relationship, `GROUP_MEMBER`, and `SwarmVaultSync` records exist for the pushed `vaultId`
+
+This lane is the direct-graph-sink validation path and complements the file-export checks from `graph export --cypher`.
 
 ## Failure Artifacts
 

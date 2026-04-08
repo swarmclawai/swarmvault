@@ -1,7 +1,7 @@
 {
   "name": "swarmvault-opensource",
   "private": true,
-  "version": "0.1.29",
+  "version": "0.1.30",
   "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {
@@ -16,6 +16,7 @@
     "docs:screenshots": "node ./scripts/sync-docs-screenshots.mjs",
     "live:smoke:heuristic": "node ./scripts/live-smoke.mjs --lane heuristic",
     "live:smoke:heuristic:browser": "node ./scripts/live-smoke.mjs --lane heuristic --browser-check",
+    "live:smoke:neo4j": "node ./scripts/live-smoke.mjs --lane neo4j",
     "live:smoke:ollama": "node ./scripts/live-smoke.mjs --lane ollama",
     "live:smoke:openai": "node ./scripts/live-smoke.mjs --lane openai",
     "live:smoke:anthropic": "node ./scripts/live-smoke.mjs --lane anthropic",

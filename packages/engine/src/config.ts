@@ -30,6 +30,16 @@ const providerConfigSchema = z.object({
 
 const sourceClassSchema = z.enum(["first_party", "third_party", "resource", "generated"]);
 
+const neo4jGraphSinkConfigSchema = z.object({
+  uri: z.string().min(1),
+  username: z.string().min(1),
+  passwordEnv: z.string().min(1),
+  database: z.string().min(1).optional(),
+  vaultId: z.string().min(1).optional(),
+  includeClasses: z.array(sourceClassSchema).optional(),
+  batchSize: z.number().int().positive().optional()
+});
+
 const scheduleTriggerSchema = z
   .object({
     cron: z.string().min(1).optional(),
@@ -154,6 +164,11 @@ const vaultConfigSchema = z.object({
       extractClasses: z.array(sourceClassSchema).optional()
     })
     .optional(),
+  graphSinks: z
+    .object({
+      neo4j: neo4jGraphSinkConfigSchema.optional()
+    })
+    .optional(),
   webSearch: z
     .object({
       providers: z.record(z.string(), webSearchProviderConfigSchema),
@@ -206,7 +221,8 @@ export function defaultVaultConfig(): VaultConfig {
     repoAnalysis: {
       classifyGlobs: {},
       extractClasses: ["first_party"]
-    }
+    },
+    graphSinks: {}
   };
 }
 

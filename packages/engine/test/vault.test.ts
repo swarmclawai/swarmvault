@@ -82,6 +82,20 @@ async function waitFor(condition: () => Promise<boolean>, timeoutMs = 15_000): P
   throw new Error("Timed out waiting for condition.");
 }
 
+async function withPrivateUrlAllowance<T>(run: () => Promise<T>): Promise<T> {
+  const previous = process.env.SWARMVAULT_ALLOW_PRIVATE_URLS;
+  process.env.SWARMVAULT_ALLOW_PRIVATE_URLS = "1";
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.SWARMVAULT_ALLOW_PRIVATE_URLS;
+    } else {
+      process.env.SWARMVAULT_ALLOW_PRIVATE_URLS = previous;
+    }
+  }
+}
+
 async function startFixtureServer(
   routes: Record<string, { status?: number; contentType?: string; body: string | Buffer }>
 ): Promise<{ baseUrl: string; close: () => Promise<void> }> {
@@ -703,7 +717,7 @@ describe("swarmvault workflow", () => {
         "</body></html>"
       ].join("");
 
-      const manifest = await ingestInput(rootDir, articleUrl);
+      const manifest = await withPrivateUrlAllowance(() => ingestInput(rootDir, articleUrl));
       expect(manifest.attachments).toHaveLength(2);
 
       const storedMarkdown = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");
@@ -736,7 +750,7 @@ describe("swarmvault workflow", () => {
     });
 
     try {
-      const manifest = await ingestInput(rootDir, `${server.baseUrl}/notes.md`);
+      const manifest = await withPrivateUrlAllowance(() => ingestInput(rootDir, `${server.baseUrl}/notes.md`));
       expect(manifest.sourceKind).toBe("markdown");
       expect(manifest.attachments).toHaveLength(1);
 
@@ -768,7 +782,7 @@ describe("swarmvault workflow", () => {
     });
 
     try {
-      const manifest = await ingestInput(rootDir, `${server.baseUrl}/notes.md`, { maxAssetSize: 8 });
+      const manifest = await withPrivateUrlAllowance(() => ingestInput(rootDir, `${server.baseUrl}/notes.md`, { maxAssetSize: 8 }));
       expect(manifest.attachments).toBeUndefined();
 
       const storedMarkdown = await fs.readFile(path.join(rootDir, manifest.storedPath), "utf8");

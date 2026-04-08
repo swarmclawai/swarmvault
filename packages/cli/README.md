@@ -41,6 +41,7 @@ swarmvault hook install
 swarmvault graph serve
 swarmvault graph export --html ./exports/graph.html
 swarmvault graph export --cypher ./exports/graph.cypher
+swarmvault graph push neo4j --dry-run
 ```
 
 ## Commands
@@ -255,6 +256,29 @@ Export the current graph as one of four formats:
 - `--svg` for a static shareable diagram
 - `--graphml` for graph-tool interoperability
 - `--cypher` for Neo4j-style import scripts
+
+### `swarmvault graph push neo4j`
+
+Push the compiled graph directly into Neo4j over Bolt/Aura instead of writing an intermediate file.
+
+Useful flags:
+
+- `--uri <bolt-uri>`
+- `--username <user>`
+- `--password-env <env-var>`
+- `--database <name>`
+- `--vault-id <id>`
+- `--include-third-party`
+- `--include-resources`
+- `--include-generated`
+- `--dry-run`
+
+Defaults:
+
+- reads `graphSinks.neo4j` from `swarmvault.config.json` when present
+- includes only `first_party` graph material unless you opt into more source classes
+- namespaces every remote record by `vaultId` so multiple vaults can safely share one Neo4j database
+- upserts current graph records and does not prune stale remote data yet
 
 ### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot>`
 

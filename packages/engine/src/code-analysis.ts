@@ -164,11 +164,11 @@ function isNodeExported(node: ts.Node): boolean {
   );
 }
 
-function makeSymbolId(sourceId: string, name: string, seen: Map<string, number>): string {
+function makeSymbolId(scope: string, name: string, seen: Map<string, number>): string {
   const base = slugify(name);
   const count = (seen.get(base) ?? 0) + 1;
   seen.set(base, count);
-  return `symbol:${sourceId}:${count === 1 ? base : `${base}-${count}`}`;
+  return `symbol:${scope}:${count === 1 ? base : `${base}-${count}`}`;
 }
 
 function summarizeModule(manifest: SourceManifest, code: CodeAnalysis): string {
@@ -409,8 +409,9 @@ function finalizeCodeAnalysis(
   }
 
   const seenSymbolIds = new Map<string, number>();
+  const symbolScope = metadata?.namespace ? `ns:${slugify(metadata.namespace)}` : manifest.sourceId;
   const symbols: CodeSymbol[] = draftSymbols.map((symbol) => ({
-    id: makeSymbolId(manifest.sourceId, symbol.name, seenSymbolIds),
+    id: makeSymbolId(symbolScope, symbol.name, seenSymbolIds),
     name: symbol.name,
     kind: symbol.kind,
     signature: symbol.signature,
