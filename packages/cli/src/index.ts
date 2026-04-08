@@ -5,9 +5,11 @@ import type { SourceClass } from "@swarmvaultai/engine";
 import {
   acceptApproval,
   addInput,
+  addManagedSource,
   archiveCandidate,
   benchmarkVault,
   compileVault,
+  deleteManagedSource,
   explainGraphVault,
   exploreVault,
   exportGraphFormat,
@@ -24,6 +26,7 @@ import {
   listApprovals,
   listCandidates,
   listGodNodes,
+  listManagedSourceRecords,
   listSchedules,
   loadVaultConfig,
   pathGraphVault,
@@ -33,6 +36,7 @@ import {
   queryVault,
   readApproval,
   rejectApproval,
+  reloadManagedSources,
   runSchedule,
   runWatchCycle,
   serveSchedules,
@@ -56,9 +60,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.34";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.2.0";
   } catch {
-    return "0.1.34";
+    return "0.2.0";
   }
 }
 
@@ -220,6 +224,97 @@ program
       emitJson(result);
     } else {
       log(`${result.captureType}${result.fallback ? " (fallback)" : ""}: ${result.manifest.sourceId}`);
+    }
+  });
+
+const source = program.command("source").description("Manage recurring directory, public repo, and docs sources.");
+
+source
+  .command("add")
+  .description("Register and sync a managed source from a directory, public GitHub repo root URL, or docs hub URL.")
+  .argument("<input>", "Directory path, public GitHub repo root URL, or docs hub URL")
+  .option("--no-compile", "Register and sync without compiling the vault")
+  .option("--no-brief", "Skip source brief generation after sync")
+  .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
+  .option("--max-depth <n>", "Maximum crawl depth for docs sources")
+  .action(async (input: string, options: { compile?: boolean; brief?: boolean; maxPages?: string; maxDepth?: string }) => {
+    const result = await addManagedSource(process.cwd(), input, {
+      compile: options.compile,
+      brief: options.brief,
+      maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
+      maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
+    });
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(
+        `Registered ${result.source.kind} source ${result.source.id}. Status: ${result.source.status}.` +
+          `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
+          `${result.briefGenerated ? ` Brief: ${result.source.briefPath}` : ""}`
+      );
+    }
+  });
+
+source
+  .command("list")
+  .description("List managed sources registered in this vault.")
+  .action(async () => {
+    const sources = await listManagedSourceRecords(process.cwd());
+    if (isJson()) {
+      emitJson(sources);
+    } else if (sources.length === 0) {
+      log("No managed sources registered.");
+    } else {
+      for (const entry of sources) {
+        log(`${entry.id}  ${entry.kind}  ${entry.status}  ${entry.title}`);
+      }
+    }
+  });
+
+source
+  .command("reload")
+  .description("Re-sync one managed source or all managed sources, then optionally compile and refresh briefs.")
+  .argument("[id]", "Managed source id")
+  .option("--all", "Reload all managed sources", false)
+  .option("--no-compile", "Re-sync without compiling the vault")
+  .option("--no-brief", "Skip source brief generation after sync")
+  .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
+  .option("--max-depth <n>", "Maximum crawl depth for docs sources")
+  .action(
+    async (
+      id: string | undefined,
+      options: { all?: boolean; compile?: boolean; brief?: boolean; maxPages?: string; maxDepth?: string }
+    ) => {
+      const result = await reloadManagedSources(process.cwd(), {
+        id,
+        all: options.all ?? false,
+        compile: options.compile,
+        brief: options.brief,
+        maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
+        maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
+      });
+      if (isJson()) {
+        emitJson(result);
+      } else {
+        log(
+          `Reloaded ${result.sources.length} source(s).` +
+            `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
+            `${result.briefPaths.length ? ` Briefs: ${result.briefPaths.length}.` : ""}`
+        );
+      }
+    }
+  );
+
+source
+  .command("delete")
+  .description("Unregister a managed source and remove its transient sync state without deleting canonical vault content.")
+  .argument("<id>", "Managed source id")
+  .action(async (id: string) => {
+    const result = await deleteManagedSource(process.cwd(), id);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Deleted managed source ${result.removed.id}. Canonical vault content was left in place.`);
     }
   });
 

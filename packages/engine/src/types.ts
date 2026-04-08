@@ -49,6 +49,8 @@ export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "docx" | "binary" | "code";
 export type SourceCaptureType = "arxiv" | "doi" | "tweet" | "article" | "url";
 export type SourceClass = "first_party" | "third_party" | "resource" | "generated";
+export type ManagedSourceKind = "directory" | "github_repo" | "crawl_url";
+export type ManagedSourceStatus = "ready" | "missing" | "error";
 export type CodeLanguage =
   | "javascript"
   | "jsx"
@@ -242,6 +244,8 @@ export interface ResolvedPaths {
   watchDir: string;
   watchStatusPath: string;
   pendingSemanticRefreshPath: string;
+  managedSourcesPath: string;
+  managedSourcesDir: string;
   configPath: string;
 }
 
@@ -332,6 +336,37 @@ export interface SourceManifest {
   createdAt: string;
   updatedAt: string;
   attachments?: SourceAttachment[];
+}
+
+export interface ManagedSourceSyncCounts {
+  scannedCount: number;
+  importedCount: number;
+  updatedCount: number;
+  removedCount: number;
+  skippedCount: number;
+}
+
+export interface ManagedSourceRecord {
+  id: string;
+  kind: ManagedSourceKind;
+  title: string;
+  path?: string;
+  repoRoot?: string;
+  url?: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ManagedSourceStatus;
+  sourceIds: string[];
+  briefPath?: string;
+  lastSyncAt?: string;
+  lastSyncStatus?: "success" | "error";
+  lastSyncCounts?: ManagedSourceSyncCounts;
+  lastError?: string;
+}
+
+export interface ManagedSourcesArtifact {
+  version: 1;
+  sources: ManagedSourceRecord[];
 }
 
 export interface AnalyzedTerm {
@@ -786,6 +821,34 @@ export interface InstallAgentResult {
   target: string;
   targets: string[];
   warnings?: string[];
+}
+
+export interface ManagedSourceAddOptions {
+  compile?: boolean;
+  brief?: boolean;
+  maxPages?: number;
+  maxDepth?: number;
+}
+
+export interface ManagedSourceReloadOptions extends ManagedSourceAddOptions {
+  id?: string;
+  all?: boolean;
+}
+
+export interface ManagedSourceAddResult {
+  source: ManagedSourceRecord;
+  compile?: CompileResult;
+  briefGenerated: boolean;
+}
+
+export interface ManagedSourceReloadResult {
+  sources: ManagedSourceRecord[];
+  compile?: CompileResult;
+  briefPaths: string[];
+}
+
+export interface ManagedSourceDeleteResult {
+  removed: ManagedSourceRecord;
 }
 
 export interface GitHookStatus {

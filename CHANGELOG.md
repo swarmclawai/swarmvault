@@ -1,7 +1,11 @@
 # Changelog
 
-## 0.1.34
+## 0.2.0
 
+- Added first-class managed sources with `swarmvault source add|list|reload|delete`, a persistent `state/sources.json` registry, transient source workspaces under `state/sources/`, and auto-generated source briefs under `wiki/outputs/source-briefs/`
+- Added public GitHub repo root URL import for managed sources, using shallow checkouts plus the existing repo-aware ingest, compile, graph, and search pipeline instead of a separate remote-repo path
+- Added bounded same-domain docs crawl for recurring documentation sources, with docs-hub detection, crawl limits, localized page ingest, and deterministic fallback briefs when provider-backed briefing is unavailable
+- Expanded deterministic tests and installed-package heuristic smoke to cover managed local directory sources, docs crawl, source briefs, and the real tarball-installed `source` workflow
 - Upgraded the published ClawHub/OpenClaw skill from a single-file instruction bundle into a verification-ready text package with a dedicated README, examples, references, troubleshooting guide, and validation prompts
 - Added repo-level ClawHub skill validation plus a publish helper so `pnpm check` verifies the skill bundle shape, version sync, metadata, and listing content before release
 - Added explicit ClawHub install, update, and post-publish inspect guidance to the OSS docs and site install docs so the skill release flow stays aligned with the real published CLI workflow

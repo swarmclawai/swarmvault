@@ -300,6 +300,7 @@ export function resolvePaths(
   const stateDir = path.resolve(rootDir, effective.workspace.stateDir);
   const schedulesDir = path.join(stateDir, "schedules");
   const watchDir = path.join(stateDir, "watch");
+  const managedSourcesDir = path.join(stateDir, "sources");
   const agentDir = path.resolve(rootDir, effective.workspace.agentDir);
   const inboxDir = path.resolve(rootDir, effective.workspace.inboxDir);
 
@@ -335,6 +336,8 @@ export function resolvePaths(
     watchDir,
     watchStatusPath: path.join(watchDir, "status.json"),
     pendingSemanticRefreshPath: path.join(watchDir, "pending-semantic-refresh.json"),
+    managedSourcesPath: path.join(stateDir, "sources.json"),
+    managedSourcesDir,
     configPath
   };
 }
@@ -368,6 +371,7 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
     ensureDir(paths.stateDir),
     ensureDir(paths.schedulesDir),
     ensureDir(paths.watchDir),
+    ensureDir(paths.managedSourcesDir),
     ensureDir(paths.sessionsDir),
     ensureDir(paths.approvalsDir),
     ensureDir(paths.agentDir),

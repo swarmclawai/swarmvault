@@ -23,6 +23,10 @@ Installed commands:
 mkdir my-vault
 cd my-vault
 swarmvault init --obsidian
+swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://example.com/docs/getting-started
+swarmvault source list
+swarmvault source reload --all
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault ingest ./repo
@@ -63,6 +67,26 @@ Create a workspace with:
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
+### `swarmvault source add|list|reload|delete`
+
+Manage recurring source roots through a registry-backed workflow.
+
+- `source add <input>` supports local directories, public GitHub repo root URLs such as `https://github.com/karpathy/micrograd`, and docs/wiki/help/reference/tutorial hubs
+- by default `source add` registers the source, syncs it into the vault, runs one compile, and writes a source brief to `wiki/outputs/source-briefs/<source-id>.md`
+- `source list` shows every managed source with its kind, status, and current brief path
+- `source reload [id]` re-syncs one source, or use `--all` to refresh everything in the registry and compile once
+- `source delete <id>` unregisters the source and removes transient sync state under `state/sources/<id>/`, but leaves canonical `raw/`, `wiki/`, and saved output artifacts intact
+
+Useful flags:
+
+- `--all`
+- `--no-compile`
+- `--no-brief`
+- `--max-pages <n>`
+- `--max-depth <n>`
+
+Managed sources write registry state to `state/sources.json`. Local directory entries remain compatible with `watch --repo`; remote GitHub and docs-crawl sources are manual `source reload` sources in this release.
+
 ### `swarmvault ingest <path-or-url>`
 
 Ingest a local file path, directory path, or URL into immutable source storage and write manifests to `state/manifests/`.
@@ -70,6 +94,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - local directories recurse by default
 - directory ingest respects `.gitignore` unless you pass `--no-gitignore`
 - repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
+- use `source add` instead when the same local directory, public GitHub repo root, or docs hub should stay registered and reloadable
 - URL ingest still localizes remote image references by default
 - local file ingest supports markdown, text, reStructuredText, HTML, PDF, DOCX, images, and code
 - code-aware directory ingest currently covers JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, PowerShell, Kotlin, and Scala
@@ -102,6 +127,7 @@ Capture supported URLs through a normalized markdown layer before ingesting them
 - unsupported URLs fall back to generic URL ingest instead of failing
 - optional metadata: `--author <name>` and `--contributor <name>`
 - normalized captures record fields such as `source_type`, `source_url`, `canonical_url`, `title`, `authors`, `published_at`, `updated_at`, `doi`, and `tags` when available
+- use `source add` instead when the URL is a public GitHub repo root or a docs hub that should stay synced over time
 
 ### `swarmvault inbox import [dir]`
 

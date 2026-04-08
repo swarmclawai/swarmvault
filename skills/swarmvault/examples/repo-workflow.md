@@ -6,7 +6,7 @@ Use this when the user wants to compile a codebase into durable module pages, gr
 
 ```bash
 swarmvault init --obsidian
-swarmvault ingest ./src --repo-root .
+swarmvault source add https://github.com/karpathy/micrograd
 swarmvault compile --approve
 swarmvault review list
 swarmvault review show <approval-id> --diff
@@ -18,6 +18,7 @@ swarmvault graph serve
 ## What To Check
 
 - `wiki/code/` contains module pages
+- `wiki/outputs/source-briefs/` contains a repo onboarding brief
 - `state/code-index.json` exists for repo-aware symbol/import resolution
 - `state/approvals/` contains staged review bundles when `--approve` is used
 - `wiki/graph/report.md` highlights the important modules, bridge nodes, and contradictions

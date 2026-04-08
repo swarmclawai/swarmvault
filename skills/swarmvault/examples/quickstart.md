@@ -7,8 +7,7 @@ Use this when the user needs the shortest path from install to a working vault.
 ```bash
 npm install -g @swarmvaultai/cli
 swarmvault init --obsidian
-swarmvault ingest ./notes.md
-swarmvault compile
+swarmvault source add https://github.com/karpathy/micrograd
 swarmvault query "What are the key concepts?"
 swarmvault graph serve
 ```
@@ -16,7 +15,9 @@ swarmvault graph serve
 ## What To Check
 
 - `swarmvault.schema.md` exists and reflects the vault contract
+- `state/sources.json` contains the managed source registry entry
 - `wiki/graph/report.md` exists after compile
+- `wiki/outputs/source-briefs/` contains a source brief
 - `wiki/outputs/` contains the saved query answer
 - `state/graph.json` and `state/search.sqlite` exist
 

@@ -19,6 +19,7 @@ import {
 } from "./extraction.js";
 import { appendLogEntry } from "./logs.js";
 import { classifyRepoPath, normalizeExtractClasses } from "./source-classification.js";
+import { readManagedSourcesIfPresent } from "./source-registry.js";
 import type {
   AddOptions,
   AddResult,
@@ -498,7 +499,7 @@ function isReservedTestHostname(hostname: string): boolean {
   return lower.endsWith(".test") || lower.endsWith(".example") || lower.endsWith(".invalid");
 }
 
-async function validateUrlSafety(url: string): Promise<void> {
+export async function validateUrlSafety(url: string): Promise<void> {
   const parsed = new URL(url);
   if (!["http:", "https:"].includes(parsed.protocol)) {
     throw new Error(`Blocked protocol: ${parsed.protocol}`);
@@ -1410,6 +1411,15 @@ function pendingSemanticRefreshId(changeType: "added" | "modified" | "removed", 
 }
 
 export async function listTrackedRepoRoots(rootDir: string): Promise<string[]> {
+  const managedSources = await readManagedSourcesIfPresent(rootDir).catch(() => null);
+  if (managedSources && managedSources.length > 0) {
+    const directoryRoots = managedSources
+      .filter((source) => source.kind === "directory" && source.path)
+      .map((source) => path.resolve(source.path as string));
+    if (directoryRoots.length > 0) {
+      return [...new Set(directoryRoots)].sort((left, right) => left.localeCompare(right));
+    }
+  }
   const manifests = await listManifests(rootDir);
   return [...new Set(manifests.map((manifest) => repoRootFromManifest(manifest)).filter((item): item is string => Boolean(item)))].sort(
     (left, right) => left.localeCompare(right)
@@ -2037,7 +2047,11 @@ function isSupportedInboxKind(sourceKind: SourceManifest["sourceKind"]): boolean
   return ["markdown", "text", "html", "pdf", "docx", "image"].includes(sourceKind);
 }
 
-export async function ingestInput(rootDir: string, input: string, options?: IngestOptions): Promise<SourceManifest> {
+export async function ingestInputDetailed(
+  rootDir: string,
+  input: string,
+  options?: IngestOptions
+): Promise<{ manifest: SourceManifest; isNew: boolean; wasUpdated: boolean }> {
   const { paths } = await initWorkspace(rootDir);
   const normalizedOptions = normalizeIngestOptions(options);
   const absoluteInput = path.resolve(rootDir, input);
@@ -2049,8 +2063,11 @@ export async function ingestInput(rootDir: string, input: string, options?: Inge
     ? await prepareUrlInput(rootDir, input, normalizedOptions)
     : await prepareFileInput(rootDir, absoluteInput, repoRoot);
 
-  const result = await persistPreparedInput(rootDir, prepared, paths);
-  return result.manifest;
+  return await persistPreparedInput(rootDir, prepared, paths);
+}
+
+export async function ingestInput(rootDir: string, input: string, options?: IngestOptions): Promise<SourceManifest> {
+  return (await ingestInputDetailed(rootDir, input, options)).manifest;
 }
 
 export async function addInput(rootDir: string, input: string, options: AddOptions = {}): Promise<AddResult> {
@@ -2270,6 +2287,16 @@ export async function listManifests(rootDir: string): Promise<SourceManifest[]> 
   );
 
   return manifests.filter((manifest): manifest is SourceManifest => Boolean(manifest));
+}
+
+export async function removeManifestBySourceId(rootDir: string, sourceId: string): Promise<SourceManifest | null> {
+  const { paths } = await initWorkspace(rootDir);
+  const manifest = await readJsonFile<SourceManifest>(path.join(paths.manifestsDir, `${sourceId}.json`));
+  if (!manifest) {
+    return null;
+  }
+  await removeManifestArtifacts(rootDir, manifest, paths);
+  return manifest;
 }
 
 export async function readExtractedText(rootDir: string, manifest: SourceManifest): Promise<string | undefined> {

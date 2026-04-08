@@ -15,6 +15,19 @@ Expected shape:
 - mentions `wiki/` and `state/`
 - prefers `wiki/graph/report.md` once compile exists
 
+## Managed source prompt
+
+Prompt:
+
+> Register this public GitHub repo as a recurring source, sync it, and tell me what I should read first.
+
+Expected shape:
+
+- uses `swarmvault source add https://github.com/karpathy/micrograd` or the supplied repo root URL
+- mentions `state/sources.json`
+- points at `wiki/outputs/source-briefs/` and `wiki/graph/report.md`
+- treats `source list` and `source reload --all` as the maintenance path
+
 ## Repo understanding prompt
 
 Prompt:

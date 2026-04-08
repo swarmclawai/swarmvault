@@ -11,6 +11,10 @@ swarmvault --version
 ## Ingest and Capture
 
 ```bash
+swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source list
+swarmvault source reload --all
+swarmvault source delete <source-id>
 swarmvault ingest <path-or-url>
 swarmvault ingest <directory> --repo-root .
 swarmvault add <url-or-doi-or-arxiv-id>

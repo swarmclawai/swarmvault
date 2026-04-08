@@ -9,6 +9,7 @@ import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addInput,
+  addManagedSource,
   benchmarkVault,
   compileVault,
   createMcpServer,
@@ -1797,10 +1798,15 @@ describe("swarmvault workflow", () => {
       "utf8"
     );
 
-    const result = await ingestDirectory(rootDir, "repo");
-    const guideManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("docs/guide.md"));
+    await addManagedSource(rootDir, path.join(rootDir, "repo"));
+    const guideManifest = (
+      await Promise.all(
+        (
+          await fs.readdir(path.join(rootDir, "state", "manifests"))
+        ).map(async (name) => JSON.parse(await fs.readFile(path.join(rootDir, "state", "manifests", name), "utf8")))
+      )
+    ).find((manifest) => manifest.originalPath?.endsWith("docs/guide.md"));
     expect(guideManifest).toBeTruthy();
-    await compileVault(rootDir);
 
     await fs.writeFile(
       path.join(rootDir, "repo", "docs", "guide.md"),
@@ -1810,7 +1816,7 @@ describe("swarmvault workflow", () => {
 
     const cycle = await runWatchCycle(rootDir, { repo: true, debounceMs: 50 });
     expect(cycle.pendingSemanticRefreshCount).toBe(1);
-    expect(cycle.pendingSemanticRefreshPaths.some((entry) => entry.endsWith("repo/docs/guide.md"))).toBe(true);
+    expect(cycle.pendingSemanticRefreshPaths.some((entry) => entry.endsWith("docs/guide.md"))).toBe(true);
 
     const watchStatus = await getWatchStatus(rootDir);
     expect(watchStatus.pendingSemanticRefresh).toHaveLength(1);
