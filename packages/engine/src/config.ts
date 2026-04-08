@@ -28,6 +28,8 @@ const providerConfigSchema = z.object({
   apiStyle: z.enum(["responses", "chat"]).optional()
 });
 
+const sourceClassSchema = z.enum(["first_party", "third_party", "resource", "generated"]);
+
 const scheduleTriggerSchema = z
   .object({
     cron: z.string().min(1).optional(),
@@ -106,7 +108,8 @@ const vaultConfigSchema = z.object({
     queryProvider: z.string().min(1),
     lintProvider: z.string().min(1),
     visionProvider: z.string().min(1),
-    imageProvider: z.string().min(1).optional()
+    imageProvider: z.string().min(1).optional(),
+    embeddingProvider: z.string().min(1).optional()
   }),
   viewer: z.object({
     port: z.number().int().positive()
@@ -143,6 +146,12 @@ const vaultConfigSchema = z.object({
       enabled: z.boolean().optional(),
       questions: z.array(z.string().min(1)).optional(),
       maxQuestions: z.number().int().positive().optional()
+    })
+    .optional(),
+  repoAnalysis: z
+    .object({
+      classifyGlobs: z.partialRecord(sourceClassSchema, z.array(z.string().min(1))).optional(),
+      extractClasses: z.array(sourceClassSchema).optional()
     })
     .optional(),
   webSearch: z
@@ -193,6 +202,10 @@ export function defaultVaultConfig(): VaultConfig {
       enabled: true,
       questions: [],
       maxQuestions: 3
+    },
+    repoAnalysis: {
+      classifyGlobs: {},
+      extractClasses: ["first_party"]
     }
   };
 }
@@ -298,6 +311,7 @@ export function resolvePaths(
     searchDbPath: path.join(stateDir, "search.sqlite"),
     compileStatePath: path.join(stateDir, "compile-state.json"),
     codeIndexPath: path.join(stateDir, "code-index.json"),
+    embeddingsPath: path.join(stateDir, "embeddings.json"),
     benchmarkPath: path.join(stateDir, "benchmark.json"),
     jobsLogPath: path.join(stateDir, "jobs.ndjson"),
     sessionsDir: path.join(stateDir, "sessions"),

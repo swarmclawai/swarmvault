@@ -65,6 +65,7 @@ export function App() {
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [communityFilter, setCommunityFilter] = useState<string>("all");
   const [sourceTypeFilter, setSourceTypeFilter] = useState<string>("all");
+  const [sourceClassFilter, setSourceClassFilter] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ViewerSearchResult[]>([]);
   const [graphReport, setGraphReport] = useState<ViewerGraphReport | null>(null);
@@ -104,6 +105,9 @@ export function App() {
     graph?.pages
       ?.flatMap((page) => (page.kind === "source" && page.sourceType ? [page.sourceType] : []))
       .sort((left, right) => left.localeCompare(right)) ?? []
+  );
+  const sourceClassOptions = uniqueStrings(
+    graph?.pages?.flatMap((page) => (page.sourceClass ? [page.sourceClass] : [])).sort((left, right) => left.localeCompare(right)) ?? []
   );
   const communityOptions = uniqueStrings((graph?.communities ?? []).map((community) => community.id)).sort((left, right) =>
     left.localeCompare(right)
@@ -202,7 +206,10 @@ export function App() {
     }
 
     const allowedNodeIds = new Set(
-      graph.nodes.filter((node) => communityFilter === "all" || node.communityId === communityFilter).map((node) => node.id)
+      graph.nodes
+        .filter((node) => communityFilter === "all" || node.communityId === communityFilter)
+        .filter((node) => sourceClassFilter === "all" || (node.sourceClass ?? "") === sourceClassFilter)
+        .map((node) => node.id)
     );
     const pathNodeSet = new Set(pathResult?.nodeIds ?? []);
     const pathEdgeSet = new Set(pathResult?.edgeIds ?? []);
@@ -333,7 +340,7 @@ export function App() {
 
     cyRef.current = cy;
     return () => cy.destroy();
-  }, [communityFilter, edgeStatusFilter, graph, pathResult]);
+  }, [communityFilter, edgeStatusFilter, graph, pathResult, sourceClassFilter]);
 
   useEffect(() => {
     if (!selected) {
@@ -372,7 +379,8 @@ export function App() {
       kind: kindFilter,
       status: pageStatusFilter,
       project: projectFilter,
-      sourceType: sourceTypeFilter
+      sourceType: sourceTypeFilter,
+      sourceClass: sourceClassFilter
     })
       .then((nextResults) => {
         if (!cancelled) {
@@ -391,7 +399,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [deferredQuery, kindFilter, pageStatusFilter, projectFilter, sourceTypeFilter]);
+  }, [deferredQuery, kindFilter, pageStatusFilter, projectFilter, sourceTypeFilter, sourceClassFilter]);
 
   useEffect(() => {
     if (!selected?.pageId) {
@@ -581,6 +589,17 @@ export function App() {
             </select>
           </label>
           <label className="filter">
+            Source class
+            <select value={sourceClassFilter} onChange={(event) => setSourceClassFilter(event.target.value)}>
+              <option value="all">All</option>
+              {sourceClassOptions.map((sourceClass) => (
+                <option key={sourceClass} value={sourceClass}>
+                  {sourceClass}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter">
             Community
             <select value={communityFilter} onChange={(event) => setCommunityFilter(event.target.value)}>
               <option value="all">All</option>
@@ -660,6 +679,22 @@ export function App() {
           <p>
             Nodes {graphReport.overview.nodes} • Edges {graphReport.overview.edges} • Communities {graphReport.overview.communities}
           </p>
+          <p>
+            First-party focus {graphReport.firstPartyOverview.nodes} nodes • {graphReport.firstPartyOverview.edges} edges •{" "}
+            {graphReport.firstPartyOverview.communities} communities
+          </p>
+          {graphReport.warnings.length ? (
+            <div className="linked-pages">
+              <span className="panel-label">Warnings</span>
+              <div className="results">
+                {graphReport.warnings.map((warning) => (
+                  <article key={warning} className="result-card">
+                    <p>{warning}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {graphReport.benchmark ? (
             <p>
               Benchmark {graphReport.benchmark.stale ? "stale" : "fresh"} • final context {graphReport.benchmark.summary.finalContextTokens}{" "}
@@ -824,6 +859,7 @@ export function App() {
                     </span>
                     <strong>{result.title}</strong>
                     {result.sourceType ? <p>Source type: {result.sourceType}</p> : null}
+                    {result.sourceClass ? <p>Source class: {result.sourceClass}</p> : null}
                     <p>{result.projectIds.length ? result.projectIds.join(", ") : "global / unassigned"}</p>
                     <p>{result.snippet}</p>
                   </button>

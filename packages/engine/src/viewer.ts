@@ -158,12 +158,14 @@ export async function startGraphServer(rootDir: string, port?: number): Promise<
       const status = url.searchParams.get("status") ?? "all";
       const project = url.searchParams.get("project") ?? "all";
       const sourceType = url.searchParams.get("sourceType") ?? "all";
+      const sourceClass = url.searchParams.get("sourceClass") ?? "all";
       const results = searchPages(paths.searchDbPath, query, {
         limit: Number.isFinite(limit) ? limit : 10,
         kind,
         status,
         project,
-        sourceType
+        sourceType,
+        sourceClass
       });
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(results));
@@ -328,6 +330,7 @@ export async function exportGraphHtml(rootDir: string, outputPath: string): Prom
             kind: page.kind,
             status: page.status,
             sourceType: page.sourceType,
+            sourceClass: page.sourceClass,
             projectIds: page.projectIds,
             content: loaded.content,
             assets: await Promise.all(

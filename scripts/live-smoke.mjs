@@ -127,6 +127,14 @@ try {
     await assertExists(path.join(workspaceDir, "wiki", "index.md"));
   });
 
+  await runStep("json-notice-suppression", async () => {
+    const result = await runInstalledCliCommand("review-list-json", ["review", "list", "--json"], {
+      cwd: workspaceDir
+    });
+    assert.equal(result.stderr.trim(), "", "interactive notices leaked into a --json command");
+    JSON.parse(result.stdout);
+  });
+
   if (lane === "heuristic") {
     await runStep("inbox-import", async () => {
       await copyInboxBundle();
@@ -386,6 +394,9 @@ try {
       await fs.writeFile(path.join(workspaceDir, ".gitignore"), "apps/alpha/vendor/\n", "utf8");
       await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "src"), { recursive: true });
       await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "vendor"), { recursive: true });
+      await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "Pods"), { recursive: true });
+      await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "App.xcassets"), { recursive: true });
+      await fs.mkdir(path.join(workspaceDir, "apps", "alpha", "dist"), { recursive: true });
       await fs.writeFile(
         path.join(workspaceDir, "apps", "alpha", "src", "util.ts"),
         [
@@ -506,6 +517,9 @@ try {
         ].join("\n"),
         "utf8"
       );
+      await fs.writeFile(path.join(workspaceDir, "apps", "alpha", "Pods", "vendor.ts"), "export const vendorValue = 1;\n", "utf8");
+      await fs.writeFile(path.join(workspaceDir, "apps", "alpha", "App.xcassets", "Reference.pdf"), createSimplePdf("Bundled PDF resource"));
+      await fs.writeFile(path.join(workspaceDir, "apps", "alpha", "dist", "generated.js"), "console.log('generated');\n", "utf8");
       await fs.writeFile(path.join(workspaceDir, "apps", "alpha", "vendor", "ignored.py"), "print('ignored')\n", "utf8");
 
       const directoryIngest = await runCliJson(["ingest", "apps/alpha", "--repo-root", "."]);
@@ -519,6 +533,43 @@ try {
           ),
         "directory ingest did not respect ignore rules"
       );
+      assert.ok(
+        Array.isArray(directoryIngest.skipped) &&
+          directoryIngest.skipped.some(
+            (entry) => entry.path.endsWith("apps/alpha/Pods/vendor.ts") && entry.reason === "source_class:third_party"
+          ),
+        "directory ingest did not classify Pods content as third-party"
+      );
+      assert.ok(
+        Array.isArray(directoryIngest.skipped) &&
+          directoryIngest.skipped.some(
+            (entry) => entry.path.endsWith("apps/alpha/App.xcassets/Reference.pdf") && entry.reason === "source_class:resource"
+          ),
+        "directory ingest did not classify xcassets PDFs as resources"
+      );
+      assert.ok(
+        Array.isArray(directoryIngest.skipped) &&
+          directoryIngest.skipped.some(
+            (entry) => entry.path.endsWith("apps/alpha/dist/generated.js") && entry.reason === "source_class:generated"
+          ),
+        "directory ingest did not classify build output as generated"
+      );
+
+      const expandedIngest = await runCliJson([
+        "ingest",
+        "apps/alpha",
+        "--repo-root",
+        ".",
+        "--include-third-party",
+        "--include-resources",
+        "--include-generated"
+      ]);
+      const expandedByRepoPath = new Map(
+        [...expandedIngest.imported, ...expandedIngest.updated].map((manifest) => [manifest.repoRelativePath, manifest])
+      );
+      assert.equal(expandedByRepoPath.get("apps/alpha/Pods/vendor.ts")?.sourceClass, "third_party", "expanded repo ingest did not retain the third-party source class");
+      assert.equal(expandedByRepoPath.get("apps/alpha/App.xcassets/Reference.pdf")?.sourceClass, "resource", "expanded repo ingest did not retain the resource source class");
+      assert.equal(expandedByRepoPath.get("apps/alpha/dist/generated.js")?.sourceClass, "generated", "expanded repo ingest did not retain the generated source class");
 
       const manifestByRepoPath = new Map(directoryIngest.imported.map((manifest) => [manifest.repoRelativePath, manifest]));
       const util = manifestByRepoPath.get("apps/alpha/src/util.ts");
@@ -562,10 +613,90 @@ try {
       assert.ok(codeIndex.entries.some((entry) => entry.language === "c"), "code-index did not record the C module");
       assert.ok(codeIndex.entries.some((entry) => entry.language === "cpp"), "code-index did not record the C++ module");
 
+      const graphReportArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, "wiki", "graph", "report.json"), "utf8"));
+      assert.ok(graphReportArtifact.firstPartyOverview.nodes < graphReportArtifact.overview.nodes, "graph report did not focus first-party content separately");
+      assert.ok(graphReportArtifact.sourceClassBreakdown.third_party.sources > 0, "graph report did not count third-party sources");
+      assert.ok(graphReportArtifact.sourceClassBreakdown.resource.sources > 0, "graph report did not count resource sources");
+      assert.ok(graphReportArtifact.sourceClassBreakdown.generated.sources > 0, "graph report did not count generated sources");
+      assert.ok(Array.isArray(graphReportArtifact.warnings) && graphReportArtifact.warnings.length > 0, "graph report did not emit large-repo/source-class warnings");
+
       const graphConfig = JSON.parse(await fs.readFile(path.join(workspaceDir, ".obsidian", "graph.json"), "utf8"));
       assert.ok(
         Array.isArray(graphConfig.colorGroups) && graphConfig.colorGroups.some((group) => group.query === "tag:#project/alpha"),
         "obsidian graph config did not include project tag colors"
+      );
+    });
+
+    await runStep("semantic-graph-query", async () => {
+      await fs.writeFile(
+        path.join(workspaceDir, "semantic-provider.mjs"),
+        [
+          "export async function createAdapter(id, config) {",
+          "  function vectorFor(text) {",
+          "    const normalized = String(text).toLowerCase();",
+          "    if (normalized.includes('durable memory') || normalized.includes('persistent context') || normalized.includes('compounding memory')) {",
+          "      return [1, 0, 0];",
+          "    }",
+          "    if (normalized.includes('review queue')) {",
+          "      return [0, 1, 0];",
+          "    }",
+          "    return [0, 0, 1];",
+          "  }",
+          "  return {",
+          "    id,",
+          "    type: 'custom',",
+          "    model: config.model,",
+          "    capabilities: new Set(config.capabilities ?? ['chat', 'structured', 'embeddings']),",
+          "    async generateText() { return { text: 'ok' }; },",
+          "    async generateStructured(_request, schema) {",
+          "      return schema.parse({",
+          "        title: 'semantic',",
+          "        summary: 'semantic',",
+          "        concepts: [],",
+          "        entities: [],",
+          "        claims: [],",
+          "        questions: []",
+          "      });",
+          "    },",
+          "    async embedTexts(texts) {",
+          "      return texts.map((text) => vectorFor(text));",
+          "    }",
+          "  };",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+
+      await updateConfig((config) => {
+        config.providers.semanticTest = {
+          type: "custom",
+          model: "semantic-test",
+          module: "./semantic-provider.mjs",
+          capabilities: ["chat", "structured", "embeddings"]
+        };
+        config.tasks.embeddingProvider = "semanticTest";
+      });
+
+      await fs.writeFile(path.join(workspaceDir, "semantic-alpha.md"), "# Semantic Alpha\n\nDurable memory keeps agent context alive.\n", "utf8");
+      await fs.writeFile(path.join(workspaceDir, "semantic-beta.md"), "# Semantic Beta\n\nPersistent context helps an agent resume prior work.\n", "utf8");
+      await runCliJson(["ingest", "semantic-alpha.md"]);
+      await runCliJson(["ingest", "semantic-beta.md"]);
+      await runCliJson(["compile"]);
+
+      await assertExists(path.join(workspaceDir, "state", "embeddings.json"));
+      const graph = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "graph.json"), "utf8"));
+      assert.ok(
+        graph.edges.some((edge) => edge.relation === "semantically_similar_to" && edge.similarityBasis === "embeddings"),
+        "compile did not record an embedding-backed similarity edge"
+      );
+
+      const semanticQuery = await runCliJson(["graph", "query", "compounding memory"]);
+      assert.ok(
+        Array.isArray(semanticQuery.pageIds) &&
+          semanticQuery.pageIds.some((pageId) => pageId.startsWith("source:semantic-alpha-") || pageId.startsWith("source:semantic-beta-")) &&
+          Array.isArray(semanticQuery.visitedEdgeIds) &&
+          semanticQuery.visitedEdgeIds.some((edgeId) => edgeId.startsWith("similar-embed:")),
+        "semantic graph query did not surface embedding-backed source pages and edges"
       );
     });
 

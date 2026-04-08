@@ -55,6 +55,7 @@ describe("provider registry", () => {
       expect(provider.type).toBe(testCase.type);
       expect(provider.capabilities.has("chat")).toBe(true);
       expect(provider.capabilities.has("structured")).toBe(true);
+      expect(provider.capabilities.has("embeddings")).toBe(true);
       expect((provider as { baseUrl?: string }).baseUrl).toBe(testCase.expectedBaseUrl);
       expect((provider as { apiKey?: string }).apiKey).toBe(testCase.expectedKey);
       expect((provider as { apiStyle?: string }).apiStyle).toBe("chat");

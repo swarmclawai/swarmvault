@@ -276,7 +276,8 @@ function buildSemanticSimilarityEdges(
             [...left.sourceIds, ...right.sourceIds].sort((a, b) => a.localeCompare(b)),
             (value) => value
           ),
-          similarityReasons: [...reasons.keys()].sort((a, b) => a.localeCompare(b))
+          similarityReasons: [...reasons.keys()].sort((a, b) => a.localeCompare(b)),
+          similarityBasis: "feature_overlap" as const
         }
       ];
     })
@@ -370,10 +371,13 @@ function buildModuleFormHyperedges(graph: GraphArtifact): GraphHyperedge[] {
 export function enrichGraph(
   graph: Omit<GraphArtifact, "hyperedges">,
   manifests: SourceManifest[],
-  analyses: SourceAnalysis[]
+  analyses: SourceAnalysis[],
+  extraSimilarityEdges: GraphEdge[] = []
 ): Pick<GraphArtifact, "edges" | "hyperedges"> {
   const similarityEdges = buildSemanticSimilarityEdges(graph.nodes, graph.edges, manifests, analyses);
-  const enrichedEdges = [...graph.edges, ...similarityEdges].sort((left, right) => left.id.localeCompare(right.id));
+  const enrichedEdges = uniqueBy([...graph.edges, ...similarityEdges, ...extraSimilarityEdges], (edge) => edge.id).sort((left, right) =>
+    left.id.localeCompare(right.id)
+  );
   const hyperedges = uniqueBy(
     [
       ...buildTopicHyperedges({ ...graph, edges: enrichedEdges, hyperedges: [] }),

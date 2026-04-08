@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import process from "node:process";
+import type { SourceClass } from "@swarmvaultai/engine";
 import {
   acceptApproval,
   addInput,
@@ -40,6 +41,7 @@ import {
   watchVault
 } from "@swarmvaultai/engine";
 import { Command, Option } from "commander";
+import { collectCliNotices } from "./notices.js";
 
 const program = new Command();
 const CLI_VERSION = readCliVersion();
@@ -53,9 +55,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.25";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.26";
   } catch {
-    return "0.1.25";
+    return "0.1.26";
   }
 }
 
@@ -74,6 +76,34 @@ function log(message: string): void {
     process.stdout.write(`${message}\n`);
   }
 }
+
+function emitNotice(message: string): void {
+  process.stderr.write(`[swarmvault] ${message}\n`);
+}
+
+function getCommandPath(command: Command): string[] {
+  const names: string[] = [];
+  let current: Command | null = command;
+  while (current) {
+    const name = current.name();
+    if (name && name !== "swarmvault") {
+      names.unshift(name);
+    }
+    current = current.parent ?? null;
+  }
+  return names;
+}
+
+program.hook("postAction", async (_thisCommand, actionCommand) => {
+  const notices = await collectCliNotices({
+    commandPath: getCommandPath(actionCommand),
+    currentVersion: CLI_VERSION,
+    json: isJson()
+  });
+  for (const notice of notices) {
+    emitNotice(notice);
+  }
+});
 
 program
   .command("init")
@@ -99,6 +129,9 @@ program
   .option("--include <glob...>", "Only ingest files matching one or more glob patterns")
   .option("--exclude <glob...>", "Skip files matching one or more glob patterns")
   .option("--max-files <n>", "Maximum number of files to ingest from a directory")
+  .option("--include-third-party", "Also ingest repo files classified as third-party", false)
+  .option("--include-resources", "Also ingest repo files classified as resources", false)
+  .option("--include-generated", "Also ingest repo files classified as generated output", false)
   .option("--no-gitignore", "Ignore .gitignore rules when ingesting a directory")
   .action(
     async (
@@ -110,12 +143,21 @@ program
         include?: string[];
         exclude?: string[];
         maxFiles?: string;
+        includeThirdParty?: boolean;
+        includeResources?: boolean;
+        includeGenerated?: boolean;
         gitignore?: boolean;
       }
     ) => {
       const maxAssetSize =
         typeof options.maxAssetSize === "string" && options.maxAssetSize.trim() ? Number.parseInt(options.maxAssetSize, 10) : undefined;
       const maxFiles = typeof options.maxFiles === "string" && options.maxFiles.trim() ? Number.parseInt(options.maxFiles, 10) : undefined;
+      const extractClasses: SourceClass[] = [
+        "first_party",
+        ...(options.includeThirdParty ? (["third_party"] as const) : []),
+        ...(options.includeResources ? (["resource"] as const) : []),
+        ...(options.includeGenerated ? (["generated"] as const) : [])
+      ];
       const commonOptions = {
         includeAssets: options.includeAssets,
         maxAssetSize: Number.isFinite(maxAssetSize) ? maxAssetSize : undefined,
@@ -123,7 +165,8 @@ program
         include: options.include,
         exclude: options.exclude,
         maxFiles: Number.isFinite(maxFiles) ? maxFiles : undefined,
-        gitignore: options.gitignore
+        gitignore: options.gitignore,
+        extractClasses
       };
       const directoryResult = !/^https?:\/\//i.test(input)
         ? await import("node:fs/promises").then((fs) =>

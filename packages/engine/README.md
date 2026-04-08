@@ -160,10 +160,11 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 - `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local file path or URL
 - `addInput(rootDir, input, { author, contributor })` captures supported URLs into normalized markdown before ingesting them, or falls back to generic URL ingest
-- `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore })` recursively ingests a local directory as a repo-aware code/content source tree
+- `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore, extractClasses })` recursively ingests a local directory as a repo-aware code/content source tree
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files and browser-clipper style bundles
 - JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
+- repo-aware manifests, graph nodes, and graph pages can also carry `sourceClass` so first-party, third-party, resource, and generated material can be filtered and reported separately
 - HTML and markdown URL ingests localize remote image references into `raw/assets/<sourceId>/` by default and rewrite the stored markdown to local relative paths
 
 ### Compile + Query
@@ -171,10 +172,11 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `compileVault(rootDir, { approve })` writes wiki pages, graph data, and search state using the vault schema as guidance, or stages a review bundle
 - compile also writes graph orientation pages such as `wiki/graph/report.md`, `wiki/graph/report.json`, and `wiki/graph/communities/<community>.md`
 - `benchmarkVault(rootDir, { questions })` writes `state/benchmark.json` and folds the latest benchmark summary into `wiki/graph/report.md` and `wiki/graph/report.json`
+- semantic graph query and embedding-backed similarity enrichment cache vectors under `state/embeddings.json` so graph-semantic refresh stays incremental
 - `queryVault(rootDir, { question, save, format, review })` answers against the compiled vault using the same schema layer and saves by default
 - `exploreVault(rootDir, { question, steps, format, review })` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
-- `queryGraphVault(rootDir, question, { traversal, budget })` runs deterministic local graph search without a model provider and includes matching group patterns when relevant
+- `queryGraphVault(rootDir, question, { traversal, budget })` runs deterministic local graph search, preferring semantic seed matches from `tasks.embeddingProvider` when configured and falling back to lexical search plus matching group patterns otherwise
 - `pathGraphVault(rootDir, from, to)` returns the shortest graph path between two targets
 - `explainGraphVault(rootDir, target)` returns node, community, neighbor, provenance, and group-pattern details
 - `listGraphHyperedges(rootDir, target?, limit?)` returns graph hyperedges globally or for a specific node/page target

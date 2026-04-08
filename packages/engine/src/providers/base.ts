@@ -26,6 +26,10 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
 
   public abstract generateText(request: GenerationRequest): Promise<GenerationResponse>;
 
+  public async embedTexts(_texts: string[]): Promise<number[][]> {
+    throw new Error(`Provider ${this.id} does not support embeddings.`);
+  }
+
   public async generateImage(_request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
     throw new Error(`Provider ${this.id} does not support image generation.`);
   }

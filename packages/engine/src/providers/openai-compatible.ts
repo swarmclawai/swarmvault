@@ -183,6 +183,38 @@ export class OpenAiCompatibleProviderAdapter extends BaseProviderAdapter {
     return schema.parse(stripNullObjectProperties(JSON.parse(extractJson(text))));
   }
 
+  public async embedTexts(texts: string[]): Promise<number[][]> {
+    if (!texts.length) {
+      return [];
+    }
+
+    const response = await fetch(`${this.baseUrl}/embeddings`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...buildAuthHeaders(this.apiKey),
+        ...this.headers
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: texts
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Provider ${this.id} failed: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<{ embedding?: number[] }>;
+    };
+    const vectors = payload.data?.map((item) => item.embedding ?? []) ?? [];
+    if (vectors.length !== texts.length || vectors.some((vector) => !Array.isArray(vector) || vector.length === 0)) {
+      throw new Error(`Provider ${this.id} returned invalid embedding data.`);
+    }
+    return vectors;
+  }
+
   public async generateImage(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
     const encodedAttachments = await this.encodeAttachments(request.attachments);
     const response = await fetch(`${this.baseUrl}/images/generations`, {

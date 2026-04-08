@@ -1,5 +1,6 @@
 import matter from "gray-matter";
 import { modulePageTitle } from "./code-analysis.js";
+import { filterGraphBySourceClass, sourceClassBreakdown } from "./embeddings.js";
 import { describeSimilarityReasons } from "./graph-enrichment.js";
 import { shortestGraphPath } from "./graph-tools.js";
 import type {
@@ -18,6 +19,7 @@ import type {
   PageManager,
   PageStatus,
   SourceAnalysis,
+  SourceClass,
   SourceManifest
 } from "./types.js";
 import { normalizeWhitespace, slugify, uniqueBy } from "./utils.js";
@@ -37,6 +39,7 @@ export interface ManagedGraphPageMetadata extends ManagedPageMetadata {
 export interface GeneratedPageDecorations {
   projectIds?: string[];
   extraTags?: string[];
+  sourceClass?: SourceClass;
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -148,6 +151,7 @@ export function buildSourcePage(
     kind: "source",
     title: analysis.title,
     ...(manifest.sourceType ? { source_type: manifest.sourceType } : {}),
+    ...(manifest.sourceClass ? { source_class: manifest.sourceClass } : {}),
     tags: decoratedTags(analysis.code ? ["source", "code"] : ["source"], decorations),
     source_ids: [manifest.sourceId],
     project_ids: decorations?.projectIds ?? [],
@@ -172,6 +176,7 @@ export function buildSourcePage(
     `Source ID: \`${manifest.sourceId}\``,
     manifest.url ? `Source URL: ${manifest.url}` : `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
     ...(manifest.sourceType ? [`Source Type: \`${manifest.sourceType}\``, ""] : [""]),
+    ...(manifest.sourceClass ? [`Source Class: \`${manifest.sourceClass}\``, ""] : []),
     "",
     "## Summary",
     "",
@@ -224,6 +229,7 @@ export function buildSourcePage(
       title: analysis.title,
       kind: "source",
       sourceType: manifest.sourceType,
+      sourceClass: manifest.sourceClass,
       sourceIds: [manifest.sourceId],
       projectIds: decorations?.projectIds ?? [],
       nodeIds,
@@ -315,6 +321,7 @@ export function buildModulePage(input: {
     page_id: pageId,
     kind: "module",
     title,
+    ...(manifest.sourceClass ? { source_class: manifest.sourceClass } : {}),
     tags: decoratedTags(["module", "code", code.language], { projectIds: input.projectIds, extraTags: input.extraTags }),
     source_ids: [manifest.sourceId],
     project_ids: input.projectIds ?? [],
@@ -347,6 +354,7 @@ export function buildModulePage(input: {
     `Source ID: \`${manifest.sourceId}\``,
     `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
     ...(manifest.repoRelativePath ? [`Repo Path: \`${manifest.repoRelativePath}\``] : []),
+    ...(manifest.sourceClass ? [`Source Class: \`${manifest.sourceClass}\``] : []),
     `Language: \`${code.language}\``,
     ...(code.moduleName ? [`Module Name: \`${code.moduleName}\``] : []),
     ...(code.namespace ? [`Namespace/Package: \`${code.namespace}\``] : []),
@@ -398,6 +406,7 @@ export function buildModulePage(input: {
       path: relativePath,
       title,
       kind: "module",
+      sourceClass: manifest.sourceClass,
       sourceIds: [manifest.sourceId],
       projectIds: input.projectIds ?? [],
       nodeIds,
@@ -444,6 +453,7 @@ export function buildAggregatePage(
     page_id: pageId,
     kind,
     title: name,
+    ...(decorations?.sourceClass ? { source_class: decorations.sourceClass } : {}),
     tags: decoratedTags(metadata.status === "candidate" ? [kind, "candidate"] : [kind], decorations),
     source_ids: sourceIds,
     project_ids: decorations?.projectIds ?? [],
@@ -489,6 +499,7 @@ export function buildAggregatePage(
       path: relativePath,
       title: name,
       kind,
+      sourceClass: decorations?.sourceClass,
       sourceIds,
       projectIds: decorations?.projectIds ?? [],
       nodeIds: [pageId],
@@ -810,16 +821,18 @@ export function buildGraphReportArtifact(input: {
   >;
   graphHash: string;
 }): GraphReportArtifact {
-  const pagesById = new Map(input.graph.pages.map((page) => [page.id, page]));
-  const godNodes = input.graph.nodes
+  const firstPartyGraph = filterGraphBySourceClass(input.graph, "first_party");
+  const reportGraph = firstPartyGraph.nodes.length ? firstPartyGraph : input.graph;
+  const pagesById = new Map(reportGraph.pages.map((page) => [page.id, page]));
+  const godNodes = reportGraph.nodes
     .filter((node) => node.isGodNode)
     .sort((left, right) => (right.degree ?? 0) - (left.degree ?? 0))
     .slice(0, 8);
-  const bridgeNodes = input.graph.nodes
+  const bridgeNodes = reportGraph.nodes
     .filter((node) => (node.bridgeScore ?? 0) > 0)
     .sort((left, right) => (right.bridgeScore ?? 0) - (left.bridgeScore ?? 0))
     .slice(0, 8);
-  const thinCommunities = (input.graph.communities ?? [])
+  const thinCommunities = (reportGraph.communities ?? [])
     .filter((community) => community.nodeIds.length <= 2)
     .map((community) => {
       const page = input.communityPages.find((candidate) => candidate.id === `graph:${community.id}`);
@@ -832,8 +845,19 @@ export function buildGraphReportArtifact(input: {
         title: page?.title
       };
     });
-  const surprisingConnections = topSurprisingConnections(input.graph, pagesById);
-  const groupPatterns = topGroupPatterns(input.graph);
+  const surprisingConnections = topSurprisingConnections(reportGraph, pagesById);
+  const groupPatterns = topGroupPatterns(reportGraph);
+  const breakdown = sourceClassBreakdown(input.graph);
+  const warnings: string[] = [];
+  const nonFirstPartyNodes = input.graph.nodes.length - breakdown.first_party.nodes;
+  if (input.graph.nodes.length >= 1200) {
+    warnings.push(`Large graph detected (${input.graph.nodes.length} nodes). First-party defaults are applied to report highlights.`);
+  }
+  if (nonFirstPartyNodes > 0 && nonFirstPartyNodes / Math.max(1, input.graph.nodes.length) >= 0.25) {
+    warnings.push(
+      `Non-first-party material accounts for ${((nonFirstPartyNodes / Math.max(1, input.graph.nodes.length)) * 100).toFixed(1)}% of graph nodes.`
+    );
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -844,6 +868,14 @@ export function buildGraphReportArtifact(input: {
       pages: input.graph.pages.length,
       communities: input.graph.communities?.length ?? 0
     },
+    firstPartyOverview: {
+      nodes: reportGraph.nodes.length,
+      edges: reportGraph.edges.length,
+      pages: reportGraph.pages.length,
+      communities: reportGraph.communities?.length ?? 0
+    },
+    sourceClassBreakdown: breakdown,
+    warnings,
     benchmark: input.benchmark
       ? {
           generatedAt: input.benchmark.generatedAt,
@@ -949,6 +981,18 @@ export function buildGraphReportPage(input: {
     `- Edges: ${input.report.overview.edges}`,
     `- Pages: ${input.report.overview.pages}`,
     `- Communities: ${input.report.overview.communities}`,
+    `- Default Focus: First-party nodes/pages (${input.report.firstPartyOverview.nodes} nodes, ${input.report.firstPartyOverview.edges} edges, ${input.report.firstPartyOverview.pages} pages).`,
+    "",
+    "## Repo Quality Warnings",
+    "",
+    ...(input.report.warnings.length ? input.report.warnings.map((warning) => `- ${warning}`) : ["- No large-repo warnings."]),
+    "",
+    "## Source Class Breakdown",
+    "",
+    `- First-party: ${input.report.sourceClassBreakdown.first_party.sources} sources, ${input.report.sourceClassBreakdown.first_party.pages} pages, ${input.report.sourceClassBreakdown.first_party.nodes} nodes`,
+    `- Third-party: ${input.report.sourceClassBreakdown.third_party.sources} sources, ${input.report.sourceClassBreakdown.third_party.pages} pages, ${input.report.sourceClassBreakdown.third_party.nodes} nodes`,
+    `- Resources: ${input.report.sourceClassBreakdown.resource.sources} sources, ${input.report.sourceClassBreakdown.resource.pages} pages, ${input.report.sourceClassBreakdown.resource.nodes} nodes`,
+    `- Generated: ${input.report.sourceClassBreakdown.generated.sources} sources, ${input.report.sourceClassBreakdown.generated.pages} pages, ${input.report.sourceClassBreakdown.generated.nodes} nodes`,
     "",
     "## Benchmark Summary",
     "",

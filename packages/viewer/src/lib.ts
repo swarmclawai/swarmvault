@@ -15,6 +15,7 @@ export type ViewerGraphNode = {
   label: string;
   sourceIds: string[];
   projectIds: string[];
+  sourceClass?: string;
   pageId?: string;
   language?: string;
   moduleId?: string;
@@ -54,6 +55,7 @@ export type ViewerGraphPage = {
   kind: string;
   status: string;
   sourceType?: string;
+  sourceClass?: string;
   projectIds: string[];
   content: string;
   assets: ViewerOutputAsset[];
@@ -76,6 +78,7 @@ export type ViewerGraphArtifact = {
     kind: string;
     status: string;
     sourceType?: string;
+    sourceClass?: string;
     projectIds: string[];
     nodeIds: string[];
     backlinks: string[];
@@ -93,6 +96,7 @@ export type ViewerSearchResult = {
   status?: string;
   projectIds: string[];
   sourceType?: string;
+  sourceClass?: string;
 };
 
 export type ViewerPagePayload = {
@@ -244,6 +248,14 @@ export type ViewerGraphReport = {
     pages: number;
     communities: number;
   };
+  firstPartyOverview: {
+    nodes: number;
+    edges: number;
+    pages: number;
+    communities: number;
+  };
+  sourceClassBreakdown: Record<string, { sources: number; pages: number; nodes: number }>;
+  warnings: string[];
   benchmark?: {
     generatedAt: string;
     stale: boolean;
@@ -319,6 +331,7 @@ export type ViewerSearchOptions = {
   status?: string;
   project?: string;
   sourceType?: string;
+  sourceClass?: string;
 };
 
 export async function fetchGraphArtifact(input = "/api/graph", init?: RequestInit): Promise<ViewerGraphArtifact> {
@@ -342,6 +355,7 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
   const status = options.status ?? "all";
   const project = options.project ?? "all";
   const sourceType = options.sourceType ?? "all";
+  const sourceClass = options.sourceClass ?? "all";
   if (embedded) {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) {
@@ -354,6 +368,7 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
         project === "all" ? true : project === "unassigned" ? page.projectIds.length === 0 : page.projectIds.includes(project)
       )
       .filter((page) => (sourceType === "all" ? true : (page.sourceType ?? "") === sourceType))
+      .filter((page) => (sourceClass === "all" ? true : (page.sourceClass ?? "") === sourceClass))
       .map((page) => {
         const haystack = `${page.title}\n${page.content}`.toLowerCase();
         const score = haystack.includes(normalizedQuery) ? haystack.indexOf(normalizedQuery) : Number.POSITIVE_INFINITY;
@@ -366,7 +381,8 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
           kind: page.kind,
           status: page.status,
           projectIds: page.projectIds,
-          sourceType: page.sourceType
+          sourceType: page.sourceType,
+          sourceClass: page.sourceClass
         };
       })
       .filter((page) => Number.isFinite(page.rank))
@@ -380,7 +396,8 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
     kind,
     status,
     project,
-    sourceType
+    sourceType,
+    sourceClass
   });
   const response = await fetch(`/api/search?${params.toString()}`);
   if (!response.ok) {
@@ -404,7 +421,8 @@ export async function fetchViewerPage(path: string): Promise<ViewerPagePayload> 
         kind: page.kind,
         status: page.status,
         project_ids: page.projectIds,
-        source_type: page.sourceType
+        source_type: page.sourceType,
+        source_class: page.sourceClass
       },
       content: page.content,
       assets: page.assets ?? []

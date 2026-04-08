@@ -15,6 +15,7 @@ import { buildCodeIndex, enrichResolvedCodeImports, modulePageTitle } from "./co
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { runDeepLint } from "./deep-lint.js";
+import { embeddingSimilarityEdges, semanticGraphMatches } from "./embeddings.js";
 import { enrichGraph } from "./graph-enrichment.js";
 import { explainGraphTarget, listHyperedges, queryGraph, shortestGraphPath, topGodNodes } from "./graph-tools.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
@@ -57,6 +58,7 @@ import {
   schemaCategoryLabels
 } from "./schema.js";
 import { rebuildSearchIndex, searchPages } from "./search.js";
+import { aggregateManifestSourceClass } from "./source-classification.js";
 import type {
   ApprovalDetail,
   ApprovalEntry,
@@ -93,6 +95,7 @@ import type {
   ReviewActionResult,
   SearchResult,
   SourceAnalysis,
+  SourceClass,
   SourceManifest,
   VaultConfig
 } from "./types.js";
@@ -1020,6 +1023,10 @@ function deriveGraphMetrics(
   };
 }
 
+function resetGraphNodeMetrics(nodes: GraphNode[]): GraphNode[] {
+  return nodes.map(({ communityId: _communityId, degree: _degree, bridgeScore: _bridgeScore, isGodNode: _isGodNode, ...node }) => node);
+}
+
 function buildGraph(
   manifests: SourceManifest[],
   analyses: SourceAnalysis[],
@@ -1027,6 +1034,7 @@ function buildGraph(
   sourceProjects: Record<string, string | null>,
   _codeIndex: CodeIndexArtifact
 ): GraphArtifact {
+  const manifestsById = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
   const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
     id: `source:${manifest.sourceId}`,
     type: "source",
@@ -1036,6 +1044,7 @@ function buildGraph(
     confidence: 1,
     sourceIds: [manifest.sourceId],
     projectIds: scopedProjectIdsFromSources([manifest.sourceId], sourceProjects),
+    sourceClass: manifest.sourceClass,
     language: manifest.language
   }));
 
@@ -1055,7 +1064,6 @@ function buildGraph(
     edges.push(edge);
   };
 
-  const manifestsById = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
   const analysesBySourceId = new Map(analyses.map((analysis) => [analysis.sourceId, analysis]));
 
   for (const analysis of analyses) {
@@ -1070,7 +1078,8 @@ function buildGraph(
         freshness: "fresh",
         confidence: nodeConfidence(sourceIds.length),
         sourceIds,
-        projectIds: scopedProjectIdsFromSources(sourceIds, sourceProjects)
+        projectIds: scopedProjectIdsFromSources(sourceIds, sourceProjects),
+        sourceClass: aggregateManifestSourceClass(manifests, sourceIds)
       });
       pushEdge({
         id: `${analysis.sourceId}->${concept.id}`,
@@ -1095,7 +1104,8 @@ function buildGraph(
         freshness: "fresh",
         confidence: nodeConfidence(sourceIds.length),
         sourceIds,
-        projectIds: scopedProjectIdsFromSources(sourceIds, sourceProjects)
+        projectIds: scopedProjectIdsFromSources(sourceIds, sourceProjects),
+        sourceClass: aggregateManifestSourceClass(manifests, sourceIds)
       });
       pushEdge({
         id: `${analysis.sourceId}->${entity.id}`,
@@ -1125,6 +1135,7 @@ function buildGraph(
         confidence: 1,
         sourceIds: [analysis.sourceId],
         projectIds: scopedProjectIdsFromSources([analysis.sourceId], sourceProjects),
+        sourceClass: manifest.sourceClass,
         language: analysis.code.language,
         moduleId
       });
@@ -1150,6 +1161,7 @@ function buildGraph(
           confidence: symbol.exported ? 0.88 : 0.74,
           sourceIds: [analysis.sourceId],
           projectIds: scopedProjectIdsFromSources([analysis.sourceId], sourceProjects),
+          sourceClass: manifest.sourceClass,
           language: analysis.code.language,
           moduleId,
           symbolKind: symbol.kind
@@ -1194,6 +1206,7 @@ function buildGraph(
           confidence: 1,
           sourceIds: [analysis.sourceId],
           projectIds: scopedProjectIdsFromSources([analysis.sourceId], sourceProjects),
+          sourceClass: manifest.sourceClass,
           language: analysis.code.language,
           moduleId
         });
@@ -1518,6 +1531,7 @@ function emptyGraphPage(input: {
   title: string;
   kind: GraphPage["kind"];
   sourceIds: string[];
+  sourceClass?: SourceClass;
   projectIds?: string[];
   nodeIds: string[];
   schemaHash: string;
@@ -1534,6 +1548,7 @@ function emptyGraphPage(input: {
     path: input.path,
     title: input.title,
     kind: input.kind,
+    sourceClass: input.sourceClass,
     sourceIds: input.sourceIds,
     projectIds: input.projectIds ?? [],
     nodeIds: input.nodeIds,
@@ -1768,6 +1783,7 @@ async function syncVaultArtifacts(
           title: modulePageTitle(manifest),
           kind: "module",
           sourceIds: [manifest.sourceId],
+          sourceClass: manifest.sourceClass,
           projectIds: sourceProjectIds,
           nodeIds: [analysis.code.moduleId, ...analysis.code.symbols.map((symbol) => symbol.id)],
           schemaHash: sourceSchemaHash,
@@ -1781,6 +1797,7 @@ async function syncVaultArtifacts(
       title: analysis.title,
       kind: "source",
       sourceIds: [manifest.sourceId],
+      sourceClass: manifest.sourceClass,
       projectIds: sourceProjectIds,
       nodeIds: [
         `source:${manifest.sourceId}`,
@@ -1809,7 +1826,8 @@ async function syncVaultArtifacts(
           modulePreview ?? undefined,
           {
             projectIds: sourceProjectIds,
-            extraTags: sourceCategoryTags
+            extraTags: sourceCategoryTags,
+            sourceClass: manifest.sourceClass
           }
         )
     );
@@ -1878,6 +1896,7 @@ async function syncVaultArtifacts(
       const previousEntry = input.previousState?.candidateHistory?.[pageId];
       const promoted = previousEntry?.status === "active" || (promoteCandidates && shouldPromoteCandidate(previousEntry, sourceIds));
       const relativePath = promoted ? activeAggregatePath(itemKind, slug) : candidatePagePathFor(itemKind, slug);
+      const aggregateSourceClass = aggregateManifestSourceClass(input.manifests, sourceIds);
       const fallbackPaths = [
         path.join(paths.wikiDir, activeAggregatePath(itemKind, slug)),
         path.join(paths.wikiDir, candidatePagePathFor(itemKind, slug))
@@ -1889,6 +1908,7 @@ async function syncVaultArtifacts(
         title: aggregate.name,
         kind: itemKind,
         sourceIds,
+        sourceClass: aggregateSourceClass,
         projectIds,
         nodeIds: [pageId],
         schemaHash,
@@ -1922,7 +1942,8 @@ async function syncVaultArtifacts(
                 aggregate.name,
                 ...aggregate.descriptions,
                 ...aggregate.sourceAnalyses.map((item) => item.summary)
-              ])
+              ]),
+              sourceClass: aggregateSourceClass
             }
           )
       );
@@ -1939,7 +1960,23 @@ async function syncVaultArtifacts(
 
   const compiledPages = records.map((record) => record.page);
   const basePages = [...compiledPages, ...input.outputPages, ...input.insightPages];
-  const baseGraph = buildGraph(input.manifests, input.analyses, basePages, input.sourceProjects, input.codeIndex);
+  const structuralGraph = buildGraph(input.manifests, input.analyses, basePages, input.sourceProjects, input.codeIndex);
+  const embeddingEdges = await embeddingSimilarityEdges(rootDir, structuralGraph).catch(() => []);
+  const baseGraph =
+    embeddingEdges.length > 0
+      ? (() => {
+          const edges = uniqueBy([...structuralGraph.edges, ...embeddingEdges], (edge) => edge.id).sort((left, right) =>
+            left.id.localeCompare(right.id)
+          );
+          const metrics = deriveGraphMetrics(resetGraphNodeMetrics(structuralGraph.nodes), edges);
+          return {
+            ...structuralGraph,
+            nodes: metrics.nodes,
+            edges,
+            communities: metrics.communities
+          } satisfies GraphArtifact;
+        })()
+      : structuralGraph;
   const graphOrientation = await buildGraphOrientationPages(baseGraph, paths, globalSchemaHash, input.previousState?.generatedAt);
   records.push(...graphOrientation.records);
   const allPages = [...basePages, ...graphOrientation.records.map((record) => record.page)];
@@ -3818,6 +3855,24 @@ async function ensureCompiledGraph(rootDir: string): Promise<GraphArtifact> {
   return graph;
 }
 
+async function runResolvedGraphQuery(
+  rootDir: string,
+  graph: GraphArtifact,
+  question: string,
+  options: {
+    traversal?: "bfs" | "dfs";
+    budget?: number;
+  } = {}
+): Promise<GraphQueryResult> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const searchResults = searchPages(paths.searchDbPath, question, { limit: Math.max(5, options.budget ?? 10) });
+  const semanticMatches = await semanticGraphMatches(rootDir, graph, question, Math.max(8, options.budget ?? 12)).catch(() => []);
+  return queryGraph(graph, question, searchResults, {
+    ...options,
+    semanticMatches
+  });
+}
+
 export async function queryGraphVault(
   rootDir: string,
   question: string,
@@ -3826,10 +3881,8 @@ export async function queryGraphVault(
     budget?: number;
   } = {}
 ): Promise<GraphQueryResult> {
-  const { paths } = await loadVaultConfig(rootDir);
   const graph = await ensureCompiledGraph(rootDir);
-  const searchResults = searchPages(paths.searchDbPath, question, { limit: Math.max(5, options.budget ?? 10) });
-  return queryGraph(graph, question, searchResults, options);
+  return runResolvedGraphQuery(rootDir, graph, question, options);
 }
 
 export async function benchmarkVault(rootDir: string, options: BenchmarkOptions = {}): Promise<BenchmarkArtifact> {
@@ -3861,19 +3914,20 @@ export async function benchmarkVault(rootDir: string, options: BenchmarkOptions 
   const sampleQuestions = (
     questions.length ? questions : configuredQuestions.length ? configuredQuestions : defaultBenchmarkQuestionsForGraph(graph, maxQuestions)
   ).slice(0, maxQuestions);
-  const perQuestion = sampleQuestions.map((question) => {
-    const searchResults = searchPages(paths.searchDbPath, question, { limit: 12 });
-    const result = queryGraph(graph, question, searchResults, { budget: 12 });
-    const metrics = benchmarkQueryTokens(graph, result, pageContentsById);
-    return {
-      question,
-      queryTokens: metrics.queryTokens,
-      reduction: metrics.reduction,
-      visitedNodeIds: result.visitedNodeIds,
-      visitedEdgeIds: result.visitedEdgeIds,
-      pageIds: result.pageIds
-    };
-  });
+  const perQuestion = await Promise.all(
+    sampleQuestions.map(async (question) => {
+      const result = await runResolvedGraphQuery(rootDir, graph, question, { budget: 12 });
+      const metrics = benchmarkQueryTokens(graph, result, pageContentsById);
+      return {
+        question,
+        queryTokens: metrics.queryTokens,
+        reduction: metrics.reduction,
+        visitedNodeIds: result.visitedNodeIds,
+        visitedEdgeIds: result.visitedEdgeIds,
+        pageIds: result.pageIds
+      };
+    })
+  );
 
   const artifact = buildBenchmarkArtifact({
     graph,

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import type { GraphPage, PageKind, PageStatus, SearchResult, SourceCaptureType } from "./types.js";
+import type { GraphPage, PageKind, PageStatus, SearchResult, SourceCaptureType, SourceClass } from "./types.js";
 import { ensureDir } from "./utils.js";
 
 export interface SearchPageFilters {
@@ -9,6 +9,7 @@ export interface SearchPageFilters {
   status?: string;
   project?: string;
   sourceType?: string;
+  sourceClass?: string;
 }
 
 export interface SearchQueryOptions extends SearchPageFilters {
@@ -56,6 +57,10 @@ function normalizeSourceType(value: unknown): SourceCaptureType | undefined {
   return value === "arxiv" || value === "doi" || value === "tweet" || value === "article" || value === "url" ? value : undefined;
 }
 
+function normalizeSourceClass(value: unknown): SourceClass | undefined {
+  return value === "first_party" || value === "third_party" || value === "resource" || value === "generated" ? value : undefined;
+}
+
 export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wikiDir: string): Promise<void> {
   await ensureDir(path.dirname(dbPath));
   const DatabaseSync = getDatabaseSync();
@@ -72,6 +77,7 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
       kind TEXT NOT NULL,
       status TEXT NOT NULL,
       source_type TEXT NOT NULL,
+      source_class TEXT NOT NULL,
       project_ids TEXT NOT NULL,
       project_key TEXT NOT NULL
     );
@@ -86,7 +92,7 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
   `);
 
   const insertPage = db.prepare(
-    "INSERT INTO pages (id, path, title, body, kind, status, source_type, project_ids, project_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO pages (id, path, title, body, kind, status, source_type, source_class, project_ids, project_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   for (const page of pages) {
@@ -101,6 +107,7 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
       page.kind,
       page.status,
       typeof parsed.data.source_type === "string" ? parsed.data.source_type : "",
+      typeof parsed.data.source_class === "string" ? parsed.data.source_class : "",
       JSON.stringify(page.projectIds),
       page.projectIds.map((projectId) => `|${projectId}|`).join("")
     );
@@ -141,6 +148,10 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
     clauses.push("pages.source_type = ?");
     params.push(options.sourceType);
   }
+  if (options.sourceClass && options.sourceClass !== "all") {
+    clauses.push("pages.source_class = ?");
+    params.push(options.sourceClass);
+  }
 
   const statement = db.prepare(`
     SELECT
@@ -150,6 +161,7 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
       pages.kind AS kind,
       pages.status AS status,
       pages.source_type AS sourceType,
+      pages.source_class AS sourceClass,
       pages.project_ids AS projectIds,
       snippet(page_search, 1, '[', ']', '...', 16) AS snippet,
       bm25(page_search) AS rank
@@ -178,6 +190,7 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
     kind: normalizeKind(row.kind),
     status: normalizeStatus(row.status),
     sourceType: normalizeSourceType(row.sourceType),
+    sourceClass: normalizeSourceClass(row.sourceClass),
     snippet: String(row.snippet ?? ""),
     rank: Number(row.rank ?? 0)
   }));

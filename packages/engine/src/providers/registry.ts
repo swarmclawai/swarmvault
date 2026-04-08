@@ -53,7 +53,16 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
         apiKey: envOrUndefined(config.apiKeyEnv),
         headers: config.headers,
         apiStyle: config.apiStyle ?? "responses",
-        capabilities: resolveCapabilities(config, ["responses", "chat", "structured", "tools", "vision", "streaming", "image_generation"])
+        capabilities: resolveCapabilities(config, [
+          "responses",
+          "chat",
+          "structured",
+          "tools",
+          "vision",
+          "embeddings",
+          "streaming",
+          "image_generation"
+        ])
       });
     case "ollama":
       return new OpenAiCompatibleProviderAdapter(id, "ollama", config.model, {
@@ -61,7 +70,16 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
         apiKey: envOrUndefined(config.apiKeyEnv) ?? "ollama",
         headers: config.headers,
         apiStyle: config.apiStyle ?? "responses",
-        capabilities: resolveCapabilities(config, ["responses", "chat", "structured", "tools", "vision", "streaming", "local"])
+        capabilities: resolveCapabilities(config, [
+          "responses",
+          "chat",
+          "structured",
+          "tools",
+          "vision",
+          "embeddings",
+          "streaming",
+          "local"
+        ])
       });
     case "openai-compatible":
       return new OpenAiCompatibleProviderAdapter(id, "openai-compatible", config.model, {
@@ -69,42 +87,42 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
         apiKey: envOrUndefined(config.apiKeyEnv),
         headers: config.headers,
         apiStyle: config.apiStyle ?? "responses",
-        capabilities: resolveCapabilities(config, ["chat", "structured"])
+        capabilities: resolveCapabilities(config, ["chat", "structured", "embeddings"])
       });
     case "openrouter":
       return createOpenAiCompatiblePreset(id, "openrouter", config, {
         baseUrl: "https://openrouter.ai/api/v1",
         apiKeyEnv: "OPENROUTER_API_KEY",
         apiStyle: "chat",
-        capabilities: ["chat", "structured"]
+        capabilities: ["chat", "structured", "embeddings"]
       });
     case "groq":
       return createOpenAiCompatiblePreset(id, "groq", config, {
         baseUrl: "https://api.groq.com/openai/v1",
         apiKeyEnv: "GROQ_API_KEY",
         apiStyle: "chat",
-        capabilities: ["chat", "structured"]
+        capabilities: ["chat", "structured", "embeddings"]
       });
     case "together":
       return createOpenAiCompatiblePreset(id, "together", config, {
         baseUrl: "https://api.together.xyz/v1",
         apiKeyEnv: "TOGETHER_API_KEY",
         apiStyle: "chat",
-        capabilities: ["chat", "structured"]
+        capabilities: ["chat", "structured", "embeddings"]
       });
     case "xai":
       return createOpenAiCompatiblePreset(id, "xai", config, {
         baseUrl: "https://api.x.ai/v1",
         apiKeyEnv: "XAI_API_KEY",
         apiStyle: "chat",
-        capabilities: ["chat", "structured"]
+        capabilities: ["chat", "structured", "embeddings"]
       });
     case "cerebras":
       return createOpenAiCompatiblePreset(id, "cerebras", config, {
         baseUrl: "https://api.cerebras.ai/v1",
         apiKeyEnv: "CEREBRAS_API_KEY",
         apiStyle: "chat",
-        capabilities: ["chat", "structured"]
+        capabilities: ["chat", "structured", "embeddings"]
       });
     case "anthropic":
       return new AnthropicProviderAdapter(id, config.model, {

@@ -14,6 +14,8 @@ It is built for the compounding loop most coding agents still miss:
 
 Every vault carries a user-editable `swarmvault.schema.md` file, so the compiler and query layer can learn how that specific vault should be organized.
 
+![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
+
 ```bash
 swarmvault init --obsidian
 swarmvault add https://arxiv.org/abs/2401.12345
@@ -33,7 +35,7 @@ my-vault/
 ├── swarmvault.schema.md
 ├── raw/                   immutable source files and localized assets
 ├── wiki/                  compiled source, concept, entity, code, output, and graph pages
-├── state/                 graph.json, search.sqlite, sessions, approvals, schedules
+├── state/                 graph.json, embeddings.json, search.sqlite, sessions, approvals, schedules
 ├── .obsidian/             optional local workspace config
 └── agent/                 generated agent-facing helpers
 ```
@@ -43,6 +45,7 @@ my-vault/
 - A markdown-first wiki that stays usable in Obsidian or plain Git
 - A structured graph artifact with provenance, freshness, projects, and saved outputs
 - Graph-first report pages plus deterministic local graph query, path, explain, god-node, semantic-similarity, and group-pattern surfaces
+- Optional embedding-backed semantic graph query with a cached `state/embeddings.json` index and lexical fallback when no embedding provider is configured
 - Automatic benchmark artifacts plus worked examples for measuring graph-guided context reduction after compile and repo-refresh runs
 - Research-aware URL capture for arXiv, DOI, article, and X/Twitter sources with normalized frontmatter
 - Save-first `query` and `explore` workflows, including `report`, `slides`, `chart`, and `image` outputs
@@ -51,6 +54,7 @@ my-vault/
 - Project-aware schemas and rollups for larger multi-root vaults
 - Repo-aware code ingestion with parser-backed module analysis and local import resolution
 - Repo-aware watch mode and local git hooks for post-commit and post-checkout refreshes
+- Repo-aware source classification so first-party material stays the default focus even when the repo also contains dependencies, app bundles, and generated output
 - Pending semantic refresh tracking for non-code repo changes, surfaced in `watch status` and the local graph workspace
 - Human-only `wiki/insights/` pages that SwarmVault can read but does not rewrite
 - Session artifacts for compile, query, explore, lint, watch, and schedule runs
@@ -83,6 +87,8 @@ npm install -g @swarmvaultai/cli
 ```
 
 This installs the `swarmvault` command. The `vault` alias is also available for compatibility.
+
+On the first successful interactive run, SwarmVault prints a one-time repo-star prompt and checks whether a newer published CLI exists. Those notices stay off for `--json`, CI, MCP, and the long-running serve/watch flows. Set `SWARMVAULT_NO_NOTICES=1` to disable them entirely.
 
 ## Quickstart
 
@@ -127,6 +133,18 @@ And you can expose the vault to compatible agents over MCP:
 ```bash
 swarmvault mcp
 ```
+
+## Worked Examples
+
+If you want something richer than a quickstart, use the small example vaults that also back the docs and release checks:
+
+- `worked/code-repo/` for repo ingest, code pages, graph reports, and benchmark flow
+- `worked/capture/` for research-aware `swarmvault add` capture
+- `worked/mixed-corpus/` for compile, review, and save-first output loops
+
+The site examples guide walks through those flows with commands and screenshots:
+
+- https://www.swarmvault.ai/docs/getting-started/examples
 
 ## Platform Support
 
@@ -212,7 +230,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 ## Core Commands
 
 - `swarmvault init [--obsidian]`: create a workspace, default config, default schema file, and optional `.obsidian/` config
-- `swarmvault ingest <input> [--repo-root <path>] [--include <glob...>] [--exclude <glob...>] [--max-files <n>] [--no-gitignore] [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path, directory path, or URL, localize remote image references by default when the input is a URL, extract PDF text locally, and use the configured `visionProvider` for image-aware extraction when available
+- `swarmvault ingest <input> [--repo-root <path>] [--include <glob...>] [--exclude <glob...>] [--max-files <n>] [--include-third-party] [--include-resources] [--include-generated] [--no-gitignore] [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path, directory path, or URL, localize remote image references by default when the input is a URL, extract PDF text locally, use the configured `visionProvider` for image-aware extraction when available, and default repo ingest to first-party material unless the extra source classes are explicitly included
 - `swarmvault add <url> [--author <name>] [--contributor <name>]`: capture arXiv IDs/URLs, DOI strings/URLs, X/Twitter URLs, and generic article URLs into normalized markdown, or fall back to generic URL ingest
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
 - `swarmvault compile [--approve]`: build wiki pages, graph data, and the search index using the vault schema as guidance, or stage a review bundle before applying changes
@@ -227,7 +245,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault mcp`: start a local MCP server over stdio
 - `swarmvault review list|show|accept|reject`: inspect and resolve staged approval bundles
 - `swarmvault candidate list|promote|archive`: inspect and resolve staged concept and entity candidates
-- `swarmvault graph query "<question>" [--dfs] [--budget <n>]`: run a deterministic local graph traversal seeded from local search and matching group patterns
+- `swarmvault graph query "<question>" [--dfs] [--budget <n>]`: run a deterministic local graph traversal seeded from semantic graph matches when `tasks.embeddingProvider` is configured, with lexical fallback plus group-pattern matching
 - `swarmvault graph path <from> <to>`: return the shortest high-confidence path between two graph targets
 - `swarmvault graph explain <target>`: inspect graph metadata, community membership, neighbors, provenance, and group-pattern membership for a node or page
 - `swarmvault graph god-nodes [--limit <n>]`: list the most connected bridge-heavy nodes in the current graph
@@ -242,6 +260,9 @@ When `ingest` targets a remote HTML or markdown URL, SwarmVault downloads refere
 For sources that produce extracted text, SwarmVault now writes both:
 - `state/extracts/<sourceId>.md`: canonical extracted text used by compile, query, and benchmark
 - `state/extracts/<sourceId>.json`: extractor metadata such as extractor kind, warnings, provider/model info for image vision extraction, and PDF page counts
+
+For semantic graph query, SwarmVault can also write:
+- `state/embeddings.json`: cached embedding vectors keyed by graph content hash when `tasks.embeddingProvider` is configured
 
 When `ingest` targets a local directory, SwarmVault walks the tree recursively, respects `.gitignore` by default, records `repoRelativePath` on matching manifests, and later writes `state/code-index.json` during compile so local imports can resolve across the code graph.
 

@@ -17,7 +17,7 @@ import {
 const MAX_BACKOFF_MS = 30_000;
 const BACKOFF_THRESHOLD = 3;
 const CRITICAL_THRESHOLD = 10;
-const REPO_WATCH_IGNORES = new Set([".git", "node_modules", "dist", "build", ".next", "coverage", ".venv", "vendor", "target"]);
+const REPO_WATCH_IGNORES = new Set([".git", ".venv"]);
 
 type WatchCycleResult = {
   watchedRepoRoots: string[];

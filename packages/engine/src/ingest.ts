@@ -16,6 +16,7 @@ import {
   extractPdfText
 } from "./extraction.js";
 import { appendLogEntry } from "./logs.js";
+import { classifyRepoPath, normalizeExtractClasses } from "./source-classification.js";
 import type {
   AddOptions,
   AddResult,
@@ -25,8 +26,10 @@ import type {
   RepoSyncResult,
   ResolvedPaths,
   SourceAttachment,
+  SourceClass,
   SourceExtractionArtifact,
   SourceManifest,
+  VaultConfig,
   WatchRepoSyncResult
 } from "./types.js";
 import {
@@ -44,7 +47,7 @@ import { clearPendingSemanticRefreshEntries } from "./watch-state.js";
 
 const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
 const DEFAULT_MAX_DIRECTORY_FILES = 5000;
-const BUILT_IN_REPO_IGNORES = new Set([".git", "node_modules", "dist", "build", ".next", "coverage", ".venv", "vendor", "target"]);
+const HARD_REPO_IGNORES = new Set([".git", ".venv"]);
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -62,6 +65,7 @@ type PreparedInput = {
   originType: SourceManifest["originType"];
   sourceKind: SourceManifest["sourceKind"];
   sourceType?: SourceManifest["sourceType"];
+  sourceClass?: SourceManifest["sourceClass"];
   language?: SourceManifest["language"];
   originalPath?: string;
   repoRelativePath?: string;
@@ -96,6 +100,8 @@ type NormalizedIngestOptions = {
   exclude: string[];
   maxFiles: number;
   gitignore: boolean;
+  extractClasses: SourceClass[];
+  repoAnalysis?: VaultConfig["repoAnalysis"];
 };
 
 function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKind"] {
@@ -137,7 +143,19 @@ function normalizeIngestOptions(options?: IngestOptions): NormalizedIngestOption
     include: (options?.include ?? []).map((pattern) => pattern.trim()).filter(Boolean),
     exclude: (options?.exclude ?? []).map((pattern) => pattern.trim()).filter(Boolean),
     maxFiles: Math.max(1, Math.floor(options?.maxFiles ?? DEFAULT_MAX_DIRECTORY_FILES)),
-    gitignore: options?.gitignore ?? true
+    gitignore: options?.gitignore ?? true,
+    extractClasses: options?.extractClasses ?? ["first_party"]
+  };
+}
+
+async function resolveRepoIngestOptions(rootDir: string, options?: IngestOptions): Promise<NormalizedIngestOptions> {
+  const normalized = normalizeIngestOptions(options);
+  const { config } = await loadVaultConfig(rootDir);
+  const repoAnalysis = config.repoAnalysis;
+  return {
+    ...normalized,
+    extractClasses: normalizeExtractClasses(repoAnalysis, normalized.extractClasses),
+    repoAnalysis
   };
 }
 
@@ -720,11 +738,15 @@ async function loadGitignoreMatcher(repoRoot: string, enabled: boolean) {
 
 function builtInIgnoreReason(relativePath: string): string | null {
   for (const segment of relativePath.split("/")) {
-    if (BUILT_IN_REPO_IGNORES.has(segment)) {
+    if (HARD_REPO_IGNORES.has(segment)) {
       return `built_in_ignore:${segment}`;
     }
   }
   return null;
+}
+
+function sourceClassForRelativePath(relativePath: string, options: NormalizedIngestOptions): SourceClass {
+  return classifyRepoPath(relativePath, options.repoAnalysis);
 }
 
 async function collectDirectoryFiles(
@@ -779,8 +801,13 @@ async function collectDirectoryFiles(
 
       const mimeType = guessMimeType(absolutePath);
       const sourceKind = inferKind(mimeType, absolutePath);
+      const sourceClass = sourceClassForRelativePath(relativePath, options);
       if (!supportedDirectoryKind(sourceKind)) {
         skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: `unsupported_kind:${sourceKind}` });
+        continue;
+      }
+      if (!options.extractClasses.includes(sourceClass)) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: `source_class:${sourceClass}` });
         continue;
       }
       if (files.length >= options.maxFiles) {
@@ -980,6 +1007,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     existingByOrigin.title === prepared.title &&
     existingByOrigin.sourceKind === prepared.sourceKind &&
     existingByOrigin.sourceType === prepared.sourceType &&
+    existingByOrigin.sourceClass === prepared.sourceClass &&
     existingByOrigin.language === prepared.language &&
     existingByOrigin.mimeType === prepared.mimeType &&
     existingByOrigin.repoRelativePath === prepared.repoRelativePath
@@ -1035,6 +1063,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     originType: prepared.originType,
     sourceKind: prepared.sourceKind,
     sourceType: prepared.sourceType,
+    sourceClass: prepared.sourceClass,
     language: prepared.language,
     originalPath: prepared.originalPath,
     repoRelativePath: prepared.repoRelativePath,
@@ -1108,6 +1137,7 @@ function preparedMatchesManifest(manifest: SourceManifest, prepared: PreparedInp
     manifest.title === prepared.title &&
     manifest.sourceKind === prepared.sourceKind &&
     manifest.sourceType === prepared.sourceType &&
+    manifest.sourceClass === prepared.sourceClass &&
     manifest.language === prepared.language &&
     manifest.mimeType === prepared.mimeType &&
     manifest.repoRelativePath === prepared.repoRelativePath
@@ -1131,7 +1161,7 @@ export async function listTrackedRepoRoots(rootDir: string): Promise<string[]> {
 
 export async function syncTrackedRepos(rootDir: string, options?: IngestOptions, repoRoots?: string[]): Promise<RepoSyncResult> {
   const { paths } = await initWorkspace(rootDir);
-  const normalizedOptions = normalizeIngestOptions(options);
+  const normalizedOptions = await resolveRepoIngestOptions(rootDir, options);
   const manifests = await listManifests(rootDir);
   const trackedRoots = (repoRoots && repoRoots.length > 0 ? repoRoots : await listTrackedRepoRoots(rootDir)).map((item) =>
     path.resolve(item)
@@ -1182,7 +1212,8 @@ export async function syncTrackedRepos(rootDir: string, options?: IngestOptions,
 
     const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
     for (const absolutePath of files) {
-      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot);
+      const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
+      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot, sourceClassForRelativePath(relativePath, normalizedOptions));
       const result = await persistPreparedInput(rootDir, prepared, paths);
       if (result.isNew) {
         imported.push(result.manifest);
@@ -1227,7 +1258,7 @@ export async function syncTrackedReposForWatch(
   repoRoots?: string[]
 ): Promise<WatchRepoSyncResult> {
   const { paths } = await initWorkspace(rootDir);
-  const normalizedOptions = normalizeIngestOptions(options);
+  const normalizedOptions = await resolveRepoIngestOptions(rootDir, options);
   const manifests = await listManifests(rootDir);
   const trackedRoots = (repoRoots && repoRoots.length > 0 ? repoRoots : await listTrackedRepoRoots(rootDir)).map((item) =>
     path.resolve(item)
@@ -1299,7 +1330,8 @@ export async function syncTrackedReposForWatch(
 
     const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
     for (const absolutePath of files) {
-      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot);
+      const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
+      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot, sourceClassForRelativePath(relativePath, normalizedOptions));
       if (shouldDeferWatchSemanticRefresh(prepared.sourceKind)) {
         const existing = manifestsByOriginalPath.get(path.resolve(absolutePath));
         const contentHash = buildCompositeHash(prepared.payloadBytes, prepared.attachments);
@@ -1386,7 +1418,12 @@ export async function syncTrackedReposForWatch(
   };
 }
 
-async function prepareFileInput(rootDir: string, absoluteInput: string, repoRoot?: string): Promise<PreparedInput> {
+async function prepareFileInput(
+  rootDir: string,
+  absoluteInput: string,
+  repoRoot?: string,
+  sourceClass?: SourceClass
+): Promise<PreparedInput> {
   const payloadBytes = await fs.readFile(absoluteInput);
   const mimeType = guessMimeType(absoluteInput);
   const sourceKind = inferKind(mimeType, absoluteInput);
@@ -1423,6 +1460,7 @@ async function prepareFileInput(rootDir: string, absoluteInput: string, repoRoot
     title,
     originType: "file",
     sourceKind,
+    sourceClass,
     language,
     originalPath: toPosix(absoluteInput),
     repoRelativePath: repoRelativePathFor(absoluteInput, repoRoot),
@@ -1776,7 +1814,7 @@ export async function addInput(rootDir: string, input: string, options: AddOptio
 
 export async function ingestDirectory(rootDir: string, inputDir: string, options?: IngestOptions): Promise<DirectoryIngestResult> {
   const { paths } = await initWorkspace(rootDir);
-  const normalizedOptions = normalizeIngestOptions(options);
+  const normalizedOptions = await resolveRepoIngestOptions(rootDir, options);
   const absoluteInputDir = path.resolve(rootDir, inputDir);
   const repoRoot = normalizedOptions.repoRoot ?? (await findNearestGitRoot(absoluteInputDir)) ?? absoluteInputDir;
   if (!(await fileExists(absoluteInputDir))) {
@@ -1788,7 +1826,8 @@ export async function ingestDirectory(rootDir: string, inputDir: string, options
   const updated: SourceManifest[] = [];
 
   for (const absolutePath of files) {
-    const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot);
+    const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
+    const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot, sourceClassForRelativePath(relativePath, normalizedOptions));
     const result = await persistPreparedInput(rootDir, prepared, paths);
     if (result.isNew) {
       imported.push(result.manifest);

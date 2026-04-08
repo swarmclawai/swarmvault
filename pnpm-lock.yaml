@@ -21,8 +21,8 @@ importers:
   packages/cli:
     dependencies:
       '@swarmvaultai/engine':
-        specifier: 0.1.25
-        version: 0.1.25
+        specifier: 0.1.26
+        version: link:../engine
       commander:
         specifier: ^14.0.1
         version: 14.0.3
@@ -33,6 +33,9 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@24.12.2)(jsdom@27.4.0)
 
   packages/engine:
     dependencies:
@@ -741,10 +744,6 @@ packages:
     resolution: {integrity: sha512-lWMnixq/QzxyhTV6NjQJ4SFo1J6PvOX8vUx5Wb4bBPsEb+8xZ89Bz6kOXpfXj9ak9AHTQVQzlgzBEc1SyM27xQ==}
     cpu: [x64]
     os: [win32]
-
-  '@swarmvaultai/engine@0.1.25':
-    resolution: {integrity: sha512-eJbbcb58qus0yDr/MRIgcLYC7A9GxwheF+zj9iJE20q0qv0pGvzagBR3bW5TFo+hp8etat2Ezjs4k0XIF+q3OQ==}
-    engines: {node: '>=24.0.0'}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -2235,28 +2234,6 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
-
-  '@swarmvaultai/engine@0.1.25':
-    dependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
-      '@mozilla/readability': 0.6.0
-      '@vscode/tree-sitter-wasm': 0.3.1
-      chokidar: 4.0.3
-      gray-matter: 4.0.3
-      ignore: 7.0.5
-      jsdom: 27.4.0
-      mime-types: 3.0.2
-      pdfjs-dist: 5.6.205
-      turndown: 7.2.4
-      typescript: 5.9.3
-      zod: 4.3.6
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - '@noble/hashes'
-      - bufferutil
-      - canvas
-      - supports-color
-      - utf-8-validate
 
   '@types/babel__core@7.20.5':
     dependencies:

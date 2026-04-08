@@ -48,6 +48,7 @@ export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "binary" | "code";
 export type SourceCaptureType = "arxiv" | "doi" | "tweet" | "article" | "url";
+export type SourceClass = "first_party" | "third_party" | "resource" | "generated";
 export type CodeLanguage =
   | "javascript"
   | "jsx"
@@ -113,6 +114,7 @@ export interface ProviderAdapter {
   readonly capabilities: Set<ProviderCapability>;
   generateText(request: GenerationRequest): Promise<GenerationResponse>;
   generateStructured<T>(request: GenerationRequest, schema: z.ZodType<T>): Promise<T>;
+  embedTexts?(texts: string[]): Promise<number[][]>;
   generateImage?(request: ImageGenerationRequest): Promise<ImageGenerationResponse>;
 }
 
@@ -171,6 +173,7 @@ export interface VaultConfig {
     lintProvider: string;
     visionProvider: string;
     imageProvider?: string;
+    embeddingProvider?: string;
   };
   viewer: {
     port: number;
@@ -189,6 +192,10 @@ export interface VaultConfig {
     enabled?: boolean;
     questions?: string[];
     maxQuestions?: number;
+  };
+  repoAnalysis?: {
+    classifyGlobs?: Partial<Record<SourceClass, string[]>>;
+    extractClasses?: SourceClass[];
   };
   webSearch?: {
     providers: Record<string, WebSearchProviderConfig>;
@@ -222,6 +229,7 @@ export interface ResolvedPaths {
   searchDbPath: string;
   compileStatePath: string;
   codeIndexPath: string;
+  embeddingsPath: string;
   benchmarkPath: string;
   jobsLogPath: string;
   sessionsDir: string;
@@ -282,6 +290,7 @@ export interface IngestOptions {
   exclude?: string[];
   maxFiles?: number;
   gitignore?: boolean;
+  extractClasses?: SourceClass[];
 }
 
 export interface DirectoryIngestSkip {
@@ -304,6 +313,7 @@ export interface SourceManifest {
   originType: "file" | "url";
   sourceKind: SourceKind;
   sourceType?: SourceCaptureType;
+  sourceClass?: SourceClass;
   language?: CodeLanguage;
   originalPath?: string;
   repoRelativePath?: string;
@@ -427,6 +437,7 @@ export interface GraphNode {
   confidence?: number;
   sourceIds: string[];
   projectIds: string[];
+  sourceClass?: SourceClass;
   language?: CodeLanguage;
   moduleId?: string;
   symbolKind?: CodeSymbolKind;
@@ -448,6 +459,7 @@ export interface GraphEdge {
   similarityReasons?: Array<
     "shared_concept" | "shared_entity" | "shared_tag" | "shared_symbol" | "shared_rationale_theme" | "shared_source_type"
   >;
+  similarityBasis?: "feature_overlap" | "embeddings";
 }
 
 export interface GraphHyperedge {
@@ -467,6 +479,7 @@ export interface GraphPage {
   title: string;
   kind: PageKind;
   sourceType?: SourceCaptureType;
+  sourceClass?: SourceClass;
   sourceIds: string[];
   projectIds: string[];
   nodeIds: string[];
@@ -642,6 +655,7 @@ export interface SearchResult {
   status?: PageStatus;
   projectIds: string[];
   sourceType?: SourceCaptureType;
+  sourceClass?: SourceClass;
 }
 
 export interface QueryOptions {
@@ -929,6 +943,22 @@ export interface BenchmarkArtifact {
   summary: BenchmarkSummary;
 }
 
+export interface EmbeddingCacheEntry {
+  itemId: string;
+  kind: "node" | "page" | "hyperedge";
+  label: string;
+  contentHash: string;
+  values: number[];
+}
+
+export interface EmbeddingCacheArtifact {
+  generatedAt: string;
+  providerId: string;
+  providerModel: string;
+  graphHash: string;
+  entries: EmbeddingCacheEntry[];
+}
+
 export interface BenchmarkOptions {
   questions?: string[];
   maxQuestions?: number;
@@ -943,6 +973,14 @@ export interface GraphReportArtifact {
     pages: number;
     communities: number;
   };
+  firstPartyOverview: {
+    nodes: number;
+    edges: number;
+    pages: number;
+    communities: number;
+  };
+  sourceClassBreakdown: Record<SourceClass, { sources: number; pages: number; nodes: number }>;
+  warnings: string[];
   benchmark?: {
     generatedAt: string;
     stale: boolean;

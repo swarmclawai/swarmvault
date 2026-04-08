@@ -78,9 +78,14 @@ Useful flags:
 - `--include <glob...>`
 - `--exclude <glob...>`
 - `--max-files <n>`
+- `--include-third-party`
+- `--include-resources`
+- `--include-generated`
 - `--no-gitignore`
 - `--no-include-assets`
 - `--max-asset-size <bytes>`
+
+Repo ingest defaults to `first_party` material. The extra `--include-*` flags opt dependency trees, resource bundles, and generated output back in when you actually want them in the vault.
 
 ### `swarmvault add <url>`
 

@@ -885,6 +885,148 @@ describe("swarmvault workflow", () => {
     await server.close();
   });
 
+  it("uses configured embeddings for semantic graph query, cache artifacts, and inferred similarity edges", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "embedding-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  function payload(title) {",
+        "    if (title.includes('Alpha')) {",
+        "      return { title, summary: 'Durable memory keeps agent context persistent.', concepts: [{ name: 'Long-Term Recall', description: 'A durable memory loop.' }], entities: [], claims: [{ text: 'Alpha documents durable memory behavior.', confidence: 0.9, status: 'extracted', polarity: 'positive', citation: 'alpha' }], questions: [] };",
+        "    }",
+        "    if (title.includes('Beta')) {",
+        "      return { title, summary: 'Persistent context helps agents recover prior work.', concepts: [{ name: 'Context Continuity', description: 'Recovering prior context.' }], entities: [], claims: [{ text: 'Beta documents persistent context behavior.', confidence: 0.91, status: 'extracted', polarity: 'positive', citation: 'beta' }], questions: [] };",
+        "    }",
+        "    return { title, summary: 'Review queues keep edits inspectable.', concepts: [{ name: 'Review Queue', description: 'Review gates for generated edits.' }], entities: [], claims: [{ text: 'Gamma documents review queues.', confidence: 0.88, status: 'extracted', polarity: 'positive', citation: 'gamma' }], questions: [] };",
+        "  }",
+        "  function vectorFor(text) {",
+        "    const normalized = String(text).toLowerCase();",
+        "    if (normalized.includes('durable memory') || normalized.includes('persistent context') || normalized.includes('compounding memory')) {",
+        "      return [1, 0, 0];",
+        "    }",
+        "    if (normalized.includes('review queue')) {",
+        "      return [0, 1, 0];",
+        "    }",
+        "    return [0, 0, 1];",
+        "  }",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured', 'embeddings']),",
+        "    async generateText() { return { text: 'ok' }; },",
+        "    async generateStructured(request, schema) {",
+        "      const match = request.prompt.match(/Source title: (.+)/);",
+        "      const title = match ? match[1].trim() : 'Unknown';",
+        "      return schema.parse(payload(title));",
+        "    },",
+        "    async embedTexts(texts) {",
+        "      return texts.map((text) => vectorFor(text));",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    await updateConfig(rootDir, (config) => {
+      config.providers.semanticTest = {
+        type: "custom",
+        model: "semantic-test",
+        module: "./embedding-provider.mjs",
+        capabilities: ["chat", "structured", "embeddings"]
+      };
+      config.tasks.compileProvider = "semanticTest";
+      config.tasks.embeddingProvider = "semanticTest";
+    });
+
+    for (const [name, body] of [
+      ["alpha.md", "# Alpha Source\n\nDurable memory keeps agent context alive."],
+      ["beta.md", "# Beta Source\n\nPersistent context helps an agent resume prior work."],
+      ["gamma.md", "# Gamma Source\n\nReview queue gates keep edits inspectable."]
+    ] as const) {
+      await fs.writeFile(path.join(rootDir, name), body, "utf8");
+      await ingestInput(rootDir, name);
+    }
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.edges.some((edge) => edge.relation === "semantically_similar_to" && edge.similarityBasis === "embeddings")).toBe(true);
+
+    const embeddingCache = JSON.parse(await fs.readFile(path.join(rootDir, "state", "embeddings.json"), "utf8")) as {
+      entries?: Array<{ id: string; hash: string }>;
+    };
+    expect(Array.isArray(embeddingCache.entries)).toBe(true);
+    expect(embeddingCache.entries?.length ?? 0).toBeGreaterThan(0);
+
+    const semanticQuery = await queryGraphVault(rootDir, "compounding memory", { budget: 8 });
+    expect(semanticQuery.matches.some((match) => match.label.includes("Alpha Source") || match.label.includes("Beta Source"))).toBe(true);
+  });
+
+  it("classifies repo material by source class and keeps graph reporting focused on first-party content", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "repo", "src"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "Pods"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "App.xcassets"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "repo", "dist"), { recursive: true });
+
+    await fs.writeFile(path.join(rootDir, "repo", "src", "app.ts"), "export function main(): string { return 'ok'; }\n", "utf8");
+    await fs.writeFile(path.join(rootDir, "repo", "Pods", "vendor.ts"), "export const vendorValue = 1;\n", "utf8");
+    await fs.writeFile(path.join(rootDir, "repo", "App.xcassets", "Reference.pdf"), createSimplePdf("Bundled PDF resource"));
+    await fs.writeFile(path.join(rootDir, "repo", "dist", "generated.js"), "console.log('generated');\n", "utf8");
+
+    const defaultIngest = await ingestDirectory(rootDir, "repo");
+    expect(defaultIngest.imported).toHaveLength(1);
+    expect(defaultIngest.imported[0]?.repoRelativePath).toBe("src/app.ts");
+    expect(defaultIngest.imported[0]?.sourceClass).toBe("first_party");
+    expect(
+      defaultIngest.skipped.some((entry) => entry.path.endsWith("repo/Pods/vendor.ts") && entry.reason === "source_class:third_party")
+    ).toBe(true);
+    expect(
+      defaultIngest.skipped.some(
+        (entry) => entry.path.endsWith("repo/App.xcassets/Reference.pdf") && entry.reason === "source_class:resource"
+      )
+    ).toBe(true);
+    expect(
+      defaultIngest.skipped.some((entry) => entry.path.endsWith("repo/dist/generated.js") && entry.reason === "source_class:generated")
+    ).toBe(true);
+
+    const fullIngest = await ingestDirectory(rootDir, "repo", {
+      extractClasses: ["first_party", "third_party", "resource", "generated"]
+    });
+    const manifestsByRepoPath = new Map(
+      [...fullIngest.imported, ...fullIngest.updated].map((manifest) => [manifest.repoRelativePath, manifest] as const)
+    );
+    expect(manifestsByRepoPath.get("Pods/vendor.ts")?.sourceClass).toBe("third_party");
+    expect(manifestsByRepoPath.get("App.xcassets/Reference.pdf")?.sourceClass).toBe("resource");
+    expect(manifestsByRepoPath.get("dist/generated.js")?.sourceClass).toBe("generated");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.sources.some((source) => source.sourceClass === "third_party")).toBe(true);
+    expect(graph.sources.some((source) => source.sourceClass === "resource")).toBe(true);
+    expect(graph.sources.some((source) => source.sourceClass === "generated")).toBe(true);
+
+    const report = JSON.parse(await fs.readFile(path.join(rootDir, "wiki", "graph", "report.json"), "utf8")) as {
+      overview: { nodes: number };
+      firstPartyOverview: { nodes: number };
+      sourceClassBreakdown: Record<string, { sources: number }>;
+      warnings: string[];
+    };
+    expect(report.firstPartyOverview.nodes).toBeLessThan(report.overview.nodes);
+    expect(report.sourceClassBreakdown.third_party.sources).toBeGreaterThan(0);
+    expect(report.sourceClassBreakdown.resource.sources).toBeGreaterThan(0);
+    expect(report.sourceClassBreakdown.generated.sources).toBeGreaterThan(0);
+    expect(report.warnings.length).toBeGreaterThan(0);
+  });
+
   it("threads the schema through compile and query and marks pages stale when the schema changes", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

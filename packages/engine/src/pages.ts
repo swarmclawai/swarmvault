@@ -1,7 +1,17 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import type { GraphPage, OutputAsset, OutputFormat, OutputOrigin, PageKind, PageManager, PageStatus, SourceCaptureType } from "./types.js";
+import type {
+  GraphPage,
+  OutputAsset,
+  OutputFormat,
+  OutputOrigin,
+  PageKind,
+  PageManager,
+  PageStatus,
+  SourceCaptureType,
+  SourceClass
+} from "./types.js";
 import { fileExists, listFilesRecursive, sha256, slugify, toPosix } from "./utils.js";
 
 export interface StoredPage {
@@ -38,6 +48,10 @@ export function normalizePageManager(value: unknown, fallback: PageManager = "sy
 
 function normalizeSourceType(value: unknown): SourceCaptureType | undefined {
   return value === "arxiv" || value === "doi" || value === "tweet" || value === "article" || value === "url" ? value : undefined;
+}
+
+function normalizeSourceClass(value: unknown): SourceClass | undefined {
+  return value === "first_party" || value === "third_party" || value === "resource" || value === "generated" ? value : undefined;
 }
 
 function normalizeOutputFormat(value: unknown, fallback: OutputFormat = "markdown"): OutputFormat {
@@ -186,6 +200,7 @@ export function parseStoredPage(
     title,
     kind,
     sourceType: normalizeSourceType(parsed.data.source_type),
+    sourceClass: normalizeSourceClass(parsed.data.source_class),
     sourceIds,
     projectIds,
     nodeIds,
@@ -245,6 +260,7 @@ export async function loadInsightPages(wikiDir: string): Promise<StoredPage[]> {
         path: relativePath,
         title,
         kind: "insight",
+        sourceClass: normalizeSourceClass(parsed.data.source_class),
         sourceIds,
         projectIds,
         nodeIds,

@@ -182,12 +182,18 @@ export function queryGraph(
   options?: {
     traversal?: "bfs" | "dfs";
     budget?: number;
+    semanticMatches?: GraphQueryMatch[];
   }
 ): GraphQueryResult {
   const traversal = options?.traversal ?? "bfs";
   const budget = Math.max(3, Math.min(options?.budget ?? 12, 50));
   const matches = uniqueBy(
-    [...pageSearchMatches(graph, question, searchResults), ...nodeMatches(graph, question), ...hyperedgeMatches(graph, question)],
+    [
+      ...(options?.semanticMatches ?? []),
+      ...pageSearchMatches(graph, question, searchResults),
+      ...nodeMatches(graph, question),
+      ...hyperedgeMatches(graph, question)
+    ],
     (match) => `${match.type}:${match.id}`
   )
     .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
@@ -196,6 +202,7 @@ export function queryGraph(
   const seeds = uniqueBy(
     [
       ...searchResults.flatMap((result) => pages.get(result.pageId)?.nodeIds ?? []),
+      ...matches.filter((match) => match.type === "page").flatMap((match) => pages.get(match.id)?.nodeIds ?? []),
       ...matches.filter((match) => match.type === "node").map((match) => match.id),
       ...matches
         .filter((match) => match.type === "hyperedge")
@@ -232,6 +239,7 @@ export function queryGraph(
   const pageIds = uniqueBy(
     [
       ...searchResults.map((result) => result.pageId),
+      ...matches.filter((match) => match.type === "page").map((match) => match.id),
       ...visitedNodeIds.flatMap((nodeId) => {
         const node = nodes.get(nodeId);
         return node?.pageId ? [node.pageId] : [];
@@ -255,7 +263,7 @@ export function queryGraph(
     traversal,
     seedNodeIds: seeds,
     seedPageIds: uniqueBy(
-      searchResults.map((result) => result.pageId),
+      [...searchResults.map((result) => result.pageId), ...matches.filter((match) => match.type === "page").map((match) => match.id)],
       (item) => item
     ),
     visitedNodeIds,

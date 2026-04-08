@@ -89,6 +89,7 @@ export function graphHash(graph: GraphArtifact): string {
           type: node.type,
           label: node.label,
           pageId: node.pageId ?? null,
+          sourceClass: node.sourceClass ?? null,
           communityId: node.communityId ?? null,
           degree: node.degree ?? null,
           bridgeScore: node.bridgeScore ?? null,
@@ -105,6 +106,7 @@ export function graphHash(graph: GraphArtifact): string {
           relation: edge.relation,
           status: edge.status,
           evidenceClass: edge.evidenceClass,
+          similarityBasis: edge.similarityBasis ?? null,
           confidence: edge.confidence,
           provenance: [...edge.provenance].sort()
         }))
@@ -116,6 +118,7 @@ export function graphHash(graph: GraphArtifact): string {
           kind: page.kind,
           status: page.status,
           sourceType: page.sourceType ?? null,
+          sourceClass: page.sourceClass ?? null,
           sourceIds: [...page.sourceIds].sort(),
           projectIds: [...page.projectIds].sort(),
           nodeIds: [...page.nodeIds].sort()

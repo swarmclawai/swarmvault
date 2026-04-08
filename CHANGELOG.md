@@ -4,6 +4,14 @@
 
 Nothing yet.
 
+## 0.1.26
+
+- Added interactive-only CLI notices with a cached update prompt, a one-time repo-star prompt, and `SWARMVAULT_NO_NOTICES=1`, while keeping those notices disabled for `--json`, CI, MCP, and long-running serve/watch flows
+- Added real screenshot-backed docs updates plus richer worked examples across the README and site, and documented the release/test workflow so docs stay in sync with shipped behavior
+- Added optional embedding-backed semantic graph query with `tasks.embeddingProvider`, incremental vector caching in `state/embeddings.json`, and `similarityBasis` on `semantically_similar_to` edges
+- Added repo-aware `sourceClass` handling for `first_party`, `third_party`, `resource`, and `generated` material, including first-party-default directory ingest, source-class filters in search/viewer, and graph-report warnings/breakdowns for large mixed repos
+- Expanded engine tests, provider-registry coverage, and installed-artifact smoke validation to cover semantic graph query, source-class classification, and the real packaged install path
+
 ## 0.1.25
 
 - Fixed the published `@swarmvaultai/cli` manifest so real npm installs resolve `@swarmvaultai/engine` to the released semver instead of an invalid `workspace:*` dependency
