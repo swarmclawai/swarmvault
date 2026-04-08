@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetTreeSitterLanguageCacheForTests } from "../src/code-tree-sitter.js";
 import { compileVault, ingestDirectory, ingestInput, initVault, searchVault, syncTrackedRepos } from "../src/index.js";
 import type { CodeIndexArtifact, GraphArtifact, SourceAnalysis } from "../src/types.js";
 
@@ -14,6 +15,8 @@ async function createTempWorkspace(): Promise<string> {
 }
 
 afterEach(async () => {
+  resetTreeSitterLanguageCacheForTests();
+  vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -247,6 +250,110 @@ describe("code-aware ingestion", () => {
     expect(searchResults.some((result) => result.path === `code/${goTypeManifest.sourceId}.md`)).toBe(true);
   });
 
+  it("builds parser-backed module pages for Kotlin and Scala sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "kotlin"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "scala"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "kotlin", "Format.kt"),
+      ["package sample.util", "", 'fun formatName(name: String): String = "Kotlin:$name"'].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "kotlin", "Widget.kt"),
+      [
+        "package sample.app",
+        "",
+        "import sample.util.formatName",
+        "",
+        "interface Renderable",
+        "",
+        "open class BaseWidget",
+        "",
+        "class Widget(private val name: String) : BaseWidget(), Renderable {",
+        "  fun render(): String = formatName(name)",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "scala", "Helpers.scala"),
+      ["package sample.scalautil", "", 'def formatName(name: String): String = s"Scala:$name"'].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "scala", "Widget.scala"),
+      [
+        "package sample.app",
+        "",
+        "import sample.scalautil.formatName",
+        "",
+        "trait Renderable",
+        "",
+        "class BaseWidget",
+        "",
+        "class Widget(name: String) extends BaseWidget with Renderable {",
+        "  def render(): String = formatName(name)",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const kotlinFormatManifest = await ingestInput(rootDir, "kotlin/Format.kt");
+    const kotlinWidgetManifest = await ingestInput(rootDir, "kotlin/Widget.kt");
+    const scalaHelperManifest = await ingestInput(rootDir, "scala/Helpers.scala");
+    const scalaWidgetManifest = await ingestInput(rootDir, "scala/Widget.scala");
+
+    expect(kotlinFormatManifest.language).toBe("kotlin");
+    expect(kotlinWidgetManifest.language).toBe("kotlin");
+    expect(scalaHelperManifest.language).toBe("scala");
+    expect(scalaWidgetManifest.language).toBe("scala");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "kotlin")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "scala")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget.render")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "formatName")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "implements" &&
+          nodeById.get(edge.source)?.label === "Widget" &&
+          nodeById.get(edge.target)?.label === "Renderable"
+      )
+    ).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "extends" && nodeById.get(edge.source)?.label === "Widget" && nodeById.get(edge.target)?.label === "BaseWidget"
+      )
+    ).toBe(true);
+
+    const kotlinModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${kotlinWidgetManifest.sourceId}.md`), "utf8");
+    const scalaModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${scalaWidgetManifest.sourceId}.md`), "utf8");
+
+    expect(kotlinModulePage).toContain("Language: `kotlin`");
+    expect(kotlinModulePage).toContain("Namespace/Package: `sample.app`");
+    expect(kotlinModulePage).toContain("## Imports");
+    expect(kotlinModulePage).toContain(`code/${kotlinFormatManifest.sourceId}`);
+
+    expect(scalaModulePage).toContain("Language: `scala`");
+    expect(scalaModulePage).toContain("Namespace/Package: `sample.app`");
+    expect(scalaModulePage).toContain("## Imports");
+    expect(scalaModulePage).toContain(`code/${scalaHelperManifest.sourceId}`);
+
+    const searchResults = await searchVault(rootDir, "Widget.render", 20);
+    expect(searchResults.some((result) => result.path === `code/${kotlinWidgetManifest.sourceId}.md`)).toBe(true);
+    expect(searchResults.some((result) => result.path === `code/${scalaWidgetManifest.sourceId}.md`)).toBe(true);
+  });
+
   it("builds parser-backed module pages for C#, PHP, C, and C++ sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -348,6 +455,71 @@ describe("code-aware ingestion", () => {
     const searchResults = await searchVault(rootDir, "Widget", 20);
     expect(searchResults.some((result) => result.path === `code/${csharpManifest.sourceId}.md`)).toBe(true);
     expect(searchResults.some((result) => result.path === `code/${phpManifest.sourceId}.md`)).toBe(true);
+  });
+
+  it("detects Kotlin and Scala script extensions as code sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(path.join(rootDir, "script.kts"), 'println("hello")\n', "utf8");
+    await fs.writeFile(path.join(rootDir, "script.sc"), 'println("scala hello")\n', "utf8");
+
+    const kotlinScript = await ingestInput(rootDir, "script.kts");
+    const scalaScript = await ingestInput(rootDir, "script.sc");
+
+    expect(kotlinScript.sourceKind).toBe("code");
+    expect(kotlinScript.language).toBe("kotlin");
+    expect(scalaScript.sourceKind).toBe("code");
+    expect(scalaScript.language).toBe("scala");
+  });
+
+  it("records a clear diagnostic when a tree-sitter grammar asset is missing without failing unrelated sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "src", "Widget.kt"),
+      [
+        "package sample.app",
+        "",
+        "class Widget {",
+        "  fun render(): String = formatName()",
+        "}",
+        "",
+        'fun formatName(): String = "ok"'
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(path.join(rootDir, "src", "util.py"), "def helper(name):\n    return name.upper()\n", "utf8");
+
+    const kotlinManifest = await ingestInput(rootDir, "src/Widget.kt");
+    const pythonManifest = await ingestInput(rootDir, "src/util.py");
+    const originalReadFile = fs.readFile.bind(fs);
+    resetTreeSitterLanguageCacheForTests();
+    vi.spyOn(fs, "readFile").mockImplementation(async (target, options) => {
+      if (String(target).endsWith("tree-sitter-kotlin.wasm")) {
+        const error = new Error("missing grammar asset") as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        throw error;
+      }
+      return originalReadFile(target as Parameters<typeof fs.readFile>[0], options as Parameters<typeof fs.readFile>[1]);
+    });
+
+    await expect(compileVault(rootDir)).resolves.toBeTruthy();
+
+    const kotlinAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${kotlinManifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(
+      kotlinAnalysis.code?.diagnostics.some((diagnostic) => diagnostic.message.includes("Missing tree-sitter grammar asset for kotlin"))
+    ).toBe(true);
+
+    const pythonPage = await fs.readFile(path.join(rootDir, "wiki", "code", `${pythonManifest.sourceId}.md`), "utf8");
+    const kotlinPage = await fs.readFile(path.join(rootDir, "wiki", "code", `${kotlinManifest.sourceId}.md`), "utf8");
+
+    expect(pythonPage).toContain("Language: `python`");
+    expect(kotlinPage).toContain("Missing tree-sitter grammar asset for kotlin");
   });
 
   it("ingests repo directories, writes code-index.json, and updates existing manifests by path", async () => {

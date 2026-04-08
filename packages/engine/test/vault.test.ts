@@ -28,9 +28,11 @@ import {
   queryVault,
   readApproval,
   runWatchCycle,
+  searchVault,
   uninstallGitHooks,
   watchVault
 } from "../src/index.js";
+import { buildGraphReportArtifact } from "../src/markdown.js";
 import type { GraphArtifact, SourceAnalysis, SourceExtractionArtifact } from "../src/types.js";
 
 const tempDirs: string[] = [];
@@ -521,6 +523,44 @@ describe("swarmvault workflow", () => {
     ) as SourceAnalysis;
     expect(analysis.summary).toContain("Local DOCX files should extract readable text before analysis.");
     expect(analysis.extractionHash).toBe(manifest.extractionHash);
+  });
+
+  it("treats .rst files as first-class text sources with normalized extracted text", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "guide.rst"),
+      [
+        "Guide Title",
+        "===========",
+        "",
+        "SwarmVault should keep reStructuredText searchable.",
+        "",
+        ".. note:: Parser diagnostics stay local to the affected module."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manifest = await ingestInput(rootDir, "guide.rst");
+    expect(manifest.sourceKind).toBe("text");
+    expect(manifest.mimeType).toBe("text/x-rst");
+    expect(manifest.title).toBe("Guide Title");
+    expect(manifest.extractedTextPath).toBeTruthy();
+
+    const extractedText = await fs.readFile(path.join(rootDir, manifest.extractedTextPath as string), "utf8");
+    expect(extractedText).toContain("# Guide Title");
+    expect(extractedText).toContain("Note: Parser diagnostics stay local to the affected module.");
+
+    await compileVault(rootDir);
+
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.summary).toContain("reStructuredText");
+
+    const searchResults = await searchVault(rootDir, "Parser diagnostics", 5);
+    expect(searchResults.some((result) => result.pageId === `source:${manifest.sourceId}`)).toBe(true);
   });
 
   it("uses the configured vision provider to analyze image sources", async () => {
@@ -1339,6 +1379,87 @@ describe("swarmvault workflow", () => {
     expect(report.sourceClassBreakdown.resource.sources).toBeGreaterThan(0);
     expect(report.sourceClassBreakdown.generated.sources).toBeGreaterThan(0);
     expect(report.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("rolls up fragmented tiny communities in report presentation without mutating the graph", async () => {
+    const now = "2026-04-08T00:00:00.000Z";
+    const graph: GraphArtifact = {
+      generatedAt: now,
+      nodes: Array.from({ length: 8 }, (_, index) => ({
+        id: `node:${index + 1}`,
+        type: "source",
+        label: `Source ${index + 1}`,
+        pageId: `source:${index + 1}`,
+        sourceIds: [`source-${index + 1}`],
+        projectIds: [],
+        sourceClass: "first_party"
+      })),
+      edges: [],
+      hyperedges: [],
+      communities: Array.from({ length: 8 }, (_, index) => ({
+        id: `community:${index + 1}`,
+        label: `Community ${index + 1}`,
+        nodeIds: [`node:${index + 1}`]
+      })),
+      sources: Array.from({ length: 8 }, (_, index) => ({
+        sourceId: `source-${index + 1}`,
+        originType: "file",
+        sourceKind: "markdown",
+        sourceClass: "first_party",
+        mimeType: "text/markdown",
+        contentHash: `hash-${index + 1}`,
+        storedPath: `raw/sources/source-${index + 1}.md`,
+        title: `Source ${index + 1}`,
+        createdAt: now,
+        updatedAt: now
+      })),
+      pages: Array.from({ length: 8 }, (_, index) => ({
+        id: `source:${index + 1}`,
+        path: `sources/source-${index + 1}.md`,
+        title: `Source ${index + 1}`,
+        kind: "source",
+        sourceClass: "first_party",
+        sourceIds: [`source-${index + 1}`],
+        projectIds: [],
+        nodeIds: [`node:${index + 1}`],
+        freshness: "fresh",
+        status: "active",
+        confidence: 1,
+        backlinks: [],
+        schemaHash: "schema-hash",
+        sourceHashes: { [`source-${index + 1}`]: `hash-${index + 1}` },
+        relatedPageIds: [],
+        relatedNodeIds: [],
+        relatedSourceIds: [],
+        createdAt: now,
+        updatedAt: now,
+        compiledFrom: [`source-${index + 1}`],
+        managedBy: "system"
+      }))
+    };
+
+    const communityPages =
+      graph.communities?.map((community) => ({
+        id: `community-page:${community.id}`,
+        path: `graph/communities/${community.id}.md`,
+        title: community.label
+      })) ?? [];
+
+    const report = buildGraphReportArtifact({
+      graph,
+      communityPages,
+      graphHash: "graph-hash"
+    });
+
+    expect(graph.communities).toHaveLength(8);
+    expect(report.thinCommunities).toHaveLength(6);
+    expect(report.fragmentedCommunityRollup).toEqual({
+      totalCommunities: 8,
+      rolledUpCount: 2,
+      rolledUpNodes: 2,
+      exampleLabels: ["Community 7", "Community 8"]
+    });
+    expect(report.warnings.some((warning) => warning.includes("rolled up for readability"))).toBe(true);
   });
 
   it("threads the schema through compile and query and marks pages stale when the schema changes", async () => {

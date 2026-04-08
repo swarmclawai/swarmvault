@@ -110,13 +110,13 @@ swarmvault mcp
 
 | 输入 | 扩展名 / 来源 | 提取方式 |
 |------|---------------|----------|
-| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1` | 基于 tree-sitter 的 AST 与模块解析 |
+| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1 .kt .kts .scala .sc` | 基于 tree-sitter 的 AST 与模块解析 |
 | PDF | `.pdf` | 本地文本提取 |
 | DOCX | `.docx` | 本地提取与元数据捕获 |
 | HTML | `.html`、URL | Readability + Turndown 转 Markdown |
 | Images | `.png .jpg .webp` | Vision provider（已配置时） |
 | Research | arXiv、DOI、文章、X/Twitter | 通过 `swarmvault add` 标准化为 Markdown |
-| Markdown | `.md .txt` | 直接 ingest |
+| Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 
 <!-- readme-section:what-you-get -->
@@ -141,6 +141,8 @@ swarmvault mcp
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 
 **外部图谱输出** - 可导出为 HTML、SVG、GraphML、Cypher，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
+
+**大型仓库加固** - 面对大批量仓库 ingest 和 compile 时会输出有边界的进度提示；parser 兼容性失败只会影响对应源文件并留下明确诊断；图谱报告会把过于碎片化的小社区折叠展示，保持可读性。
 
 每条边都会标记为 `extracted`、`inferred` 或 `ambiguous`，因此你始终知道哪些是明确提取到的，哪些只是推断。
 

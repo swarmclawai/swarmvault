@@ -14,7 +14,9 @@ import type {
 import { normalizeWhitespace, slugify, toPosix, truncate, uniqueBy } from "./utils.js";
 
 const require = createRequire(import.meta.url);
-const TREE_SITTER_PACKAGE_ROOT = path.dirname(path.dirname(require.resolve("@vscode/tree-sitter-wasm")));
+const TREE_SITTER_RUNTIME_PACKAGE = "@vscode/tree-sitter-wasm";
+const TREE_SITTER_EXTRA_GRAMMARS_PACKAGE = "tree-sitter-wasms";
+const packageRootCache = new Map<string, string>();
 
 type DraftCodeSymbol = {
   name: string;
@@ -90,22 +92,49 @@ let treeSitterModulePromise: Promise<TreeSitterModule> | undefined;
 let treeSitterInitPromise: Promise<void> | undefined;
 const languageCache = new Map<string, Promise<TreeLanguage>>();
 
-const grammarFileByLanguage: Record<Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">, string> = {
-  python: "tree-sitter-python.wasm",
-  go: "tree-sitter-go.wasm",
-  rust: "tree-sitter-rust.wasm",
-  java: "tree-sitter-java.wasm",
-  csharp: "tree-sitter-c-sharp.wasm",
-  c: "tree-sitter-cpp.wasm",
-  cpp: "tree-sitter-cpp.wasm",
-  php: "tree-sitter-php.wasm",
-  ruby: "tree-sitter-ruby.wasm",
-  powershell: "tree-sitter-powershell.wasm"
+type TreeSitterGrammarAsset = {
+  packageName: string;
+  relativePath: string;
 };
+
+const grammarAssetByLanguage: Record<Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">, TreeSitterGrammarAsset> = {
+  python: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-python.wasm" },
+  go: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-go.wasm" },
+  rust: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-rust.wasm" },
+  java: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-java.wasm" },
+  kotlin: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-kotlin.wasm" },
+  scala: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-scala.wasm" },
+  csharp: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-c-sharp.wasm" },
+  c: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-cpp.wasm" },
+  cpp: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-cpp.wasm" },
+  php: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-php.wasm" },
+  ruby: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-ruby.wasm" },
+  powershell: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-powershell.wasm" }
+};
+
+function resolvePackageRoot(packageName: string): string {
+  const cached = packageRootCache.get(packageName);
+  if (cached) {
+    return cached;
+  }
+  let resolved: string;
+  try {
+    resolved = path.dirname(require.resolve(`${packageName}/package.json`));
+  } catch {
+    resolved = path.dirname(path.dirname(require.resolve(packageName)));
+  }
+  packageRootCache.set(packageName, resolved);
+  return resolved;
+}
+
+function grammarAssetPath(language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">): string {
+  const asset = grammarAssetByLanguage[language];
+  return path.join(resolvePackageRoot(asset.packageName), asset.relativePath);
+}
 
 async function getTreeSitterModule(): Promise<TreeSitterModule> {
   if (!treeSitterModulePromise) {
-    treeSitterModulePromise = import(require.resolve("@vscode/tree-sitter-wasm")).then(
+    treeSitterModulePromise = import(require.resolve(TREE_SITTER_RUNTIME_PACKAGE)).then(
       (module) => (module.default ?? module) as TreeSitterModule
     );
   }
@@ -114,8 +143,9 @@ async function getTreeSitterModule(): Promise<TreeSitterModule> {
 
 async function ensureTreeSitterInit(module: TreeSitterModule): Promise<void> {
   if (!treeSitterInitPromise) {
+    const runtimeRoot = resolvePackageRoot(TREE_SITTER_RUNTIME_PACKAGE);
     treeSitterInitPromise = module.Parser.init({
-      locateFile: () => path.join(TREE_SITTER_PACKAGE_ROOT, "wasm", "tree-sitter.wasm")
+      locateFile: () => path.join(runtimeRoot, "wasm", "tree-sitter.wasm")
     });
   }
   return treeSitterInitPromise;
@@ -130,7 +160,7 @@ async function loadLanguage(language: Exclude<CodeLanguage, "javascript" | "jsx"
   const loader = (async () => {
     const module = await getTreeSitterModule();
     await ensureTreeSitterInit(module);
-    const bytes = await fs.readFile(path.join(TREE_SITTER_PACKAGE_ROOT, "wasm", grammarFileByLanguage[language]));
+    const bytes = await fs.readFile(grammarAssetPath(language));
     return module.Language.load(bytes);
   })();
 
@@ -151,7 +181,7 @@ function normalizeSymbolReference(value: string): string {
 }
 
 function stripCodeExtension(filePath: string): string {
-  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
+  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
 }
 
 function manifestModuleName(manifest: SourceManifest, language: CodeLanguage): string | undefined {
@@ -463,6 +493,7 @@ function extractIdentifier(node: TreeNode | null | undefined): string | undefine
   if (
     [
       "identifier",
+      "simple_identifier",
       "field_identifier",
       "type_identifier",
       "name",
@@ -481,6 +512,7 @@ function extractIdentifier(node: TreeNode | null | undefined): string | undefine
         child &&
         [
           "identifier",
+          "simple_identifier",
           "field_identifier",
           "type_identifier",
           "name",
@@ -563,6 +595,40 @@ function diagnosticsFromTree(rootNode: TreeNode): CodeDiagnostic[] {
 
   visit(rootNode);
   return diagnostics.slice(0, 20);
+}
+
+function treeSitterCompatibilityMessage(
+  language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">,
+  error: unknown
+): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "MODULE_NOT_FOUND") {
+    return `Tree-sitter runtime support for ${language} is unavailable. Reinstall @swarmvaultai/engine so the packaged parser runtime is present.`;
+  }
+  if (typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+    return `Missing tree-sitter grammar asset for ${language}. Reinstall @swarmvaultai/engine so the packaged grammar files are present.`;
+  }
+  return `Tree-sitter support for ${language} could not load: ${truncate(normalizeWhitespace(message), 220)}.`;
+}
+
+function treeSitterCompatibilityDiagnostic(
+  language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">,
+  error: unknown
+): CodeDiagnostic {
+  return {
+    code: 9010,
+    category: "error",
+    message: treeSitterCompatibilityMessage(language, error),
+    line: 1,
+    column: 1
+  };
+}
+
+export function resetTreeSitterLanguageCacheForTests(): void {
+  treeSitterModulePromise = undefined;
+  treeSitterInitPromise = undefined;
+  languageCache.clear();
+  packageRootCache.clear();
 }
 
 function parsePythonImportStatement(text: string): CodeImport[] {
@@ -661,6 +727,42 @@ function parseJavaImport(text: string): CodeImport {
     isExternal: true,
     reExport: false
   };
+}
+
+function parseKotlinImport(text: string): CodeImport | undefined {
+  const cleaned = text.trim().replace(/^import\s+/, "");
+  if (!cleaned) {
+    return undefined;
+  }
+  const aliasMatch = cleaned.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/);
+  const specifier = (aliasMatch ? aliasMatch[1] : cleaned).trim();
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    namespaceImport: aliasMatch?.[2],
+    isExternal: !specifier.startsWith("."),
+    reExport: false
+  };
+}
+
+function parseScalaImport(text: string): CodeImport[] {
+  const cleaned = text.trim().replace(/^import\s+/, "");
+  if (!cleaned) {
+    return [];
+  }
+  return cleaned
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => ({
+      specifier: item.replace(/\s*=>\s*/g, " => "),
+      importedSymbols: [],
+      isExternal: !item.startsWith("."),
+      reExport: false
+    }));
 }
 
 function parseCSharpUsing(text: string): CodeImport | undefined {
@@ -778,6 +880,42 @@ function parsePowerShellImport(commandNode: TreeNode): CodeImport | undefined {
     };
   }
 
+  return undefined;
+}
+
+function keywordVisible(text: string, hiddenKeywords: string[]): boolean {
+  return !hiddenKeywords.some((keyword) => new RegExp(`\\b${keyword}\\b`).test(text));
+}
+
+function declarationVisible(node: TreeNode, hiddenKeywords: string[]): boolean {
+  const modifierText = nodeText(findNamedChild(node, "modifiers") ?? node.childForFieldName("modifiers"));
+  return modifierText ? keywordVisible(modifierText, hiddenKeywords) : true;
+}
+
+function kotlinClassKind(text: string): CodeSymbolKind {
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith("interface ")) {
+    return "interface";
+  }
+  if (trimmed.startsWith("enum class ")) {
+    return "enum";
+  }
+  return "class";
+}
+
+function scalaDefinitionKind(node: TreeNode): CodeSymbolKind | undefined {
+  if (node.type === "trait_definition") {
+    return "trait";
+  }
+  if (node.type === "class_definition") {
+    return /\bcase\s+class\b/.test(node.text) ? "class" : "class";
+  }
+  if (node.type === "object_definition") {
+    return "class";
+  }
+  if (node.type === "function_definition") {
+    return "function";
+  }
   return undefined;
 }
 
@@ -1057,6 +1195,193 @@ function javaCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
   }
 
   return finalizeCodeAnalysis(manifest, "java", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: packageName
+  });
+}
+
+function kotlinCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  let packageName: string | undefined;
+
+  const pushBodyFunctions = (bodyNode: TreeNode | null | undefined, scopeName?: string) => {
+    if (!bodyNode) {
+      return;
+    }
+    for (const child of bodyNode.namedChildren) {
+      if (!child || child.type !== "function_declaration") {
+        continue;
+      }
+      const functionName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "simple_identifier"));
+      if (!functionName) {
+        continue;
+      }
+      const exported = declarationVisible(child, ["private", "internal", "protected"]);
+      const symbolName = scopeName ? `${scopeName}.${functionName}` : functionName;
+      draftSymbols.push({
+        name: symbolName,
+        kind: "function",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(child.childForFieldName("body") ?? findNamedChild(child, "function_body"))
+      });
+      if (exported) {
+        exportLabels.push(symbolName);
+      }
+    }
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "package_header") {
+      packageName = nodeText(findNamedChild(child, "identifier") ?? child.namedChildren.at(0) ?? null) || packageName;
+      continue;
+    }
+    if (child.type === "import_list") {
+      for (const importNode of child.descendantsOfType("import_header").filter((item): item is TreeNode => item !== null)) {
+        const parsed = parseKotlinImport(importNode.text);
+        if (parsed) {
+          imports.push(parsed);
+        }
+      }
+      continue;
+    }
+    if (child.type === "function_declaration") {
+      pushBodyFunctions({
+        ...child,
+        namedChildren: [child]
+      } as TreeNode);
+      continue;
+    }
+    if (child.type !== "class_declaration" && child.type !== "object_declaration") {
+      continue;
+    }
+
+    const name = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "type_identifier"));
+    if (!name) {
+      continue;
+    }
+    const kind = child.type === "object_declaration" ? "class" : kotlinClassKind(child.text);
+    const delegationNames = uniqueBy(
+      child.namedChildren
+        .filter((item): item is TreeNode => item !== null && item.type === "delegation_specifier")
+        .flatMap((item) => descendantTypeNames(item)),
+      (item) => item
+    );
+    const exported = declarationVisible(child, ["private", "internal"]);
+    const bodyNode = findNamedChild(child, "class_body") ?? child.childForFieldName("body");
+    draftSymbols.push({
+      name,
+      kind,
+      signature: singleLineSignature(child.text),
+      exported,
+      callNames: [],
+      extendsNames: kind === "interface" ? delegationNames : delegationNames.slice(0, 1),
+      implementsNames: kind === "class" ? delegationNames.slice(1) : [],
+      bodyText: nodeText(bodyNode) || child.text
+    });
+    if (exported) {
+      exportLabels.push(name);
+    }
+    pushBodyFunctions(bodyNode, name);
+  }
+
+  return finalizeCodeAnalysis(manifest, "kotlin", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: packageName
+  });
+}
+
+function scalaCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  let packageName: string | undefined;
+
+  const pushTemplateFunctions = (bodyNode: TreeNode | null | undefined, scopeName?: string) => {
+    if (!bodyNode) {
+      return;
+    }
+    for (const child of bodyNode.namedChildren) {
+      if (!child || child.type !== "function_definition") {
+        continue;
+      }
+      const functionName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+      if (!functionName) {
+        continue;
+      }
+      const exported = declarationVisible(child, ["private", "protected"]);
+      const symbolName = scopeName ? `${scopeName}.${functionName}` : functionName;
+      draftSymbols.push({
+        name: symbolName,
+        kind: "function",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      if (exported) {
+        exportLabels.push(symbolName);
+      }
+    }
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "package_clause") {
+      packageName = nodeText(findNamedChild(child, "package_identifier") ?? child.namedChildren.at(0) ?? null) || packageName;
+      continue;
+    }
+    if (child.type === "import_declaration") {
+      imports.push(...parseScalaImport(child.text));
+      continue;
+    }
+    if (child.type === "function_definition") {
+      pushTemplateFunctions({
+        ...child,
+        namedChildren: [child]
+      } as TreeNode);
+      continue;
+    }
+    if (!["trait_definition", "class_definition", "object_definition"].includes(child.type)) {
+      continue;
+    }
+
+    const name = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+    const kind = scalaDefinitionKind(child);
+    if (!name || !kind) {
+      continue;
+    }
+    const extendsClause = findNamedChild(child, "extends_clause") ?? child.childForFieldName("extends");
+    const inheritance = uniqueBy(descendantTypeNames(extendsClause), (item) => item);
+    const bodyNode = findNamedChild(child, "template_body") ?? child.childForFieldName("body");
+    const exported = declarationVisible(child, ["private", "protected"]);
+    draftSymbols.push({
+      name,
+      kind,
+      signature: singleLineSignature(child.text),
+      exported,
+      callNames: [],
+      extendsNames: kind === "trait" ? inheritance : inheritance.slice(0, 1),
+      implementsNames: kind === "class" ? inheritance.slice(1) : [],
+      bodyText: nodeText(bodyNode) || child.text
+    });
+    if (exported) {
+      exportLabels.push(name);
+    }
+    pushTemplateFunctions(bodyNode, name);
+  }
+
+  return finalizeCodeAnalysis(manifest, "scala", imports, draftSymbols, exportLabels, diagnostics, {
     namespace: packageName
   });
 }
@@ -1529,11 +1854,20 @@ export async function analyzeTreeSitterCode(
   code: CodeAnalysis;
   rationales: SourceRationale[];
 }> {
-  const module = await getTreeSitterModule();
-  await ensureTreeSitterInit(module);
-  const parser = new module.Parser();
-  parser.setLanguage(await loadLanguage(language));
-  const tree = parser.parse(content);
+  let tree: Tree | null = null;
+  try {
+    const module = await getTreeSitterModule();
+    await ensureTreeSitterInit(module);
+    const parser = new module.Parser();
+    parser.setLanguage(await loadLanguage(language));
+    tree = parser.parse(content);
+  } catch (error) {
+    return {
+      code: finalizeCodeAnalysis(manifest, language, [], [], [], [treeSitterCompatibilityDiagnostic(language, error)]),
+      rationales: []
+    };
+  }
+
   if (!tree) {
     return {
       code: finalizeCodeAnalysis(
@@ -1568,6 +1902,10 @@ export async function analyzeTreeSitterCode(
         return { code: rustCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "java":
         return { code: javaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "kotlin":
+        return { code: kotlinCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "scala":
+        return { code: scalaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "csharp":
         return { code: csharpCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "php":
@@ -1579,6 +1917,26 @@ export async function analyzeTreeSitterCode(
       case "c":
       case "cpp":
         return { code: cFamilyCodeAnalysis(manifest, language, tree.rootNode, diagnostics), rationales };
+      default:
+        return {
+          code: finalizeCodeAnalysis(
+            manifest,
+            language,
+            [],
+            [],
+            [],
+            [
+              {
+                code: 9011,
+                category: "error",
+                message: `No parser-backed analyzer is registered for ${language}.`,
+                line: 1,
+                column: 1
+              }
+            ]
+          ),
+          rationales
+        };
     }
   } finally {
     tree.delete();

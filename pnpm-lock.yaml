@@ -24,7 +24,7 @@ importers:
   packages/cli:
     dependencies:
       '@swarmvaultai/engine':
-        specifier: 0.1.32
+        specifier: 0.1.33
         version: link:../engine
       commander:
         specifier: ^14.0.1
@@ -78,6 +78,9 @@ importers:
       pdfjs-dist:
         specifier: ^5.4.394
         version: 5.6.205
+      tree-sitter-wasms:
+        specifier: ^0.1.13
+        version: 0.1.13
       turndown:
         specifier: ^7.2.1
         version: 7.2.4
@@ -1721,6 +1724,9 @@ packages:
   tree-kill@1.2.2:
     resolution: {integrity: sha512-L0Orpi8qGpRG//Nd+H90vFB+3iHnue1zSSGmNOOCh1GLJ7rUKVwV2HvijphGQS2UmhUZewS9VgvxYIdgr+fG1A==}
     hasBin: true
+
+  tree-sitter-wasms@0.1.13:
+    resolution: {integrity: sha512-wT+cR6DwaIz80/vho3AvSF0N4txuNx/5bcRKoXouOfClpxh/qqrF4URNLQXbbt8MaAxeksZcZd1j8gcGjc+QxQ==}
 
   ts-interface-checker@0.1.13:
     resolution: {integrity: sha512-Y/arvbn+rrz3JCKl9C4kVNfTfSm2/mEp5FSz5EsZSANGPSlQrpRI5M4PKF+mJnE52jOO90PnPSc3Ur3bTQw0gA==}
@@ -3386,6 +3392,8 @@ snapshots:
       punycode: 2.3.1
 
   tree-kill@1.2.2: {}
+
+  tree-sitter-wasms@0.1.13: {}
 
   ts-interface-checker@0.1.13: {}
 
