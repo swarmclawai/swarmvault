@@ -6,7 +6,7 @@ import type { VaultSchema } from "./schema.js";
 import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceExtractionArtifact, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
-const ANALYSIS_FORMAT_VERSION = 5;
+const ANALYSIS_FORMAT_VERSION = 6;
 
 const sourceAnalysisSchema = z.object({
   title: z.string().min(1),
@@ -31,7 +31,8 @@ const sourceAnalysisSchema = z.object({
     )
     .max(8)
     .default([]),
-  questions: z.array(z.string()).max(6).default([])
+  questions: z.array(z.string()).max(6).default([]),
+  tags: z.array(z.string()).max(5).default([])
 });
 
 const STOPWORDS = new Set([
@@ -149,6 +150,7 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
       citation: manifest.sourceId
     })),
     questions: concepts.slice(0, 3).map((term) => `How does ${term.name} relate to ${manifest.title}?`),
+    tags: [],
     rationales: [],
     producedAt: new Date().toISOString()
   };
@@ -166,6 +168,8 @@ async function providerAnalysis(
         "You are compiling a durable markdown wiki and graph. Prefer grounded synthesis over creativity.",
         "",
         "Follow the vault schema when choosing titles, categories, relationships, and summaries.",
+        "",
+        "Return up to 5 broad domain tags that categorize this source. Tags should be lowercase kebab-case (e.g., cryptography, distributed-systems, machine-learning). These are broader categories, not specific concepts or entity names.",
         "",
         `Vault schema path: ${schema.path}`,
         "",
@@ -204,6 +208,7 @@ async function providerAnalysis(
       citation: claim.citation
     })),
     questions: parsed.questions,
+    tags: parsed.tags,
     rationales: [],
     producedAt: new Date().toISOString()
   };
@@ -245,6 +250,7 @@ function analysisFromVisionExtraction(
       citation: manifest.sourceId
     })),
     questions: extraction.vision.questions,
+    tags: [],
     rationales: [],
     producedAt: new Date().toISOString()
   };
@@ -300,6 +306,7 @@ export async function analyzeSource(
         entities: [],
         claims: [],
         questions: [],
+        tags: [],
         rationales: [],
         producedAt: new Date().toISOString()
       };
@@ -325,6 +332,7 @@ export async function analyzeSource(
       entities: [],
       claims: [],
       questions: [],
+      tags: [],
       rationales: [],
       producedAt: new Date().toISOString()
     };

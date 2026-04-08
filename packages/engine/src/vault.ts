@@ -1935,7 +1935,7 @@ async function syncVaultArtifacts(
           modulePreview ?? undefined,
           {
             projectIds: sourceProjectIds,
-            extraTags: sourceCategoryTags,
+            extraTags: [...sourceCategoryTags, ...(analysis.tags ?? [])],
             sourceClass: manifest.sourceClass
           }
         )
@@ -1987,7 +1987,7 @@ async function syncVaultArtifacts(
               localModules,
               relatedOutputs: relatedOutputsForPage(modulePreview, input.outputPages),
               projectIds: sourceProjectIds,
-              extraTags: sourceCategoryTags
+              extraTags: [...sourceCategoryTags, ...(analysis.tags ?? [])]
             })
         )
       );

@@ -2311,7 +2311,7 @@ export async function analyzeCodeSource(manifest: SourceManifest, extractedText:
       : await analyzeTreeSitterCode(manifest, extractedText, language);
 
   return {
-    analysisVersion: 5,
+    analysisVersion: 6,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
     extractionHash: manifest.extractionHash,
@@ -2322,6 +2322,7 @@ export async function analyzeCodeSource(manifest: SourceManifest, extractedText:
     entities: [],
     claims: codeClaims(manifest, code),
     questions: codeQuestions(manifest, code),
+    tags: [],
     rationales,
     code,
     producedAt: new Date().toISOString()
