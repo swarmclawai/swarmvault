@@ -135,7 +135,8 @@ Measure graph-guided context reduction against a naive full-corpus read.
 Inspect and resolve staged approval bundles created by `swarmvault compile --approve`.
 
 - `review list` shows pending, accepted, and rejected entry counts per bundle
-- `review show <approvalId>` shows each staged entry plus its current and staged content
+- `review show <approvalId>` shows each staged entry plus its current and staged content, including a section-level change summary when available
+- `review show <approvalId> --diff` adds a unified diff between current and staged content
 - `review accept <approvalId> [targets...]` applies pending entries to the live wiki
 - `review reject <approvalId> [targets...]` marks pending entries as rejected without mutating active wiki paths
 
@@ -179,19 +180,22 @@ Each step:
 
 The command also writes a hub page linking the root question, saved step pages, and generated follow-up questions.
 
-### `swarmvault lint [--deep] [--web]`
+### `swarmvault lint [--deep] [--web] [--conflicts]`
 
-Run anti-drift and vault health checks such as stale pages, missing graph artifacts, and other structural issues.
+Run anti-drift and vault health checks such as stale pages, missing graph artifacts, contradiction findings, and other structural issues.
 
 `--deep` adds an LLM-powered advisory pass that can report:
 
 - `coverage_gap`
+- `contradiction`
 - `contradiction_candidate`
 - `missing_citation`
 - `candidate_page`
 - `follow_up_question`
 
 `--web` can only be used with `--deep`. It enriches deep-lint findings with external evidence snippets and URLs from a configured web-search provider.
+
+`--conflicts` filters the results down to contradiction-focused findings so you can audit conflicting claims without the rest of the lint output.
 
 ### `swarmvault watch [--lint] [--repo] [--once] [--debounce <ms>]`
 

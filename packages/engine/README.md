@@ -184,6 +184,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 - `compileVault(rootDir, { approve })` writes wiki pages, graph data, and search state using the vault schema as guidance, or stages a review bundle
 - compile also writes graph orientation pages such as `wiki/graph/report.md`, `wiki/graph/report.json`, and `wiki/graph/communities/<community>.md`
+- compile propagates semantic tags onto page frontmatter and source-backed graph nodes, and records deterministic `contradicts` edges plus a Contradictions section in the graph report when conflicting claims are found
 - `benchmarkVault(rootDir, { questions })` writes `state/benchmark.json` and folds the latest benchmark summary into `wiki/graph/report.md` and `wiki/graph/report.json`
 - semantic graph query and embedding-backed similarity enrichment cache vectors under `state/embeddings.json` so graph-semantic refresh stays incremental
 - `queryVault(rootDir, { question, save, format, review })` answers against the compiled vault using the same schema layer and saves by default
@@ -207,7 +208,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `syncTrackedReposForWatch(rootDir)` is the repo-watch sync path that defers non-code semantic refresh into `state/watch/`
 - `installGitHooks(rootDir)`, `uninstallGitHooks(rootDir)`, and `getGitHookStatus(rootDir)` manage local `post-commit` and `post-checkout` hook blocks for the nearest git repository
 - `installAgent(rootDir, agent, { hook })` writes agent instructions and returns the primary `target`, all touched `targets`, and optional merge warnings for agents such as Aider
-- `lintVault(rootDir, options)` runs structural lint, optional deep lint, and optional web-augmented evidence gathering
+- `lintVault(rootDir, options)` runs structural lint, optional deep lint, optional contradiction-only filtering through `{ conflicts: true }`, and optional web-augmented evidence gathering
 - `listSchedules(rootDir)`, `runSchedule(rootDir, jobId)`, and `serveSchedules(rootDir)` manage recurring local jobs from config
 - compile, query, explore, lint, and watch also write canonical markdown session artifacts to `state/sessions/`
 - scheduled `query` and `explore` jobs stage saved outputs through approvals when they write artifacts

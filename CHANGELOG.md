@@ -8,6 +8,7 @@
 - Added section-level change summaries to `swarmvault review show` so approval entries describe what changed without needing to read full diffs
 - Added `swarmvault review show --diff` for unified diff output between current and staged page content
 - Bumped analysis format version to 6 so existing cached analyses regenerate with the new tags field
+- Added full-parity English, Simplified Chinese, and Japanese OSS README support with a parity check wired into `pnpm check`
 
 ## 0.1.30
 
