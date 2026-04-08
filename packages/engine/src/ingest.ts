@@ -7,6 +7,13 @@ import mime from "mime-types";
 import TurndownService from "turndown";
 import { inferCodeLanguage } from "./code-analysis.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
+import {
+  buildExtractionHash,
+  createHtmlReadabilityExtractionArtifact,
+  createPlainTextExtractionArtifact,
+  extractImageWithVision,
+  extractPdfText
+} from "./extraction.js";
 import { appendLogEntry } from "./logs.js";
 import type {
   AddOptions,
@@ -17,6 +24,7 @@ import type {
   RepoSyncResult,
   ResolvedPaths,
   SourceAttachment,
+  SourceExtractionArtifact,
   SourceManifest,
   WatchRepoSyncResult
 } from "./types.js";
@@ -56,6 +64,8 @@ type PreparedInput = {
   storedExtension: string;
   payloadBytes: Buffer;
   extractedText?: string;
+  extractionArtifact?: SourceExtractionArtifact;
+  extractionHash?: string;
   attachments?: PreparedAttachment[];
   contentHash?: string;
   logDetails?: string[];
@@ -784,11 +794,13 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
 
   const attachments = prepared.attachments ?? [];
   const contentHash = prepared.contentHash ?? buildCompositeHash(prepared.payloadBytes, attachments);
+  const extractionHash = prepared.extractionHash ?? buildExtractionHash(prepared.extractedText, prepared.extractionArtifact);
   const existingByOrigin = await readManifestByOrigin(paths.manifestsDir, prepared);
   const existingByHash = existingByOrigin ? null : await readManifestByHash(paths.manifestsDir, contentHash);
   if (
     existingByOrigin &&
     existingByOrigin.contentHash === contentHash &&
+    existingByOrigin.extractionHash === extractionHash &&
     existingByOrigin.title === prepared.title &&
     existingByOrigin.sourceKind === prepared.sourceKind &&
     existingByOrigin.language === prepared.language &&
@@ -806,6 +818,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
   const now = new Date().toISOString();
   const storedPath = path.join(paths.rawSourcesDir, `${sourceId}${prepared.storedExtension}`);
   const extractedTextPath = prepared.extractedText ? path.join(paths.extractsDir, `${sourceId}.md`) : undefined;
+  const extractedMetadataPath = prepared.extractionArtifact ? path.join(paths.extractsDir, `${sourceId}.json`) : undefined;
   const attachmentsDir = path.join(paths.rawAssetsDir, sourceId);
 
   if (previous?.storedPath) {
@@ -814,11 +827,17 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
   if (previous?.extractedTextPath) {
     await fs.rm(path.resolve(rootDir, previous.extractedTextPath), { force: true });
   }
+  if (previous?.extractedMetadataPath) {
+    await fs.rm(path.resolve(rootDir, previous.extractedMetadataPath), { force: true });
+  }
   await fs.rm(attachmentsDir, { recursive: true, force: true });
 
   await fs.writeFile(storedPath, prepared.payloadBytes);
   if (prepared.extractedText && extractedTextPath) {
     await fs.writeFile(extractedTextPath, prepared.extractedText, "utf8");
+  }
+  if (prepared.extractionArtifact && extractedMetadataPath) {
+    await writeJsonFile(extractedMetadataPath, prepared.extractionArtifact);
   }
 
   const manifestAttachments: SourceAttachment[] = [];
@@ -844,6 +863,8 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     url: prepared.url,
     storedPath: toPosix(path.relative(rootDir, storedPath)),
     extractedTextPath: extractedTextPath ? toPosix(path.relative(rootDir, extractedTextPath)) : undefined,
+    extractedMetadataPath: extractedMetadataPath ? toPosix(path.relative(rootDir, extractedMetadataPath)) : undefined,
+    extractionHash,
     mimeType: prepared.mimeType,
     contentHash,
     createdAt: previous?.createdAt ?? now,
@@ -877,6 +898,9 @@ async function removeManifestArtifacts(rootDir: string, manifest: SourceManifest
   if (manifest.extractedTextPath) {
     await fs.rm(path.resolve(rootDir, manifest.extractedTextPath), { force: true });
   }
+  if (manifest.extractedMetadataPath) {
+    await fs.rm(path.resolve(rootDir, manifest.extractedMetadataPath), { force: true });
+  }
   await fs.rm(path.join(paths.rawAssetsDir, manifest.sourceId), { recursive: true, force: true });
   await fs.rm(path.join(paths.analysesDir, `${manifest.sourceId}.json`), { force: true });
 }
@@ -902,6 +926,7 @@ function repoSyncWorkspaceIgnorePaths(rootDir: string, paths: ResolvedPaths, rep
 function preparedMatchesManifest(manifest: SourceManifest, prepared: PreparedInput, contentHash: string): boolean {
   return (
     manifest.contentHash === contentHash &&
+    manifest.extractionHash === (prepared.extractionHash ?? buildExtractionHash(prepared.extractedText, prepared.extractionArtifact)) &&
     manifest.title === prepared.title &&
     manifest.sourceKind === prepared.sourceKind &&
     manifest.language === prepared.language &&
@@ -1182,7 +1207,7 @@ export async function syncTrackedReposForWatch(
   };
 }
 
-async function prepareFileInput(_rootDir: string, absoluteInput: string, repoRoot?: string): Promise<PreparedInput> {
+async function prepareFileInput(rootDir: string, absoluteInput: string, repoRoot?: string): Promise<PreparedInput> {
   const payloadBytes = await fs.readFile(absoluteInput);
   const mimeType = guessMimeType(absoluteInput);
   const sourceKind = inferKind(mimeType, absoluteInput);
@@ -1191,9 +1216,26 @@ async function prepareFileInput(_rootDir: string, absoluteInput: string, repoRoo
 
   let title: string;
   let extractedText: string | undefined;
+  let extractionArtifact: SourceExtractionArtifact | undefined;
   if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
     extractedText = payloadBytes.toString("utf8");
     title = titleFromText(path.basename(absoluteInput, path.extname(absoluteInput)), extractedText);
+    extractionArtifact = createPlainTextExtractionArtifact(sourceKind, mimeType);
+  } else if (sourceKind === "pdf") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractPdfText({ mimeType, bytes: payloadBytes });
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "image") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractImageWithVision(rootDir, {
+      title,
+      mimeType,
+      filePath: absoluteInput
+    });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
   } else {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
   }
@@ -1208,11 +1250,13 @@ async function prepareFileInput(_rootDir: string, absoluteInput: string, repoRoo
     mimeType,
     storedExtension,
     payloadBytes,
-    extractedText
+    extractedText,
+    extractionArtifact,
+    extractionHash: buildExtractionHash(extractedText, extractionArtifact)
   };
 }
 
-async function prepareUrlInput(input: string, options: NormalizedIngestOptions): Promise<PreparedInput> {
+async function prepareUrlInput(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput> {
   const response = await fetch(input);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${input}: ${response.status} ${response.statusText}`);
@@ -1227,6 +1271,7 @@ async function prepareUrlInput(input: string, options: NormalizedIngestOptions):
   let storedExtension = ".bin";
   let title = inputUrl.hostname + inputUrl.pathname;
   let extractedText: string | undefined;
+  let extractionArtifact: SourceExtractionArtifact | undefined;
   let attachments: PreparedAttachment[] | undefined;
   let contentHash: string | undefined;
   const logDetails: string[] = [];
@@ -1261,6 +1306,7 @@ async function prepareUrlInput(input: string, options: NormalizedIngestOptions):
     const converted =
       localizedHtml === html && !attachments?.length ? initialConversion : await convertHtmlToMarkdown(localizedHtml, input);
     extractedText = converted.markdown;
+    extractionArtifact = createHtmlReadabilityExtractionArtifact("markdown", "text/markdown");
     if (localAssetReplacements?.size) {
       const absoluteLocalAssetReplacements = new Map(
         [...localAssetReplacements.values()].map((replacement) => [new URL(replacement, input).toString(), replacement])
@@ -1277,6 +1323,7 @@ async function prepareUrlInput(input: string, options: NormalizedIngestOptions):
     if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
       extractedText = payloadBytes.toString("utf8");
       title = titleFromText(title || inputUrl.hostname, extractedText);
+      extractionArtifact = createPlainTextExtractionArtifact(sourceKind, mimeType);
 
       if (sourceKind === "markdown" && options.includeAssets) {
         const { attachments: remoteAttachments, skippedCount } = await collectRemoteImageAttachments(
@@ -1298,6 +1345,19 @@ async function prepareUrlInput(input: string, options: NormalizedIngestOptions):
           logDetails.push(`remote_asset_skips=${skippedCount}`);
         }
       }
+    } else if (sourceKind === "pdf") {
+      const extracted = await extractPdfText({ mimeType, bytes: payloadBytes });
+      extractedText = extracted.extractedText;
+      extractionArtifact = extracted.artifact;
+    } else if (sourceKind === "image") {
+      const extracted = await extractImageWithVision(rootDir, {
+        title,
+        mimeType,
+        bytes: payloadBytes
+      });
+      title = extracted.title?.trim() || title;
+      extractedText = extracted.extractedText;
+      extractionArtifact = extracted.artifact;
     }
   }
 
@@ -1311,6 +1371,8 @@ async function prepareUrlInput(input: string, options: NormalizedIngestOptions):
     storedExtension,
     payloadBytes,
     extractedText,
+    extractionArtifact,
+    extractionHash: buildExtractionHash(extractedText, extractionArtifact),
     attachments,
     contentHash,
     logDetails
@@ -1403,6 +1465,8 @@ async function prepareInboxMarkdownInput(absolutePath: string, attachmentRefs: I
   );
   const rewrittenText = rewriteMarkdownReferences(originalText, replacements);
 
+  const extractionArtifact = createPlainTextExtractionArtifact("markdown", "text/markdown");
+
   return {
     title,
     originType: "file",
@@ -1412,6 +1476,8 @@ async function prepareInboxMarkdownInput(absolutePath: string, attachmentRefs: I
     storedExtension: path.extname(absolutePath) || ".md",
     payloadBytes: Buffer.from(rewrittenText, "utf8"),
     extractedText: rewrittenText,
+    extractionArtifact,
+    extractionHash: buildExtractionHash(rewrittenText, extractionArtifact),
     attachments,
     contentHash
   };
@@ -1430,7 +1496,7 @@ export async function ingestInput(rootDir: string, input: string, options?: Inge
       ? normalizedOptions.repoRoot
       : await findNearestGitRoot(absoluteInput).then((value) => value ?? path.dirname(absoluteInput));
   const prepared = isHttpUrl(input)
-    ? await prepareUrlInput(input, normalizedOptions)
+    ? await prepareUrlInput(rootDir, input, normalizedOptions)
     : await prepareFileInput(rootDir, absoluteInput, repoRoot);
 
   const result = await persistPreparedInput(rootDir, prepared, paths);
@@ -1628,4 +1694,17 @@ export async function readExtractedText(rootDir: string, manifest: SourceManifes
   }
 
   return fs.readFile(absolutePath, "utf8");
+}
+
+export async function readExtractionArtifact(rootDir: string, manifest: SourceManifest): Promise<SourceExtractionArtifact | undefined> {
+  if (!manifest.extractedMetadataPath) {
+    return undefined;
+  }
+
+  const absolutePath = path.resolve(rootDir, manifest.extractedMetadataPath);
+  if (!(await fileExists(absolutePath))) {
+    return undefined;
+  }
+
+  return (await readJsonFile<SourceExtractionArtifact>(absolutePath)) ?? undefined;
 }

@@ -211,7 +211,7 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 ## Core Commands
 
 - `swarmvault init [--obsidian]`: create a workspace, default config, default schema file, and optional `.obsidian/` config
-- `swarmvault ingest <input> [--repo-root <path>] [--include <glob...>] [--exclude <glob...>] [--max-files <n>] [--no-gitignore] [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path, directory path, or URL, and localize remote image references by default when the input is a URL
+- `swarmvault ingest <input> [--repo-root <path>] [--include <glob...>] [--exclude <glob...>] [--max-files <n>] [--no-gitignore] [--no-include-assets] [--max-asset-size <bytes>]`: ingest a local file path, directory path, or URL, localize remote image references by default when the input is a URL, extract PDF text locally, and use the configured `visionProvider` for image-aware extraction when available
 - `swarmvault add <url> [--author <name>] [--contributor <name>]`: capture arXiv/X URLs into normalized markdown, or fall back to generic URL ingest
 - `swarmvault inbox import [dir]`: import browser-clipper style bundles and inbox captures
 - `swarmvault compile [--approve]`: build wiki pages, graph data, and the search index using the vault schema as guidance, or stage a review bundle before applying changes
@@ -237,6 +237,10 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 Human-authored insight pages placed in `wiki/insights/` are indexed into search and exposed to query, but SwarmVault does not rewrite them after initialization.
 
 When `ingest` targets a remote HTML or markdown URL, SwarmVault downloads referenced remote images into `raw/assets/<sourceId>/`, rewrites the stored markdown to local relative links, and records those files as manifest attachments. Use `--no-include-assets` to keep remote image references untouched, or `--max-asset-size` to cap the bytes fetched for a single remote asset.
+
+For sources that produce extracted text, SwarmVault now writes both:
+- `state/extracts/<sourceId>.md`: canonical extracted text used by compile, query, and benchmark
+- `state/extracts/<sourceId>.json`: extractor metadata such as extractor kind, warnings, provider/model info for image vision extraction, and PDF page counts
 
 When `ingest` targets a local directory, SwarmVault walks the tree recursively, respects `.gitignore` by default, records `repoRelativePath` on matching manifests, and later writes `state/code-index.json` during compile so local imports can resolve across the code graph.
 

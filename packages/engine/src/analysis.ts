@@ -1,11 +1,12 @@
 import path from "node:path";
 import { z } from "zod";
 import { analyzeCodeSource } from "./code-analysis.js";
+import { readExtractionArtifact } from "./ingest.js";
 import type { VaultSchema } from "./schema.js";
-import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceManifest } from "./types.js";
+import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceExtractionArtifact, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
-const ANALYSIS_FORMAT_VERSION = 4;
+const ANALYSIS_FORMAT_VERSION = 5;
 
 const sourceAnalysisSchema = z.object({
   title: z.string().min(1),
@@ -133,6 +134,7 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
     analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    extractionHash: manifest.extractionHash,
     schemaHash,
     title: deriveTitle(manifest, text),
     summary: firstSentences(normalized, 3) || truncate(normalized, 280) || `Imported ${manifest.sourceKind} source.`,
@@ -179,6 +181,7 @@ async function providerAnalysis(
     analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    extractionHash: manifest.extractionHash,
     schemaHash: schema.hash,
     title: parsed.title,
     summary: parsed.summary,
@@ -206,6 +209,55 @@ async function providerAnalysis(
   };
 }
 
+function analysisFromVisionExtraction(
+  manifest: SourceManifest,
+  extraction: SourceExtractionArtifact,
+  schemaHash: string
+): SourceAnalysis | null {
+  if (!extraction.vision) {
+    return null;
+  }
+
+  return {
+    analysisVersion: ANALYSIS_FORMAT_VERSION,
+    sourceId: manifest.sourceId,
+    sourceHash: manifest.contentHash,
+    extractionHash: manifest.extractionHash,
+    schemaHash,
+    title: extraction.vision.title?.trim() || manifest.title,
+    summary: extraction.vision.summary,
+    concepts: extraction.vision.concepts.map((term) => ({
+      id: `concept:${slugify(term.name)}`,
+      name: term.name,
+      description: term.description
+    })),
+    entities: extraction.vision.entities.map((term) => ({
+      id: `entity:${slugify(term.name)}`,
+      name: term.name,
+      description: term.description
+    })),
+    claims: extraction.vision.claims.map((claim, index) => ({
+      id: `claim:${manifest.sourceId}:${index + 1}`,
+      text: claim.text,
+      confidence: claim.confidence,
+      status: "extracted",
+      polarity: claim.polarity,
+      citation: manifest.sourceId
+    })),
+    questions: extraction.vision.questions,
+    rationales: [],
+    producedAt: new Date().toISOString()
+  };
+}
+
+function extractionWarningSummary(manifest: SourceManifest, extraction?: SourceExtractionArtifact): string {
+  const warning = extraction?.warnings?.find(Boolean);
+  if (warning) {
+    return `Imported ${manifest.sourceKind} source. ${warning}`;
+  }
+  return `Imported ${manifest.sourceKind} source. Text extraction is not yet available for this source.`;
+}
+
 export async function analyzeSource(
   manifest: SourceManifest,
   extractedText: string | undefined,
@@ -219,24 +271,56 @@ export async function analyzeSource(
     cached &&
     cached.analysisVersion === ANALYSIS_FORMAT_VERSION &&
     cached.sourceHash === manifest.contentHash &&
+    cached.extractionHash === manifest.extractionHash &&
     cached.schemaHash === schema.hash
   ) {
     return cached;
   }
 
+  const extraction = await readExtractionArtifact(paths.rootDir, manifest);
   const content = normalizeWhitespace(extractedText ?? "");
   let analysis: SourceAnalysis;
 
   if (manifest.sourceKind === "code" && content) {
     analysis = await analyzeCodeSource(manifest, extractedText ?? "", schema.hash);
+  } else if (manifest.sourceKind === "image") {
+    const visionAnalysis = extraction ? analysisFromVisionExtraction(manifest, extraction, schema.hash) : null;
+    if (visionAnalysis) {
+      analysis = visionAnalysis;
+    } else if (!content) {
+      analysis = {
+        analysisVersion: ANALYSIS_FORMAT_VERSION,
+        sourceId: manifest.sourceId,
+        sourceHash: manifest.contentHash,
+        extractionHash: manifest.extractionHash,
+        schemaHash: schema.hash,
+        title: manifest.title,
+        summary: extractionWarningSummary(manifest, extraction),
+        concepts: [],
+        entities: [],
+        claims: [],
+        questions: [],
+        rationales: [],
+        producedAt: new Date().toISOString()
+      };
+    } else if (provider.type === "heuristic") {
+      analysis = heuristicAnalysis(manifest, content, schema.hash);
+    } else {
+      try {
+        analysis = await providerAnalysis(manifest, content, provider, schema);
+      } catch {
+        analysis = heuristicAnalysis(manifest, content, schema.hash);
+      }
+    }
   } else if (!content) {
     analysis = {
       analysisVersion: ANALYSIS_FORMAT_VERSION,
       sourceId: manifest.sourceId,
       sourceHash: manifest.contentHash,
+      extractionHash: manifest.extractionHash,
       schemaHash: schema.hash,
       title: manifest.title,
-      summary: `Imported ${manifest.sourceKind} source. Text extraction is not yet available for this source.`,
+      summary: extractionWarningSummary(manifest, extraction),
       concepts: [],
       entities: [],
       claims: [],
