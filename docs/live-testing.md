@@ -41,6 +41,7 @@ SWARMVAULT_OLLAMA_BASE_URL=https://ollama.com/v1
 SWARMVAULT_OLLAMA_API_STYLE=chat
 SWARMVAULT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 SWARMVAULT_OPENCODE_OLLAMA_MODEL=gpt-oss:20b-cloud
+SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE=1
 ```
 
 The Neo4j live-smoke lane uses a local Docker-managed Neo4j container and does not require a hosted Neo4j account, but it does require a running Docker daemon.
@@ -131,7 +132,8 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `install --agent copilot --hook`
 - run `install --agent aider`
 - verify the installed package writes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`, `.aider.conf.yml`, `.github/copilot-instructions.md`, and the expected hook/plugin artifacts
-- when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, OpenCode against `AGENTS.md` using Ollama, and Gemini CLI against `GEMINI.md`
+- when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, and Gemini CLI against `GEMINI.md`
+- run the OpenCode host-agent check only when `SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE=1` is set, because it depends on an external model path and is not part of the required packaged-artifact release gate
 - on live npm-installed runs, execute `swarmvault source add https://github.com/karpathy/micrograd` and verify the registry entry, compile artifacts, and source brief
 
 ### OpenAI lane

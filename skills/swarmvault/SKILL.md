@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, review, and MCP artifacts to disk from files, URLs, code, and recurring repo workflows."
-version: "0.2.0"
+version: "0.2.1"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -49,7 +49,7 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 - `raw/sources/` and `raw/assets/`: canonical source storage.
 - `wiki/`: generated pages plus saved outputs.
 - `wiki/outputs/source-briefs/`: saved onboarding briefs for managed sources.
-- `wiki/code/`: module pages for ingested JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, PowerShell, Kotlin, and Scala sources.
+- `wiki/code/`: module pages for ingested JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell sources.
 - `state/code-index.json`: repo-aware code aliases and local import resolution data.
 - `wiki/projects/`: project rollups over canonical pages.
 - `wiki/candidates/`: staged concept and entity pages awaiting promotion.

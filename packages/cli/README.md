@@ -97,7 +97,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - use `source add` instead when the same local directory, public GitHub repo root, or docs hub should stay registered and reloadable
 - URL ingest still localizes remote image references by default
 - local file ingest supports markdown, text, reStructuredText, HTML, PDF, DOCX, images, and code
-- code-aware directory ingest currently covers JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, PowerShell, Kotlin, and Scala
+- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell
 
 Useful flags:
 

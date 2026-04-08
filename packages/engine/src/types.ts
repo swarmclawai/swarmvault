@@ -62,6 +62,8 @@ export type CodeLanguage =
   | "java"
   | "kotlin"
   | "scala"
+  | "lua"
+  | "zig"
   | "csharp"
   | "c"
   | "cpp"

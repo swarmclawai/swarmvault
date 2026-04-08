@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Added parser-backed Lua and Zig code ingestion, including repo-aware module/import resolution, module pages, code-index integration, and graph/search coverage through the existing local analyzer pipeline
+- Updated the tiny validation matrix and code-ingestion tests to require Lua, Zig, JSX, and TSX so packaged releases keep proving the full shipped code-language set instead of relying on docs-only claims
+- Corrected the OSS README trio, package READMEs, ClawHub skill docs, and site support tables so they accurately list the languages and file types already supported today, including JSX, TSX, reStructuredText, Lua, and Zig
+- Tightened the packaged live-smoke gate so the required heuristic/browser release path remains focused on SwarmVault correctness, while the slower OpenCode host-agent smoke stays available as an explicit opt-in check
+
 ## 0.2.0
 
 - Added first-class managed sources with `swarmvault source add|list|reload|delete`, a persistent `state/sources.json` registry, transient source workspaces under `state/sources/`, and auto-generated source briefs under `wiki/outputs/source-briefs/`

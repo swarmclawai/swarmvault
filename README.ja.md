@@ -133,7 +133,7 @@ clawhub install swarmvault
 
 | Input | 拡張子 / ソース | 抽出方法 |
 |-------|-----------------|----------|
-| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1 .kt .kts .scala .sc` | tree-sitter ベースの AST とモジュール解決 |
+| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | tree-sitter ベースの AST とモジュール解決 |
 | PDF | `.pdf` | ローカルでテキスト抽出 |
 | DOCX | `.docx` | ローカル抽出とメタデータ取得 |
 | HTML | `.html`, URLs | Readability + Turndown による Markdown 化 |

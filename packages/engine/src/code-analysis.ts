@@ -373,7 +373,7 @@ function makeRationale(
 }
 
 function stripCodeExtension(filePath: string): string {
-  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
+  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
 }
 
 function manifestModuleName(manifest: SourceManifest, language: CodeLanguage): string | undefined {
@@ -1892,6 +1892,12 @@ export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage
   if (extension === ".scala" || extension === ".sc") {
     return "scala";
   }
+  if (extension === ".lua") {
+    return "lua";
+  }
+  if (extension === ".zig") {
+    return "zig";
+  }
   if (extension === ".cs") {
     return "csharp";
   }
@@ -2015,6 +2021,10 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       return [".kt", ".kts"];
     case "scala":
       return [".scala", ".sc"];
+    case "lua":
+      return [".lua"];
+    case "zig":
+      return [".zig"];
     case "csharp":
       return [".cs"];
     case "php":
@@ -2091,6 +2101,20 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
             recordAlias(aliases, `${normalizedNamespace}.${symbol.name}`);
           }
         }
+        break;
+      case "lua":
+        recordAlias(aliases, basename);
+        if (repoRelativePath) {
+          const repoWithoutExt = stripCodeExtension(repoRelativePath);
+          recordAlias(aliases, repoWithoutExt.replace(/\//g, "."));
+          if (repoWithoutExt.endsWith("/init")) {
+            recordAlias(aliases, repoWithoutExt.slice(0, -"/init".length));
+            recordAlias(aliases, repoWithoutExt.slice(0, -"/init".length).replace(/\//g, "."));
+          }
+        }
+        break;
+      case "zig":
+        recordAlias(aliases, basename);
         break;
       case "php":
         if (normalizedNamespace) {
@@ -2200,6 +2224,18 @@ function resolveRustAliases(manifest: SourceManifest, specifier: string): string
   ];
 }
 
+function luaSpecifierLooksLocal(specifier: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$/.test(specifier);
+}
+
+function resolveLuaModuleCandidates(specifier: string): string[] {
+  const normalized = normalizeAlias(specifier.replace(/\./g, "/"));
+  if (!normalized) {
+    return [];
+  }
+  return uniqueBy([`${normalized}.lua`, path.posix.join(normalized, "init.lua")], (item) => item);
+}
+
 function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, lookup: CodeIndexLookup): CodeIndexEntry[] {
   const language = manifest.language ?? inferCodeLanguage(manifest.originalPath ?? manifest.storedPath, manifest.mimeType);
   const repoRelativePath = manifest.repoRelativePath ? normalizeAlias(manifest.repoRelativePath) : undefined;
@@ -2226,6 +2262,14 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
     case "scala":
     case "csharp":
       return aliasMatches(lookup, codeImport.specifier);
+    case "lua":
+      return luaSpecifierLooksLocal(codeImport.specifier)
+        ? repoPathMatches(lookup, ...resolveLuaModuleCandidates(codeImport.specifier))
+        : aliasMatches(lookup, codeImport.specifier, codeImport.specifier.replace(/\./g, "/"));
+    case "zig":
+      return repoRelativePath && (!codeImport.isExternal || codeImport.specifier.endsWith(".zig"))
+        ? repoPathMatches(lookup, ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language)))
+        : aliasMatches(lookup, codeImport.specifier);
     case "php":
     case "ruby":
     case "powershell":
@@ -2276,6 +2320,10 @@ function importLooksLocal(manifest: SourceManifest, codeImport: CodeImport, cand
     case "kotlin":
     case "scala":
       return !codeImport.isExternal;
+    case "lua":
+      return luaSpecifierLooksLocal(codeImport.specifier);
+    case "zig":
+      return !codeImport.isExternal || codeImport.specifier.endsWith(".zig");
     default:
       return false;
   }

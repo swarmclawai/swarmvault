@@ -59,6 +59,8 @@ describe("tiny validation matrix", () => {
       "java",
       "kotlin",
       "scala",
+      "lua",
+      "zig",
       "csharp",
       "c",
       "cpp",
@@ -126,6 +128,14 @@ describe("tiny validation matrix", () => {
     const tsxManifest = manifests.find((manifest) => manifest.repoRelativePath === "tsx/Widget.tsx");
     const tsxModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${tsxManifest?.sourceId}.md`), "utf8");
     expect(tsxModulePage).toContain("Language: `tsx`");
+
+    const zigManifest = manifests.find((manifest) => manifest.repoRelativePath === "zig/Widget.zig");
+    const zigModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${zigManifest?.sourceId}.md`), "utf8");
+    expect(zigModulePage).toContain("Language: `zig`");
+
+    const luaManifest = manifests.find((manifest) => manifest.repoRelativePath === "lua/widget.lua");
+    const luaModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${luaManifest?.sourceId}.md`), "utf8");
+    expect(luaModulePage).toContain("Language: `lua`");
 
     const results = await searchVault(rootDir, "Tiny HTML Source", 10);
     expect(results.some((result) => result.path.startsWith("sources/"))).toBe(true);

@@ -354,6 +354,103 @@ describe("code-aware ingestion", () => {
     expect(searchResults.some((result) => result.path === `code/${scalaWidgetManifest.sourceId}.md`)).toBe(true);
   });
 
+  it("builds parser-backed module pages for Lua and Zig sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, "lua"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, "zig"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(repoDir, "zig", "Format.zig"),
+      ["pub fn formatName(name: []const u8) []const u8 {", "    return name;", "}"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "zig", "Widget.zig"),
+      [
+        'const helper = @import("Format.zig");',
+        "",
+        "pub const Renderable = struct {};",
+        "pub const BaseWidget = struct {};",
+        "",
+        "pub const Widget = struct {",
+        "    pub fn render(name: []const u8) []const u8 {",
+        "        return helper.formatName(name);",
+        "    }",
+        "};"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "lua", "helper.lua"),
+      ["local M = {}", "", "function M.formatName(name)", '  return "Lua:" .. name', "end", "", "return M"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "lua", "widget.lua"),
+      ['local helper = require("lua.helper")', "", "function renderWidget(name)", "  return helper.formatName(name)", "end"].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    const luaHelperManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("lua/helper.lua"));
+    const luaWidgetManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("lua/widget.lua"));
+    const zigFormatManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("zig/Format.zig"));
+    const zigWidgetManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("zig/Widget.zig"));
+
+    if (!luaHelperManifest || !luaWidgetManifest || !zigFormatManifest || !zigWidgetManifest) {
+      throw new Error("repo-aware ingest did not return the expected Lua and Zig manifests");
+    }
+
+    expect(luaHelperManifest.language).toBe("lua");
+    expect(luaWidgetManifest.language).toBe("lua");
+    expect(zigFormatManifest.language).toBe("zig");
+    expect(zigWidgetManifest.language).toBe("zig");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "lua")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "zig")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget.render")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "renderWidget")).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "extends" && nodeById.get(edge.source)?.label === "Widget" && nodeById.get(edge.target)?.label === "BaseWidget"
+      )
+    ).toBe(false);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "implements" &&
+          nodeById.get(edge.source)?.label === "Widget" &&
+          nodeById.get(edge.target)?.label === "Renderable"
+      )
+    ).toBe(false);
+    const luaModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${luaWidgetManifest.sourceId}.md`), "utf8");
+    const zigModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${zigWidgetManifest.sourceId}.md`), "utf8");
+
+    expect(luaModulePage).toContain("Language: `lua`");
+    expect(luaModulePage).toContain("## Imports");
+    expect(luaModulePage).toContain(`code/${luaHelperManifest.sourceId}`);
+    expect(luaModulePage).toContain("renderWidget");
+
+    expect(zigModulePage).toContain("Language: `zig`");
+    expect(zigModulePage).toContain("## Imports");
+    expect(zigModulePage).toContain(`code/${zigFormatManifest.sourceId}`);
+    expect(zigModulePage).toContain("Widget.render");
+    expect(zigModulePage).toContain("formatName");
+    expect(zigModulePage).toContain("Renderable");
+
+    const searchResults = await searchVault(rootDir, "renderWidget", 20);
+    expect(searchResults.some((result) => result.path === `code/${luaWidgetManifest.sourceId}.md`)).toBe(true);
+  });
+
   it("builds parser-backed module pages for C#, PHP, C, and C++ sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

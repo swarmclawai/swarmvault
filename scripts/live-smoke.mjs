@@ -28,6 +28,7 @@ const version = args.version ?? (await readPackageVersion());
 const installSpecs = args.installSpecs?.length ? args.installSpecs : [`@swarmvaultai/cli@${version}`];
 const keepArtifacts = args.keepArtifacts ?? process.env.KEEP_LIVE_SMOKE_ARTIFACTS === "1";
 const browserCheck = args.browserCheck ?? process.env.SWARMVAULT_BROWSER_CHECK === "1";
+const runOpencodeAgentSmoke = process.env.SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE === "1";
 const artifactDir =
   args.artifactDir ??
   path.join(repoRoot, ".live-smoke-artifacts", `${lane}-${new Date().toISOString().replaceAll(":", "-")}`);
@@ -599,6 +600,8 @@ try {
         "java",
         "kotlin",
         "scala",
+        "lua",
+        "zig",
         "csharp",
         "c",
         "cpp",
@@ -1402,7 +1405,7 @@ try {
         assert.ok(claudeResult.stdout.includes("swarmvault "), "claude smoke did not recommend a SwarmVault command");
       }
 
-      if (await commandOnPath("opencode") && process.env.OLLAMA_API_KEY) {
+      if (runOpencodeAgentSmoke && (await commandOnPath("opencode")) && process.env.OLLAMA_API_KEY) {
         const opencodeModel = process.env.SWARMVAULT_OPENCODE_OLLAMA_MODEL ?? process.env.SWARMVAULT_OLLAMA_MODEL ?? "gpt-oss:20b-cloud";
         await fs.writeFile(
           path.join(workspaceDir, "opencode.json"),

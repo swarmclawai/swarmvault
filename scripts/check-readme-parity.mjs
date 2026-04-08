@@ -52,6 +52,7 @@ const requiredSubstrings = [
   "swarmvault install --agent gemini --hook",
   "swarmvault mcp",
   "clawhub install swarmvault",
+  ".js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1",
   "\"type\": \"openai\"",
   "OPENAI_API_KEY",
   "https://www.swarmvault.ai/images/screenshots/graph-workspace.png",

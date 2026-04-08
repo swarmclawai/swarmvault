@@ -133,7 +133,7 @@ clawhub install swarmvault
 
 | 输入 | 扩展名 / 来源 | 提取方式 |
 |------|---------------|----------|
-| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1 .kt .kts .scala .sc` | 基于 tree-sitter 的 AST 与模块解析 |
+| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | 基于 tree-sitter 的 AST 与模块解析 |
 | PDF | `.pdf` | 本地文本提取 |
 | DOCX | `.docx` | 本地提取与元数据捕获 |
 | HTML | `.html`、URL | Readability + Turndown 转 Markdown |

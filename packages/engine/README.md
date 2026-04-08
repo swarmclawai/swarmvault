@@ -191,7 +191,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files plus markdown and HTML browser-clipper style bundles
 - managed sources support local directories, public GitHub repo root URLs, and bounded same-domain docs hubs
 - registry data lives in `state/sources.json`, working state lives under `state/sources/<id>/`, and source briefs are written to `wiki/outputs/source-briefs/<id>.md`
-- JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, PowerShell, Kotlin, and Scala inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
+- JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
 - `.rst` and `.rest` inputs are treated as first-class text sources with lightweight heading and directive normalization before analysis
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
 - repo-aware manifests, graph nodes, and graph pages can also carry `sourceClass` so first-party, third-party, resource, and generated material can be filtered and reported separately

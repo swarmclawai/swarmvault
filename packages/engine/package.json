@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/engine",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Core engine for SwarmVault: ingest, compile, query, lint, and provider abstractions.",
   "type": "module",
   "main": "dist/index.js",

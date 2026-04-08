@@ -104,6 +104,8 @@ const grammarAssetByLanguage: Record<Exclude<CodeLanguage, "javascript" | "jsx" 
   java: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-java.wasm" },
   kotlin: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-kotlin.wasm" },
   scala: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-scala.wasm" },
+  lua: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-lua.wasm" },
+  zig: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-zig.wasm" },
   csharp: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-c-sharp.wasm" },
   c: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-cpp.wasm" },
   cpp: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-cpp.wasm" },
@@ -181,7 +183,7 @@ function normalizeSymbolReference(value: string): string {
 }
 
 function stripCodeExtension(filePath: string): string {
-  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
+  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
 }
 
 function manifestModuleName(manifest: SourceManifest, language: CodeLanguage): string | undefined {
@@ -557,7 +559,7 @@ function descendantTypeNames(node: TreeNode | null | undefined): string[] {
 }
 
 function quotedPath(value: string): string {
-  return value.replace(/^["'<]+|[">]+$/g, "").trim();
+  return value.replace(/^['"<]+|['">]+$/g, "").trim();
 }
 
 function diagnosticsFromTree(rootNode: TreeNode): CodeDiagnostic[] {
@@ -765,6 +767,48 @@ function parseScalaImport(text: string): CodeImport[] {
     }));
 }
 
+function parseLuaRequire(node: TreeNode): CodeImport | undefined {
+  const stringNode = node.descendantsOfType("string").find((item): item is TreeNode => item !== null);
+  const identifiers = node
+    .descendantsOfType("identifier")
+    .filter((item): item is TreeNode => item !== null)
+    .map((item) => item.text.trim());
+  if (!stringNode || !identifiers.includes("require")) {
+    return undefined;
+  }
+  const specifier = quotedPath(stringNode.text);
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    isExternal: !/^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$/.test(specifier),
+    reExport: false
+  };
+}
+
+function parseZigImport(node: TreeNode): CodeImport | undefined {
+  if (node.type !== "variable_declaration") {
+    return undefined;
+  }
+  const importCall = findNamedChild(node, "builtin_function");
+  if (!importCall || nodeText(findNamedChild(importCall, "builtin_identifier") ?? importCall.namedChildren.at(0) ?? null) !== "@import") {
+    return undefined;
+  }
+  const stringNode = importCall.descendantsOfType("string_content").find((item): item is TreeNode => item !== null);
+  const specifier = stringNode?.text.trim();
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    isExternal: !specifier.endsWith(".zig") && !specifier.includes("/") && !specifier.startsWith("."),
+    reExport: false
+  };
+}
+
 function parseCSharpUsing(text: string): CodeImport | undefined {
   const aliasMatch = text.trim().match(/^using\s+([A-Za-z_]\w*)\s*=\s*([^;]+);$/);
   if (aliasMatch) {
@@ -915,6 +959,34 @@ function scalaDefinitionKind(node: TreeNode): CodeSymbolKind | undefined {
   }
   if (node.type === "function_definition") {
     return "function";
+  }
+  return undefined;
+}
+
+function luaFunctionName(node: TreeNode | null | undefined): string | undefined {
+  if (!node) {
+    return undefined;
+  }
+  if (node.type === "identifier") {
+    return node.text.trim();
+  }
+  if (node.type === "variable") {
+    const identifiers = node
+      .descendantsOfType("identifier")
+      .filter((item): item is TreeNode => item !== null)
+      .map((item) => item.text.trim())
+      .filter(Boolean);
+    return identifiers.length > 0 ? identifiers.join(".") : undefined;
+  }
+  return extractIdentifier(node);
+}
+
+function zigDeclarationKind(node: TreeNode): CodeSymbolKind | undefined {
+  if (findNamedChild(node, "struct_declaration")) {
+    return "struct";
+  }
+  if (findNamedChild(node, "enum_declaration")) {
+    return "enum";
   }
   return undefined;
 }
@@ -1384,6 +1456,150 @@ function scalaCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnos
   return finalizeCodeAnalysis(manifest, "scala", imports, draftSymbols, exportLabels, diagnostics, {
     namespace: packageName
   });
+}
+
+function luaCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+
+    if (child.type === "local_variable_declaration" || child.type === "assignment_statement") {
+      const parsed = parseLuaRequire(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+
+    if (!["function_definition_statement", "local_function_definition_statement"].includes(child.type)) {
+      continue;
+    }
+
+    const name = luaFunctionName(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null);
+    if (!name) {
+      continue;
+    }
+
+    draftSymbols.push({
+      name,
+      kind: "function",
+      signature: singleLineSignature(child.text),
+      exported: child.type !== "local_function_definition_statement",
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: nodeText(findNamedChild(child, "block") ?? child.childForFieldName("body")) || child.text
+    });
+    if (child.type !== "local_function_definition_statement") {
+      exportLabels.push(name);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "lua", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+function zigCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  const pushStructMembers = (structNode: TreeNode | null | undefined, scopeName: string) => {
+    if (!structNode) {
+      return;
+    }
+    for (const child of structNode.namedChildren) {
+      if (!child || child.type !== "function_declaration") {
+        continue;
+      }
+      const functionName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+      if (!functionName) {
+        continue;
+      }
+      const exported = /\bpub\b/.test(child.text);
+      const symbolName = `${scopeName}.${functionName}`;
+      draftSymbols.push({
+        name: symbolName,
+        kind: "function",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(child, "block") ?? child.childForFieldName("body")) || child.text
+      });
+      if (exported) {
+        exportLabels.push(symbolName);
+      }
+    }
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "variable_declaration") {
+      const parsedImport = parseZigImport(child);
+      if (parsedImport) {
+        imports.push(parsedImport);
+        continue;
+      }
+
+      const name = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+      const kind = zigDeclarationKind(child);
+      if (!name || !kind) {
+        continue;
+      }
+      const declarationNode = findNamedChild(child, "struct_declaration") ?? findNamedChild(child, "enum_declaration");
+      const exported = /\bpub\b/.test(child.text);
+      draftSymbols.push({
+        name,
+        kind,
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(declarationNode) || child.text
+      });
+      if (exported) {
+        exportLabels.push(name);
+      }
+      if (kind === "struct") {
+        pushStructMembers(declarationNode, name);
+      }
+      continue;
+    }
+
+    if (child.type !== "function_declaration") {
+      continue;
+    }
+
+    const functionName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+    if (!functionName) {
+      continue;
+    }
+    const exported = /\bpub\b/.test(child.text);
+    draftSymbols.push({
+      name: functionName,
+      kind: "function",
+      signature: singleLineSignature(child.text),
+      exported,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: nodeText(findNamedChild(child, "block") ?? child.childForFieldName("body")) || child.text
+    });
+    if (exported) {
+      exportLabels.push(functionName);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "zig", imports, draftSymbols, exportLabels, diagnostics);
 }
 
 function csharpCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
@@ -1906,6 +2122,10 @@ export async function analyzeTreeSitterCode(
         return { code: kotlinCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "scala":
         return { code: scalaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "lua":
+        return { code: luaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "zig":
+        return { code: zigCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "csharp":
         return { code: csharpCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "php":

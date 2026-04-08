@@ -133,7 +133,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 | Input | Extensions / Sources | Extraction |
 |-------|---------------------|------------|
-| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1 .kt .kts .scala .sc` | AST via tree-sitter + module resolution |
+| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | AST via tree-sitter + module resolution |
 | PDF | `.pdf` | Local text extraction |
 | DOCX | `.docx` | Local extraction with metadata |
 | HTML | `.html`, URLs | Readability + Turndown to markdown |
