@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.1.31
 
-Nothing yet.
+- Added deterministic contradiction detection that compares claims across sources by topic overlap and opposing polarity, surfaces `contradicts` edges in the graph, and writes a Contradictions section to `wiki/graph/report.md`
+- Added `swarmvault lint --conflicts` for contradiction-focused findings, with optional LLM-powered contradiction detection through `--deep`
+- Added semantic auto-tagging during analysis that extracts up to 5 broad domain tags per source, propagated to page frontmatter, graph nodes, and search
+- Added section-level change summaries to `swarmvault review show` so approval entries describe what changed without needing to read full diffs
+- Added `swarmvault review show --diff` for unified diff output between current and staged page content
+- Bumped analysis format version to 6 so existing cached analyses regenerate with the new tags field
 
 ## 0.1.30
 

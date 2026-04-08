@@ -126,6 +126,10 @@ swarmvault mcp
 
 **God nodes and communities** - highest-connectivity bridge nodes identified automatically. Graph report pages surface surprising connections with plain-English explanations.
 
+**Contradiction detection** - conflicting claims across sources are detected automatically and surfaced in the graph report. Use `lint --conflicts` for a focused contradiction audit.
+
+**Semantic auto-tagging** - broad domain tags are extracted alongside concepts during analysis and appear in page frontmatter, graph nodes, and search.
+
 **Schema-guided compilation** - each vault carries `swarmvault.schema.md` so the compiler follows domain-specific naming rules, categories, and grounding requirements.
 
 **Save-first queries** - answers write to `wiki/outputs/` by default, so useful work compounds instead of disappearing. Supports `markdown`, `report`, `slides`, `chart`, and `image` output formats.
