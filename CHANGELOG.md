@@ -4,6 +4,12 @@
 
 Nothing yet.
 
+## 0.1.25
+
+- Fixed the published `@swarmvaultai/cli` manifest so real npm installs resolve `@swarmvaultai/engine` to the released semver instead of an invalid `workspace:*` dependency
+- Hardened the installed-package smoke runner by isolating npm cache state under the smoke artifact directory, avoiding machine-local `~/.npm` cache corruption from producing false failures
+- Re-ran the tarball-installed and live npm-installed release gates after the packaging fix so the graph-quality release is validated against the same artifacts users actually install
+
 ## 0.1.24
 
 - Added compile-time graph enrichment with deterministic `semantically_similar_to` edges, bounded `similarityReasons`, and first-class `hyperedges` derived from multi-node graph motifs instead of ad hoc report-only heuristics
