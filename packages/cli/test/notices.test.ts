@@ -62,6 +62,7 @@ describe("collectCliNotices", () => {
     const notices = await collectCliNotices({
       commandPath: ["compile"],
       currentVersion: "0.1.25",
+      env: {},
       fetchLatestVersion,
       now: new Date("2026-04-08T12:00:00.000Z"),
       statePath,
@@ -86,6 +87,7 @@ describe("collectCliNotices", () => {
     const baseOptions = {
       commandPath: ["query"],
       currentVersion: "0.1.25",
+      env: {},
       fetchLatestVersion,
       statePath,
       stderrIsTTY: true,
