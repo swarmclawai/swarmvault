@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120">
+  <rect width="240" height="120" fill="#0f172a" rx="16" />
+  <rect x="16" y="24" width="56" height="36" fill="#22c55e" rx="8" />
+  <rect x="92" y="24" width="56" height="36" fill="#38bdf8" rx="8" />
+  <rect x="168" y="24" width="56" height="36" fill="#f59e0b" rx="8" />
+  <text x="44" y="47" fill="#020617" font-size="12" text-anchor="middle">Docs</text>
+  <text x="120" y="47" fill="#020617" font-size="12" text-anchor="middle">Graph</text>
+  <text x="196" y="47" fill="#020617" font-size="12" text-anchor="middle">Query</text>
+  <path d="M72 42 H92" stroke="#e2e8f0" stroke-width="4" />
+  <path d="M148 42 H168" stroke="#e2e8f0" stroke-width="4" />
+  <text x="120" y="92" fill="#e2e8f0" font-size="14" text-anchor="middle">Tiny validation workflow</text>
+</svg>

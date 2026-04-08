@@ -11,6 +11,7 @@ From the OSS repo:
 ```bash
 pnpm install
 pnpm live:smoke:heuristic
+pnpm live:oss:corpus
 ```
 
 To test a real provider path with Ollama Cloud:
@@ -50,9 +51,27 @@ Optional flags:
 ```bash
 node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.14 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
+node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.1.26 --keep-artifacts
+node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
+node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
 ```
 
 Use `pnpm pack` for local tarball preflight installs. Raw `npm pack` preserves workspace dependency specs in the CLI package and does not reflect the publish-time manifest rewrite.
+
+The OSS corpus runner also validates the **installed npm package path**. It clones a pinned set of small public repositories, installs the published CLI into an isolated prefix and npm cache, and runs `init`, repo ingest, compile, benchmark, graph query, query, and graph export against those repos.
+
+The default gated corpus is intentionally small to keep provider cost and run time bounded:
+
+- `sindresorhus/ky`
+- `remarkjs/react-markdown`
+- `pallets/itsdangerous`
+- `necolas/normalize.css`
+
+The optional canary repo is:
+
+- `apple/sample-food-truck`
+
+That Swift canary is not part of the default gated lane.
 
 ## What The Smoke Runner Covers
 
@@ -61,6 +80,7 @@ Use `pnpm pack` for local tarball preflight installs. Raw `npm pack` preserves w
 - install the published CLI from npm into an isolated temporary prefix
 - initialize a fresh workspace
 - ingest and compile a markdown fixture
+- ingest the tiny local fixture matrix under `smoke/fixtures/tiny-matrix/` and verify every shipped code language plus local `markdown`, `text`, `html`, `pdf`, `image`, and `code` source kinds
 - ingest remote HTML and markdown fixtures over HTTP and verify remote image localization into `raw/assets/`
 - import an inbox markdown bundle with a linked local asset
 - run `query`
@@ -118,6 +138,7 @@ The runner writes logs and a temporary workspace under:
 
 ```text
 .live-smoke-artifacts/
+.oss-corpus-artifacts/
 ```
 
 On success those artifacts are deleted by default. On failure they are kept automatically.
@@ -143,3 +164,7 @@ The live smoke workflow is separate from normal PR CI.
 - nightly scheduled heuristic smoke
 
 Artifacts from failed runs are uploaded from `.live-smoke-artifacts/`.
+
+The OSS corpus runner is an extended validation lane. It should run before release candidate signoff and again against the live published npm package when a release materially changes repo ingest, graph quality, or query/report behavior.
+
+The tiny fixture matrix is the complementary fast gate: it is fully controlled, cheap to run, and should catch regressions across every shipped code language and local file kind before larger corpus runs do.

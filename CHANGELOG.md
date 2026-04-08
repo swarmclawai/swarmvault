@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.27
+
+- Added a small pinned live OSS validation corpus plus a per-language/per-source-type tiny matrix, keeping the release gate focused on small real repos and fast deterministic fixtures instead of expensive large-repo runs
+- Fixed local HTML file ingest so `.html` sources are classified as `html` and get readability-style extracted text before analysis, search, and source-page generation
+- Hardened the installed-package smoke runner around the new tiny matrix and agent-CLI checks, including more robust OpenCode validation against the live installed package path
+- Refreshed the local graph viewer UI with a more deliberate graph-first layout, componentized panels, and updated docs screenshots captured from the live redesigned viewer
+- Updated OSS docs, site docs, and release-validation docs for the new OSS corpus workflow, tiny validation matrix, and screenshot-sync process
 ## 0.1.26
 
 - Added interactive-only CLI notices with a cached update prompt, a one-time repo-star prompt, and `SWARMVAULT_NO_NOTICES=1`, while keeping those notices disabled for `--json`, CI, MCP, and long-running serve/watch flows

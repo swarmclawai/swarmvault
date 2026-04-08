@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
@@ -14,6 +15,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const workspaceRoot = path.resolve(repoRoot, "..");
 const fixturesDir = path.join(repoRoot, "smoke", "fixtures");
+const tinyMatrixFixtureDir = path.join(fixturesDir, "tiny-matrix");
 const packageJsonPath = path.join(repoRoot, "packages", "cli", "package.json");
 const requireFromScript = createRequire(import.meta.url);
 
@@ -330,6 +332,64 @@ try {
       await runCliJson(["compile"]);
       const imageAnalysis = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "analyses", `${imageManifest.sourceId}.json`), "utf8"));
       assert.ok(imageAnalysis.summary.includes("queue-backed workflow"), "image analysis did not use the vision extraction summary");
+    });
+
+    await runStep("tiny-language-matrix", async () => {
+      const repoDir = path.join(workspaceDir, "tiny-matrix");
+      await fs.cp(tinyMatrixFixtureDir, repoDir, { recursive: true });
+
+      const ingest = await runCliJson(["ingest", repoDir, "--repo-root", repoDir]);
+      assert.ok(Array.isArray(ingest.imported) && ingest.imported.length >= 10, "tiny matrix did not import the expected sources");
+
+      await runCliJson(["compile"]);
+
+      const manifestDir = path.join(workspaceDir, "state", "manifests");
+      const manifests = await Promise.all(
+        (await fs.readdir(manifestDir)).map(async (name) => JSON.parse(await fs.readFile(path.join(manifestDir, name), "utf8")))
+      );
+      const tinyManifests = manifests.filter((manifest) => manifest.originalPath?.includes("/tiny-matrix/"));
+      const sourceKinds = new Set(tinyManifests.map((manifest) => manifest.sourceKind));
+      for (const sourceKind of ["markdown", "text", "html", "pdf", "image", "code"]) {
+        assert.ok(sourceKinds.has(sourceKind), `tiny matrix missing source kind ${sourceKind}`);
+      }
+
+      const codeIndex = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "code-index.json"), "utf8"));
+      const tinySourceIds = new Set(tinyManifests.map((manifest) => manifest.sourceId));
+      const indexedLanguages = new Set(
+        codeIndex.entries
+          .filter((entry) => tinySourceIds.has(entry.sourceId))
+          .map((entry) => entry.language)
+      );
+      for (const language of [
+        "javascript",
+        "jsx",
+        "typescript",
+        "tsx",
+        "python",
+        "go",
+        "rust",
+        "java",
+        "csharp",
+        "c",
+        "cpp",
+        "php",
+        "ruby",
+        "powershell"
+      ]) {
+        assert.ok(indexedLanguages.has(language), `tiny matrix missing indexed language ${language}`);
+      }
+
+      const htmlManifest = tinyManifests.find((manifest) => manifest.repoRelativePath === "docs/page.html");
+      assert.ok(htmlManifest?.extractedTextPath, "tiny matrix html file did not record extracted text");
+      const htmlExtract = await fs.readFile(path.join(workspaceDir, htmlManifest.extractedTextPath), "utf8");
+      assert.ok(htmlExtract.includes("Local HTML files should extract readable text before analysis."), "tiny matrix html extract was empty");
+
+      const pdfManifest = tinyManifests.find((manifest) => manifest.repoRelativePath === "docs/paper.pdf");
+      const pdfArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pdfManifest.extractedMetadataPath), "utf8"));
+      assert.equal(pdfArtifact.extractor, "pdf_text", "tiny matrix pdf did not use pdf_text extraction");
+      const htmlSourcePagePath = path.join(workspaceDir, "wiki", "sources", `${htmlManifest.sourceId}.md`);
+      const htmlSourcePage = await fs.readFile(htmlSourcePagePath, "utf8");
+      assert.ok(htmlSourcePage.includes("Tiny HTML Source"), "tiny matrix source page did not include html title");
     });
   }
 
@@ -1091,18 +1151,21 @@ try {
           )}\n`,
           "utf8"
         );
+        const opencodePrompt =
+          "Read AGENTS.md from the workspace and reply with exactly two lines. First line: file=AGENTS.md. Second line: command=<one swarmvault command that AGENTS.md recommends>.";
         const opencodeResult = await runCommand(
           "opencode-agent-smoke",
           "opencode",
-          ["run", "--dir", workspaceDir, "--model", `ollama/${opencodeModel}`, prompt],
+          ["run", "--dir", workspaceDir, "--model", `ollama/${opencodeModel}`, opencodePrompt],
           {
             cwd: workspaceDir,
             env: inheritedEnv(),
             timeoutMs: 120_000
           }
         );
-        assert.ok(opencodeResult.stdout.includes("AGENTS.md"), "opencode smoke did not use AGENTS.md");
-        assert.ok(opencodeResult.stdout.includes("swarmvault "), "opencode smoke did not recommend a SwarmVault command");
+        const opencodeTranscript = `${opencodeResult.stdout}\n${opencodeResult.stderr}`;
+        assert.ok(opencodeTranscript.includes("AGENTS.md"), "opencode smoke did not use AGENTS.md");
+        assert.ok(opencodeTranscript.includes("swarmvault "), "opencode smoke did not recommend a SwarmVault command");
       }
     });
   }
@@ -1319,7 +1382,10 @@ async function runInstalledCliCommand(label, args, options = {}) {
 
 async function runCommand(label, command, args, options = {}) {
   const commandIndex = state.steps.length + 1;
-  const safeLabel = `${String(commandIndex).padStart(2, "0")}-${label.replace(/[^a-z0-9._-]+/gi, "-")}`;
+  const normalizedLabel = label.replace(/[^a-z0-9._-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const truncatedLabel = normalizedLabel.slice(0, 80);
+  const labelHash = createHash("sha1").update(label).digest("hex").slice(0, 10);
+  const safeLabel = `${String(commandIndex).padStart(2, "0")}-${truncatedLabel || "command"}-${labelHash}`;
   const stdoutPath = path.join(logsDir, `${safeLabel}.stdout.log`);
   const stderrPath = path.join(logsDir, `${safeLabel}.stderr.log`);
   const metaPath = path.join(logsDir, `${safeLabel}.meta.json`);

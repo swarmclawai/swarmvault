@@ -13,3 +13,4 @@ state/
 agent/
 packages/viewer/dist/
 .live-smoke-artifacts/
+.oss-corpus-artifacts/

@@ -55,9 +55,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.26";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.1.27";
   } catch {
-    return "0.1.26";
+    return "0.1.27";
   }
 }
 

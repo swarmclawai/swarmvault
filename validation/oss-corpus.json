@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "repos": [
+    {
+      "id": "ky",
+      "slug": "sindresorhus/ky",
+      "cloneUrl": "https://github.com/sindresorhus/ky.git",
+      "commit": "7d23d68e2614777f240896060f31d77f74f1a0d2",
+      "category": "typescript_library",
+      "gated": true,
+      "prompts": {
+        "graph": "Where are retries, hooks, and error handling described in this repo?",
+        "query": "What does this repo say about retries, hooks, and error handling?"
+      },
+      "assertions": {
+        "minSources": 8,
+        "minPages": 8,
+        "minModulePages": 3,
+        "expectedGraphQueryKinds": ["module", "source"],
+        "expectedQueryCitationMin": 1,
+        "expectedFirstPartySourceMin": 3
+      }
+    },
+    {
+      "id": "react-markdown",
+      "slug": "remarkjs/react-markdown",
+      "cloneUrl": "https://github.com/remarkjs/react-markdown.git",
+      "commit": "fda7fa560bec901a6103e195f9b1979dab543b17",
+      "category": "docs_heavy_typescript",
+      "gated": true,
+      "prompts": {
+        "graph": "Where are markdown parsing, plugins, and component rendering described in this repo?",
+        "query": "What does this repo say about markdown parsing, plugins, and component rendering?"
+      },
+      "assertions": {
+        "minSources": 6,
+        "minPages": 10,
+        "minModulePages": 3,
+        "expectedGraphQueryKinds": ["module", "source"],
+        "expectedQueryCitationMin": 1,
+        "expectedFirstPartySourceMin": 3
+      }
+    },
+    {
+      "id": "itsdangerous",
+      "slug": "pallets/itsdangerous",
+      "cloneUrl": "https://github.com/pallets/itsdangerous.git",
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "category": "python_library",
+      "gated": true,
+      "prompts": {
+        "graph": "Where are signing, serializers, and timestamp validation described in this repo?",
+        "query": "What does this repo say about signing, serializers, and timestamp validation?"
+      },
+      "assertions": {
+        "minSources": 6,
+        "minPages": 6,
+        "minModulePages": 3,
+        "expectedGraphQueryKinds": ["module", "source"],
+        "expectedQueryCitationMin": 1,
+        "expectedFirstPartySourceMin": 3
+      }
+    },
+    {
+      "id": "normalize-css",
+      "slug": "necolas/normalize.css",
+      "cloneUrl": "https://github.com/necolas/normalize.css.git",
+      "commit": "fc091cce1534909334c1911709a39c22d406977b",
+      "category": "docs_assets_web",
+      "gated": true,
+      "prompts": {
+        "graph": "Where are browser normalization goals, stylesheet defaults, and release notes described in this repo?",
+        "query": "What does this repo say about browser normalization goals, stylesheet defaults, and release notes?"
+      },
+      "assertions": {
+        "minSources": 3,
+        "minPages": 6,
+        "minSourcePages": 3,
+        "expectedGraphQueryKinds": ["source"],
+        "expectedQueryCitationMin": 1,
+        "expectedFirstPartySourceMin": 2
+      }
+    },
+    {
+      "id": "sample-food-truck",
+      "slug": "apple/sample-food-truck",
+      "cloneUrl": "https://github.com/apple/sample-food-truck.git",
+      "commit": "3954a769e99f3cc53297d94f2b960ceb2665b3d6",
+      "category": "swift_resource_canary",
+      "gated": false,
+      "canary": true,
+      "prompts": {
+        "graph": "Where are the app structure, menu flows, and assets described in this repo?",
+        "query": "What does this repo say about app structure, menu flows, and assets?"
+      },
+      "assertions": {
+        "minSources": 1,
+        "minPages": 1,
+        "expectedGraphQueryKinds": ["source"],
+        "expectedQueryCitationMin": 1,
+        "expectedFirstPartySourceMin": 1
+      }
+    }
+  ]
+}

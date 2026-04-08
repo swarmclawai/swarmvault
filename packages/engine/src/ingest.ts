@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { Readability } from "@mozilla/readability";
 import matter from "gray-matter";
 import ignore from "ignore";
@@ -111,6 +112,9 @@ function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKi
   if (mimeType.includes("markdown")) {
     return "markdown";
   }
+  if (mimeType.includes("html")) {
+    return "html";
+  }
   if (mimeType.startsWith("text/")) {
     return "text";
   }
@@ -119,9 +123,6 @@ function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKi
   }
   if (mimeType.startsWith("image/")) {
     return "image";
-  }
-  if (mimeType.includes("html")) {
-    return "html";
   }
   return "binary";
 }
@@ -1437,6 +1438,12 @@ async function prepareFileInput(
     extractedText = payloadBytes.toString("utf8");
     title = titleFromText(path.basename(absoluteInput, path.extname(absoluteInput)), extractedText);
     extractionArtifact = createPlainTextExtractionArtifact(sourceKind, mimeType);
+  } else if (sourceKind === "html") {
+    const html = payloadBytes.toString("utf8");
+    const converted = await convertHtmlToMarkdown(html, pathToFileURL(absoluteInput).toString());
+    title = converted.title;
+    extractedText = converted.markdown;
+    extractionArtifact = createHtmlReadabilityExtractionArtifact(sourceKind, mimeType);
   } else if (sourceKind === "pdf") {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
     const extracted = await extractPdfText({ mimeType, bytes: payloadBytes });

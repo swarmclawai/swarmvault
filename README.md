@@ -394,11 +394,24 @@ Live smoke checks for the published package:
 pnpm live:smoke:heuristic
 pnpm live:smoke:ollama
 OPENAI_API_KEY=... pnpm live:smoke:openai
+pnpm live:oss:corpus
 ```
 
 The heuristic published-package smoke lane validates saved visual outputs, project-aware code ingestion, research-aware `add` capture, benchmark artifacts, graph report generation, standalone graph exports (`html`, `svg`, `graphml`, `cypher`), review-staged scheduled query runs, watch automation plus `watch status`, richer graph workspace APIs, and MCP graph/query surfaces against the real npm install path.
 
-See [docs/live-testing.md](./docs/live-testing.md) for the published-package smoke flow, CI workflow, and the manual live checklist.
+The OSS corpus lane runs the published CLI against a pinned set of small public repositories so release testing exercises real repo shapes without letting provider costs or run times balloon. The default gated corpus currently covers:
+
+- `sindresorhus/ky`
+- `remarkjs/react-markdown`
+- `pallets/itsdangerous`
+- `necolas/normalize.css`
+
+The installed-package heuristic lane also includes a tiny controlled fixture matrix under `smoke/fixtures/tiny-matrix/` so every shipped code language and local source kind stays covered in a cheap, repeatable run:
+
+- code: JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, PowerShell
+- local file kinds: markdown, text, HTML, PDF, image, and code
+
+See [docs/live-testing.md](./docs/live-testing.md) for the published-package smoke flow, OSS corpus runner, CI workflow, and the manual live checklist.
 
 ## Worked Examples
 

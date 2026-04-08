@@ -37,6 +37,7 @@
       "**/*.json",
       "!**/dist",
       "!.live-smoke-artifacts",
+      "!.oss-corpus-artifacts",
       "!node_modules",
       "!.next",
       "!out",
