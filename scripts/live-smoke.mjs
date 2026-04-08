@@ -46,6 +46,7 @@ let graphServer;
 let chartPrimaryAssetPath = "";
 let widgetModulePath = "";
 let pendingApprovalId = "";
+const MINIMAL_PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
 
 await fs.mkdir(logsDir, { recursive: true });
 
@@ -230,6 +231,70 @@ try {
       } finally {
         await server.close();
       }
+    });
+
+    await runStep("mixed-corpus-extraction", async () => {
+      await fs.writeFile(
+        path.join(workspaceDir, "vision-provider.mjs"),
+        [
+          "export async function createAdapter(id, config) {",
+          "  return {",
+          "    id,",
+          "    type: 'custom',",
+          "    model: config.model,",
+          "    capabilities: new Set(config.capabilities ?? ['structured', 'vision']),",
+          "    async generateText() {",
+          "      return { text: 'vision-provider-text' };",
+          "    },",
+          "    async generateStructured(_request, schema) {",
+          "      return schema.parse({",
+          "        title: 'Smoke Diagram',",
+          "        summary: 'The image shows a queue-backed workflow.',",
+          "        text: 'Browser -> API -> Queue -> Worker',",
+          "        concepts: [{ name: 'Queue', description: 'The visible queue between the API and worker.' }],",
+          "        entities: [{ name: 'API', description: 'The visible API node.' }],",
+          "        claims: [{ text: 'The workflow routes work through a queue.', confidence: 0.9, polarity: 'positive' }],",
+          "        questions: ['What drains the queue?']",
+          "      });",
+          "    }",
+          "  };",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+
+      await updateConfig((config) => {
+        config.providers.visionTest = {
+          type: "custom",
+          model: "vision-test",
+          module: "./vision-provider.mjs",
+          capabilities: ["structured", "vision"]
+        };
+        config.tasks.visionProvider = "visionTest";
+      });
+
+      await fs.writeFile(path.join(workspaceDir, "diagram.png"), MINIMAL_PNG);
+      await fs.writeFile(path.join(workspaceDir, "paper.pdf"), createSimplePdf("SwarmVault PDF extraction keeps documents searchable."));
+
+      const imageManifest = await runCliJson(["ingest", "diagram.png"]);
+      const pdfManifest = await runCliJson(["ingest", "paper.pdf"]);
+      assert.ok(imageManifest.extractedMetadataPath, "image ingest did not record extraction metadata");
+      assert.ok(imageManifest.extractedTextPath, "image ingest did not write extracted markdown");
+      assert.ok(pdfManifest.extractedMetadataPath, "pdf ingest did not record extraction metadata");
+      assert.ok(pdfManifest.extractedTextPath, "pdf ingest did not write extracted markdown");
+
+      const imageArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, imageManifest.extractedMetadataPath), "utf8"));
+      const pdfArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pdfManifest.extractedMetadataPath), "utf8"));
+      assert.equal(imageArtifact.extractor, "image_vision", "image extraction did not use the vision extractor");
+      assert.equal(pdfArtifact.extractor, "pdf_text", "pdf extraction did not use the pdf extractor");
+      assert.equal(pdfArtifact.pageCount, 1, "pdf extraction did not record the page count");
+
+      const pdfExtract = await fs.readFile(path.join(workspaceDir, pdfManifest.extractedTextPath), "utf8");
+      assert.ok(pdfExtract.includes("SwarmVault PDF extraction"), "pdf extraction did not preserve document text");
+
+      await runCliJson(["compile"]);
+      const imageAnalysis = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "analyses", `${imageManifest.sourceId}.json`), "utf8"));
+      assert.ok(imageAnalysis.summary.includes("queue-backed workflow"), "image analysis did not use the vision extraction summary");
     });
   }
 
@@ -994,6 +1059,33 @@ async function updateConfig(mutate) {
   const config = JSON.parse(await fs.readFile(configPath, "utf8"));
   mutate(config);
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+function createSimplePdf(text) {
+  const escaped = text.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
+  const stream = `BT /F1 18 Tf 72 720 Td (${escaped}) Tj ET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+    "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    `5 0 obj\n<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream\nendobj\n`
+  ];
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(pdf, "utf8"));
+    pdf += object;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf, "utf8");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "utf8");
 }
 
 async function fetchJson(url, init) {

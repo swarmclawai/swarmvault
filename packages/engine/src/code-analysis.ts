@@ -2310,9 +2310,10 @@ export async function analyzeCodeSource(manifest: SourceManifest, extractedText:
       : await analyzeTreeSitterCode(manifest, extractedText, language);
 
   return {
-    analysisVersion: 4,
+    analysisVersion: 5,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    extractionHash: manifest.extractionHash,
     schemaHash,
     title: manifest.title,
     summary: summarizeModule(manifest, code),

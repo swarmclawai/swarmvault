@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.22
+
+- Added first-class mixed-corpus extraction artifacts under `state/extracts/`, keeping extracted markdown in `state/extracts/<sourceId>.md` and adding JSON sidecars with extractor metadata, warnings, provider/model info, and PDF page counts
+- Added local PDF text extraction with `pdfjs-dist` so PDF sources contribute real extracted text, analysis, search context, and citations instead of degrading to the old empty-source placeholder
+- Added image-aware extraction through the configured `visionProvider`, including structured OCR/diagram extraction when a real multimodal provider is available and explicit warning propagation when image extraction cannot run
+- Expanded engine tests and installed-package heuristic smoke coverage to validate PDF extraction, image extraction, and mixed-corpus ingest through the packed npm artifacts
+
 ## 0.1.21
 
 - Added `swarmvault add <url>` as an opinionated capture layer for arXiv IDs/URLs and X/Twitter URLs, with graceful fallback to generic URL ingest when a specialized capture is unavailable

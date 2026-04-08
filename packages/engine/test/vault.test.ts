@@ -26,6 +26,7 @@ import {
   uninstallGitHooks,
   watchVault
 } from "../src/index.js";
+import type { SourceAnalysis, SourceExtractionArtifact } from "../src/types.js";
 
 const tempDirs: string[] = [];
 type ToolContent = Array<{ type?: string; text?: string }>;
@@ -97,6 +98,48 @@ async function startFixtureServer(
       })
   };
 }
+
+async function updateConfig(
+  rootDir: string,
+  mutate: (config: { providers: Record<string, unknown>; tasks: Record<string, string> }) => void
+): Promise<void> {
+  const configPath = path.join(rootDir, "swarmvault.config.json");
+  const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+    providers: Record<string, unknown>;
+    tasks: Record<string, string>;
+  };
+  mutate(config);
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+function createSimplePdf(text: string): Buffer {
+  const escaped = text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const stream = `BT /F1 18 Tf 72 720 Td (${escaped}) Tj ET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+    "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    `5 0 obj\n<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream\nendobj\n`
+  ];
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(pdf, "utf8"));
+    pdf += object;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf, "utf8");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "utf8");
+}
+
+const MINIMAL_PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
 
 function attachmentRelativePath(sourceId: string, storedAttachmentPath: string): string {
   return storedAttachmentPath.replace(new RegExp(`^raw/assets/${sourceId}/`), "");
@@ -243,6 +286,129 @@ describe("swarmvault workflow", () => {
     expect(sessionFiles.some((file) => file.includes("-compile-"))).toBe(true);
     expect(sessionFiles.some((file) => file.includes("-query-"))).toBe(true);
     expect(sessionFiles.some((file) => file.includes("-lint-"))).toBe(true);
+  });
+
+  it("extracts PDF text into markdown and extraction metadata sidecars", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const pdfPath = path.join(rootDir, "paper.pdf");
+    await fs.writeFile(pdfPath, createSimplePdf("SwarmVault PDF extraction turns papers into searchable text."), "binary");
+
+    const manifest = await ingestInput(rootDir, "paper.pdf");
+    expect(manifest.sourceKind).toBe("pdf");
+    expect(manifest.extractedTextPath).toBeTruthy();
+    expect(manifest.extractedMetadataPath).toBeTruthy();
+    expect(manifest.extractionHash).toBeTruthy();
+
+    const extractedText = await fs.readFile(path.join(rootDir, manifest.extractedTextPath as string), "utf8");
+    expect(extractedText).toContain("SwarmVault PDF extraction");
+
+    const extractionArtifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, manifest.extractedMetadataPath as string), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(extractionArtifact.extractor).toBe("pdf_text");
+    expect(extractionArtifact.pageCount).toBe(1);
+
+    await compileVault(rootDir);
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.summary).not.toContain("Text extraction is not yet available");
+    expect(analysis.summary).toContain("SwarmVault PDF extraction");
+    expect(analysis.extractionHash).toBe(manifest.extractionHash);
+  });
+
+  it("uses the configured vision provider to analyze image sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "vision-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['structured', 'vision']),",
+        "    async generateText() {",
+        "      return { text: 'vision-provider-text' };",
+        "    },",
+        "    async generateStructured(_request, schema) {",
+        "      return schema.parse({",
+        "        title: 'Deployment Diagram',",
+        "        summary: 'The image shows a queue-backed deployment pipeline.',",
+        "        text: 'Browser -> API -> Queue -> Worker',",
+        "        concepts: [{ name: 'Queue', description: 'A queue connecting the API and worker.' }],",
+        "        entities: [{ name: 'API', description: 'The visible API node.' }],",
+        "        claims: [{ text: 'The pipeline routes work through a queue.', confidence: 0.88, polarity: 'positive' }],",
+        "        questions: ['What system drains the queue?']",
+        "      });",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    await updateConfig(rootDir, (config) => {
+      config.providers.visionTest = {
+        type: "custom",
+        model: "vision-test",
+        module: "./vision-provider.mjs",
+        capabilities: ["structured", "vision"]
+      };
+      config.tasks.visionProvider = "visionTest";
+    });
+
+    await fs.writeFile(path.join(rootDir, "diagram.png"), MINIMAL_PNG);
+    const manifest = await ingestInput(rootDir, "diagram.png");
+    expect(manifest.sourceKind).toBe("image");
+    expect(manifest.title).toBe("Deployment Diagram");
+    expect(manifest.extractedTextPath).toBeTruthy();
+    expect(manifest.extractedMetadataPath).toBeTruthy();
+    expect(manifest.extractionHash).toBeTruthy();
+
+    const extractionArtifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, manifest.extractedMetadataPath as string), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(extractionArtifact.extractor).toBe("image_vision");
+    expect(extractionArtifact.providerId).toBe("visionTest");
+    expect(extractionArtifact.vision?.summary).toContain("queue-backed deployment pipeline");
+
+    await compileVault(rootDir);
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.title).toBe("Deployment Diagram");
+    expect(analysis.summary).toContain("queue-backed deployment pipeline");
+    expect(analysis.claims.some((claim) => claim.text.includes("routes work through a queue"))).toBe(true);
+    expect(analysis.entities.some((entity) => entity.name === "API")).toBe(true);
+    expect(analysis.extractionHash).toBe(manifest.extractionHash);
+  });
+
+  it("records explicit extraction warnings when no real vision provider is configured", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(path.join(rootDir, "whiteboard.png"), MINIMAL_PNG);
+    const manifest = await ingestInput(rootDir, "whiteboard.png");
+    expect(manifest.sourceKind).toBe("image");
+    expect(manifest.extractedTextPath).toBeUndefined();
+    expect(manifest.extractedMetadataPath).toBeTruthy();
+
+    const extractionArtifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, manifest.extractedMetadataPath as string), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(extractionArtifact.warnings?.[0]).toContain("Vision extraction unavailable");
+
+    await compileVault(rootDir);
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.summary).toContain("Vision extraction unavailable");
+    expect(analysis.summary).not.toContain("Text extraction is not yet available");
   });
 
   it("imports inbox markdown bundles with copied attachments", async () => {

@@ -225,7 +225,7 @@ Running the engine produces a local workspace with these main areas:
 - `wiki/projects/`: generated project rollups over canonical pages
 - `wiki/candidates/`: staged concept and entity pages awaiting confirmation on a later compile
 - `state/manifests/`: source manifests
-- `state/extracts/`: extracted text
+- `state/extracts/`: extracted markdown plus JSON sidecars describing extractor kind, warnings, PDF page counts, and image-vision metadata
 - `state/analyses/`: model analysis output
 - `state/code-index.json`: repo-aware code module aliases and local resolution data
 - `state/benchmark.json`: latest benchmark/trust summary for the current vault
@@ -240,6 +240,7 @@ Running the engine produces a local workspace with these main areas:
 Saved outputs are indexed immediately into the graph page registry and search index, then linked back into compiled source, concept, and entity pages immediately through the lightweight artifact sync path. New concept and entity pages stage into `wiki/candidates/` first and promote to active pages on the next matching compile. Insight pages are indexed into search and page reads, but compile does not mutate them. Project-scoped pages receive `project_ids`, project tags, and layered root-plus-project schema hashes when all contributing sources resolve to the same configured project.
 Code sources also emit module, symbol, and parser-backed rationale nodes into `state/graph.json`, so local imports, exports, inheritance, same-module call edges, and rationale links are queryable through the same viewer and search pipeline.
 Ingest, inbox import, compile, query, lint, review, and candidate operations also append human-readable entries to `wiki/log.md`.
+PDF sources now go through a local text-extraction pass before analysis, and image sources use the configured `visionProvider` for structured OCR/diagram extraction when a real multimodal provider is available. When image extraction is unavailable, SwarmVault records an explicit warning in the extraction sidecar and carries that warning forward into analysis instead of silently treating the source as empty.
 
 ## Notes
 

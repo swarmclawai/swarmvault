@@ -232,6 +232,42 @@ export interface SourceAttachment {
   originalPath?: string;
 }
 
+export type ExtractionKind = "plain_text" | "html_readability" | "pdf_text" | "image_vision";
+
+export interface ExtractionTerm {
+  name: string;
+  description: string;
+}
+
+export interface ExtractionClaim {
+  text: string;
+  confidence: number;
+  polarity: Polarity;
+}
+
+export interface ImageVisionExtraction {
+  title?: string;
+  summary: string;
+  text: string;
+  concepts: ExtractionTerm[];
+  entities: ExtractionTerm[];
+  claims: ExtractionClaim[];
+  questions: string[];
+}
+
+export interface SourceExtractionArtifact {
+  extractor: ExtractionKind;
+  sourceKind: SourceKind;
+  mimeType: string;
+  producedAt: string;
+  providerId?: string;
+  providerModel?: string;
+  warnings?: string[];
+  pageCount?: number;
+  metadata?: Record<string, string>;
+  vision?: ImageVisionExtraction;
+}
+
 export interface IngestOptions {
   includeAssets?: boolean;
   maxAssetSize?: number;
@@ -267,6 +303,8 @@ export interface SourceManifest {
   url?: string;
   storedPath: string;
   extractedTextPath?: string;
+  extractedMetadataPath?: string;
+  extractionHash?: string;
   mimeType: string;
   contentHash: string;
   createdAt: string;
@@ -360,6 +398,7 @@ export interface SourceAnalysis {
   analysisVersion: number;
   sourceId: string;
   sourceHash: string;
+  extractionHash?: string;
   schemaHash: string;
   title: string;
   summary: string;
