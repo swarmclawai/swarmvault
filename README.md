@@ -110,13 +110,13 @@ swarmvault mcp
 
 | Input | Extensions / Sources | Extraction |
 |-------|---------------------|------------|
-| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1` | AST via tree-sitter + module resolution |
+| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1 .kt .kts .scala .sc` | AST via tree-sitter + module resolution |
 | PDF | `.pdf` | Local text extraction |
 | DOCX | `.docx` | Local extraction with metadata |
 | HTML | `.html`, URLs | Readability + Turndown to markdown |
 | Images | `.png .jpg .webp` | Vision provider (when configured) |
 | Research | arXiv, DOI, articles, X/Twitter | Normalized markdown via `swarmvault add` |
-| Markdown | `.md .txt` | Direct ingest |
+| Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 
 <!-- readme-section:what-you-get -->
@@ -145,6 +145,8 @@ swarmvault mcp
 **Automation** - watch mode, git hooks, recurring schedules, and inbox import keep the vault current without manual intervention.
 
 **External graph sinks** - export to HTML, SVG, GraphML, and Cypher, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
+
+**Large-repo hardening** - long repo ingests and compile passes emit bounded progress on big batches, parser compatibility failures stay local to the affected sources with explicit diagnostics, and graph reports roll up tiny fragmented communities for readability.
 
 Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know what was found vs guessed.
 

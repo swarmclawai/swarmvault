@@ -2,7 +2,7 @@
 
 `@swarmvaultai/cli` is the global command-line entry point for SwarmVault.
 
-It gives you the `swarmvault` command for building a local-first knowledge vault from files, DOCX documents, URLs, browser clips, saved query outputs, and guided exploration runs.
+It gives you the `swarmvault` command for building a local-first knowledge vault from files, reStructuredText and DOCX documents, URLs, browser clips, saved query outputs, and guided exploration runs.
 
 ## Install
 
@@ -71,8 +71,8 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - directory ingest respects `.gitignore` unless you pass `--no-gitignore`
 - repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
 - URL ingest still localizes remote image references by default
-- local file ingest supports markdown, text, HTML, PDF, DOCX, images, and code
-- code-aware directory ingest currently covers JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, and PowerShell
+- local file ingest supports markdown, text, reStructuredText, HTML, PDF, DOCX, images, and code
+- code-aware directory ingest currently covers JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, PowerShell, Kotlin, and Scala
 
 Useful flags:
 
@@ -88,6 +88,8 @@ Useful flags:
 - `--max-asset-size <bytes>`
 
 Repo ingest defaults to `first_party` material. The extra `--include-*` flags opt dependency trees, resource bundles, and generated output back in when you actually want them in the vault.
+
+Large repo ingest now emits low-noise progress on materially large batches, and parser compatibility failures stay local to the affected source instead of aborting unrelated analysis.
 
 ### `swarmvault add <url>`
 

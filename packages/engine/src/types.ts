@@ -58,6 +58,8 @@ export type CodeLanguage =
   | "go"
   | "rust"
   | "java"
+  | "kotlin"
+  | "scala"
   | "csharp"
   | "c"
   | "cpp"
@@ -1067,6 +1069,12 @@ export interface GraphReportArtifact {
     path?: string;
     title?: string;
   }>;
+  fragmentedCommunityRollup?: {
+    totalCommunities: number;
+    rolledUpCount: number;
+    rolledUpNodes: number;
+    exampleLabels: string[];
+  };
   surprisingConnections: Array<{
     id: string;
     sourceNodeId: string;

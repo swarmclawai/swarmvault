@@ -158,8 +158,42 @@ type ManagedPageRecord = {
   content: string;
 };
 
+const COMPILE_PROGRESS_THRESHOLD = 120;
+const COMPILE_PROGRESS_UPDATE_INTERVAL = 50;
+
 function uniqueStrings(values: string[]): string[] {
   return uniqueBy(values.filter(Boolean), (value) => value);
+}
+
+function createCompileProgressReporter(
+  phase: string,
+  totalItems: number
+): { tick: (label?: string) => void; finish: (summary?: string) => void } {
+  if (totalItems < COMPILE_PROGRESS_THRESHOLD || !process.stderr?.isTTY) {
+    return {
+      tick: () => {},
+      finish: () => {}
+    };
+  }
+
+  let completed = 0;
+  let nextUpdate = Math.min(COMPILE_PROGRESS_UPDATE_INTERVAL, totalItems);
+  process.stderr.write(`[swarmvault compile] ${phase}: 0/${totalItems}\n`);
+
+  return {
+    tick: (label) => {
+      completed += 1;
+      if (completed >= nextUpdate || completed === totalItems) {
+        process.stderr.write(`[swarmvault compile] ${phase}: ${completed}/${totalItems}${label ? ` (${label})` : ""}\n`);
+        while (completed >= nextUpdate) {
+          nextUpdate += COMPILE_PROGRESS_UPDATE_INTERVAL;
+        }
+      }
+    },
+    finish: (summary) => {
+      process.stderr.write(`[swarmvault compile] ${phase}: ${totalItems}/${totalItems}${summary ? ` (${summary})` : ""}\n`);
+    }
+  };
 }
 
 function normalizeOutputFormat(format: OutputFormat | undefined): OutputFormat {
@@ -3563,34 +3597,41 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     };
   }
 
+  const analysisProgress = createCompileProgressReporter("analyze", manifests.length);
   const [dirtyAnalyses, cleanAnalyses] = await Promise.all([
     Promise.all(
-      dirty.map(async (manifest) =>
-        analyzeSource(
-          manifest,
-          await readExtractedText(rootDir, manifest),
-          provider,
-          paths,
-          getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
-        )
-      )
-    ),
-    Promise.all(
-      clean.map(async (manifest) => {
-        const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
-        if (cached) {
-          return cached;
-        }
-        return analyzeSource(
+      dirty.map(async (manifest) => {
+        const analysis = await analyzeSource(
           manifest,
           await readExtractedText(rootDir, manifest),
           provider,
           paths,
           getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
         );
+        analysisProgress.tick(manifest.title);
+        return analysis;
+      })
+    ),
+    Promise.all(
+      clean.map(async (manifest) => {
+        const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
+        if (cached) {
+          analysisProgress.tick(manifest.title);
+          return cached;
+        }
+        const analysis = await analyzeSource(
+          manifest,
+          await readExtractedText(rootDir, manifest),
+          provider,
+          paths,
+          getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
+        );
+        analysisProgress.tick(manifest.title);
+        return analysis;
       })
     )
   ]);
+  analysisProgress.finish(`dirty=${dirty.length}, clean=${clean.length}`);
 
   const initialAnalyses = [...dirtyAnalyses, ...cleanAnalyses];
   const codeIndex = await buildCodeIndex(rootDir, manifests, initialAnalyses);

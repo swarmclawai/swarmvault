@@ -57,6 +57,8 @@ describe("tiny validation matrix", () => {
       "go",
       "rust",
       "java",
+      "kotlin",
+      "scala",
       "csharp",
       "c",
       "cpp",
@@ -106,6 +108,13 @@ describe("tiny validation matrix", () => {
       await fs.readFile(path.join(rootDir, imageManifest?.extractedMetadataPath ?? ""), "utf8")
     ) as SourceExtractionArtifact;
     expect(imageArtifact.extractor).toBe("image_vision");
+
+    const rstManifest = manifests.find((manifest) => manifest.repoRelativePath === "docs/guide.rst");
+    expect(rstManifest?.sourceKind).toBe("text");
+    expect(rstManifest?.mimeType).toBe("text/x-rst");
+    const rstExtract = await fs.readFile(path.join(rootDir, rstManifest?.extractedTextPath ?? ""), "utf8");
+    expect(rstExtract).toContain("# Tiny reStructuredText Source");
+    expect(rstExtract).toContain("Note: The extracted text should normalize headings and directives.");
 
     const codeIndexPath = path.join(rootDir, "state", "code-index.json");
     const codeIndex = JSON.parse(await fs.readFile(codeIndexPath, "utf8")) as { entries: Array<{ language: CodeLanguage }> };

@@ -479,6 +479,8 @@ try {
         "go",
         "rust",
         "java",
+        "kotlin",
+        "scala",
         "csharp",
         "c",
         "cpp",
@@ -493,6 +495,11 @@ try {
       assert.ok(htmlManifest?.extractedTextPath, "tiny matrix html file did not record extracted text");
       const htmlExtract = await fs.readFile(path.join(workspaceDir, htmlManifest.extractedTextPath), "utf8");
       assert.ok(htmlExtract.includes("Local HTML files should extract readable text before analysis."), "tiny matrix html extract was empty");
+
+      const rstManifest = tinyManifests.find((manifest) => manifest.repoRelativePath === "docs/guide.rst");
+      assert.equal(rstManifest?.mimeType, "text/x-rst", "tiny matrix rst file did not keep the expected mime type");
+      const rstExtract = await fs.readFile(path.join(workspaceDir, rstManifest.extractedTextPath), "utf8");
+      assert.ok(rstExtract.includes("# Tiny reStructuredText Source"), "tiny matrix rst extract did not normalize the heading");
 
       const pdfManifest = tinyManifests.find((manifest) => manifest.repoRelativePath === "docs/paper.pdf");
       const pdfArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pdfManifest.extractedMetadataPath), "utf8"));

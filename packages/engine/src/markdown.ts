@@ -799,6 +799,44 @@ function topGroupPatterns(graph: GraphArtifact): GraphHyperedge[] {
     .slice(0, 8);
 }
 
+function fragmentedCommunityPresentation(
+  graph: GraphArtifact,
+  communityPages: Pick<GraphPage, "id" | "path" | "title">[]
+): {
+  thinCommunities: GraphReportArtifact["thinCommunities"];
+  fragmentedCommunityRollup?: NonNullable<GraphReportArtifact["fragmentedCommunityRollup"]>;
+} {
+  const thinCommunities = (graph.communities ?? [])
+    .filter((community) => community.nodeIds.length <= 2)
+    .sort((left, right) => right.nodeIds.length - left.nodeIds.length || left.label.localeCompare(right.label));
+  const visibleCommunities = thinCommunities.slice(0, 6).map((community) => {
+    const page = communityPages.find((candidate) => candidate.id === `graph:${community.id}`);
+    return {
+      id: community.id,
+      label: community.label,
+      nodeCount: community.nodeIds.length,
+      pageId: page?.id,
+      path: page?.path,
+      title: page?.title
+    };
+  });
+  const rolledUp = thinCommunities.slice(visibleCommunities.length);
+  if (!rolledUp.length) {
+    return {
+      thinCommunities: visibleCommunities
+    };
+  }
+  return {
+    thinCommunities: visibleCommunities,
+    fragmentedCommunityRollup: {
+      totalCommunities: graph.communities?.length ?? 0,
+      rolledUpCount: rolledUp.length,
+      rolledUpNodes: rolledUp.reduce((sum, community) => sum + community.nodeIds.length, 0),
+      exampleLabels: rolledUp.slice(0, 4).map((community) => community.label)
+    }
+  };
+}
+
 function suggestedGraphQuestions(graph: GraphArtifact): string[] {
   const thinCommunities = (graph.communities ?? []).filter((community) => community.nodeIds.length <= 2);
   const bridgeNodes = graph.nodes
@@ -839,19 +877,7 @@ export function buildGraphReportArtifact(input: {
     .filter((node) => (node.bridgeScore ?? 0) > 0)
     .sort((left, right) => (right.bridgeScore ?? 0) - (left.bridgeScore ?? 0))
     .slice(0, 8);
-  const thinCommunities = (reportGraph.communities ?? [])
-    .filter((community) => community.nodeIds.length <= 2)
-    .map((community) => {
-      const page = input.communityPages.find((candidate) => candidate.id === `graph:${community.id}`);
-      return {
-        id: community.id,
-        label: community.label,
-        nodeCount: community.nodeIds.length,
-        pageId: page?.id,
-        path: page?.path,
-        title: page?.title
-      };
-    });
+  const communityPresentation = fragmentedCommunityPresentation(reportGraph, input.communityPages);
   const surprisingConnections = topSurprisingConnections(reportGraph, pagesById);
   const groupPatterns = topGroupPatterns(reportGraph);
   const breakdown = sourceClassBreakdown(input.graph);
@@ -863,6 +889,11 @@ export function buildGraphReportArtifact(input: {
   if (nonFirstPartyNodes > 0 && nonFirstPartyNodes / Math.max(1, input.graph.nodes.length) >= 0.25) {
     warnings.push(
       `Non-first-party material accounts for ${((nonFirstPartyNodes / Math.max(1, input.graph.nodes.length)) * 100).toFixed(1)}% of graph nodes.`
+    );
+  }
+  if (communityPresentation.fragmentedCommunityRollup) {
+    warnings.push(
+      `First-party report view is fragmented: ${communityPresentation.fragmentedCommunityRollup.rolledUpCount} tiny communities were rolled up for readability.`
     );
   }
 
@@ -905,10 +936,11 @@ export function buildGraphReportArtifact(input: {
       degree: node.degree,
       bridgeScore: node.bridgeScore
     })),
-    thinCommunities,
+    thinCommunities: communityPresentation.thinCommunities,
+    fragmentedCommunityRollup: communityPresentation.fragmentedCommunityRollup,
     surprisingConnections,
     groupPatterns,
-    suggestedQuestions: suggestedGraphQuestions(input.graph),
+    suggestedQuestions: suggestedGraphQuestions(reportGraph),
     communityPages: input.communityPages.map((page) => ({
       id: page.id,
       path: page.path,
@@ -1055,6 +1087,12 @@ export function buildGraphReportPage(input: {
             : `- ${community.label} (${community.nodeCount} node(s))`
         )
       : ["- No thin communities detected."]),
+    ...(input.report.fragmentedCommunityRollup
+      ? [
+          `- Rolled up ${input.report.fragmentedCommunityRollup.rolledUpCount} additional tiny communities covering ${input.report.fragmentedCommunityRollup.rolledUpNodes} node(s).`,
+          `- Example rolled-up labels: ${input.report.fragmentedCommunityRollup.exampleLabels.join(", ")}`
+        ]
+      : []),
     "",
     "## Surprising Connections",
     "",

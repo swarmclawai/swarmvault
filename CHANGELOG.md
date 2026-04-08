@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.33
+
+- Added parser-backed Kotlin and Scala code ingestion, including vendored WASM grammar loading, package-aware symbol/import extraction, and repo-aware module-page generation
+- Added explicit `.rst` and `.rest` ingest support with lightweight heading and directive normalization so reStructuredText sources remain searchable and analyzable without a separate rendering step
+- Hardened tree-sitter compatibility handling so missing or incompatible grammar/runtime paths produce source-local diagnostics instead of aborting unrelated code analysis
+- Added low-noise progress reporting for large ingest and compile batches, and rolled up tiny fragmented communities in graph-report presentation without mutating the canonical graph
+- Expanded the tiny validation matrix, installed-artifact smoke checks, package docs, localized root READMEs, site docs, and skill metadata for the new Kotlin, Scala, and `.rst` surfaces
+
 ## 0.1.32
 
 - Fixed a watch shutdown race so `watchVault().close()` waits for any in-flight watch cycle to finish before returning, preventing late file writes from racing temp-workspace cleanup and automation teardown

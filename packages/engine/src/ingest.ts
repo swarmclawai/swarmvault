@@ -50,6 +50,9 @@ import { clearPendingSemanticRefreshEntries } from "./watch-state.js";
 const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
 const DEFAULT_MAX_DIRECTORY_FILES = 5000;
 const HARD_REPO_IGNORES = new Set([".git", ".venv"]);
+const PROGRESS_FILE_THRESHOLD = 150;
+const PROGRESS_UPDATE_INTERVAL = 100;
+const RST_HEADING_MARKERS = new Set(["=", "-", "~", "^", '"', "#", "*", "+"]);
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -110,6 +113,9 @@ function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKi
   if (inferCodeLanguage(filePath, mimeType)) {
     return "code";
   }
+  if (isRstFilePath(filePath)) {
+    return "text";
+  }
   if (mimeType.includes("markdown")) {
     return "markdown";
   }
@@ -131,13 +137,167 @@ function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKi
   return "binary";
 }
 
-function titleFromText(fallback: string, content: string): string {
+function isRstFilePath(filePath: string): boolean {
+  const extension = path.extname(filePath).toLowerCase();
+  return extension === ".rst" || extension === ".rest";
+}
+
+function titleFromText(fallback: string, content: string, filePath?: string): string {
+  if (filePath && isRstFilePath(filePath)) {
+    const rstTitle = titleFromRst(fallback, content);
+    if (rstTitle) {
+      return rstTitle;
+    }
+  }
   const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
   return heading || fallback;
 }
 
 function guessMimeType(target: string): string {
+  if (isRstFilePath(target)) {
+    return "text/x-rst";
+  }
   return mime.lookup(target) || "application/octet-stream";
+}
+
+function rstAdornmentLine(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (trimmed.length < 3) {
+    return undefined;
+  }
+  const marker = trimmed[0] ?? "";
+  if (!RST_HEADING_MARKERS.has(marker) || ![...trimmed].every((char) => char === marker)) {
+    return undefined;
+  }
+  return marker;
+}
+
+function rstHeadingLevel(marker: string): string {
+  switch (marker) {
+    case "=":
+      return "#";
+    case "-":
+      return "##";
+    case "~":
+      return "###";
+    case "^":
+      return "####";
+    default:
+      return "##";
+  }
+}
+
+function normalizeRstDirective(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(".. ")) {
+    return undefined;
+  }
+  const directiveMatch = trimmed.match(/^\.\.\s+([A-Za-z][\w-]*)::\s*(.*)$/);
+  if (!directiveMatch) {
+    return "";
+  }
+  const label = directiveMatch[1]
+    .replace(/-/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  const detail = directiveMatch[2]?.trim();
+  return detail ? `${label}: ${detail}` : `${label}:`;
+}
+
+function normalizeRstExtractedText(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const normalized: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = lines[index] ?? "";
+    const next = lines[index + 1] ?? "";
+    const afterNext = lines[index + 2] ?? "";
+    const trimmed = current.trim();
+
+    if (!trimmed) {
+      normalized.push("");
+      continue;
+    }
+
+    const currentAdornment = rstAdornmentLine(current);
+    const nextAdornment = rstAdornmentLine(next);
+    const afterNextAdornment = rstAdornmentLine(afterNext);
+    if (currentAdornment && next.trim() && afterNextAdornment && currentAdornment === afterNextAdornment) {
+      normalized.push(`${rstHeadingLevel(currentAdornment)} ${next.trim()}`);
+      normalized.push("");
+      index += 2;
+      continue;
+    }
+    if (nextAdornment && trimmed.length > 0) {
+      normalized.push(`${rstHeadingLevel(nextAdornment)} ${trimmed}`);
+      normalized.push("");
+      index += 1;
+      continue;
+    }
+
+    const directive = normalizeRstDirective(current);
+    if (directive !== undefined) {
+      if (directive) {
+        normalized.push(directive);
+      }
+      continue;
+    }
+
+    normalized.push(current);
+  }
+
+  return normalized
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function titleFromRst(fallback: string, content: string): string {
+  const normalized = normalizeRstExtractedText(content);
+  const heading = normalized.match(/^#+\s+(.+)$/m)?.[1]?.trim();
+  return heading || fallback;
+}
+
+function extractedTextForPlainSource(filePath: string, sourceKind: SourceManifest["sourceKind"], content: string): string {
+  if (sourceKind === "text" && isRstFilePath(filePath)) {
+    return normalizeRstExtractedText(content);
+  }
+  return content;
+}
+
+function shouldEmitProgress(totalItems: number): boolean {
+  return totalItems >= PROGRESS_FILE_THRESHOLD && Boolean(process.stderr?.isTTY);
+}
+
+function createProgressReporter(prefix: string, totalItems: number): { tick: () => void; finish: (summary?: string) => void } {
+  if (!shouldEmitProgress(totalItems)) {
+    return {
+      tick: () => {},
+      finish: () => {}
+    };
+  }
+
+  let completed = 0;
+  let nextUpdate = Math.min(PROGRESS_UPDATE_INTERVAL, totalItems);
+  process.stderr.write(`[swarmvault ${prefix}] starting ${totalItems} file(s)\n`);
+
+  return {
+    tick: () => {
+      completed += 1;
+      if (completed >= nextUpdate || completed === totalItems) {
+        process.stderr.write(`[swarmvault ${prefix}] ${completed}/${totalItems}\n`);
+        while (completed >= nextUpdate) {
+          nextUpdate += PROGRESS_UPDATE_INTERVAL;
+        }
+      }
+    },
+    finish: (summary) => {
+      process.stderr.write(`[swarmvault ${prefix}] finished ${totalItems} file(s)${summary ? ` (${summary})` : ""}\n`);
+    }
+  };
 }
 
 function normalizeIngestOptions(options?: IngestOptions): NormalizedIngestOptions {
@@ -1306,6 +1466,7 @@ export async function syncTrackedRepos(rootDir: string, options?: IngestOptions,
         }))
     );
     scannedCount += files.length;
+    const progress = createProgressReporter("sync", files.length);
 
     const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
     for (const absolutePath of files) {
@@ -1317,7 +1478,9 @@ export async function syncTrackedRepos(rootDir: string, options?: IngestOptions,
       } else if (result.wasUpdated) {
         updated.push(result.manifest);
       }
+      progress.tick();
     }
+    progress.finish(`repo=${toPosix(path.relative(rootDir, repoRoot)) || "."}`);
 
     for (const manifest of repoManifests) {
       const originalPath = manifest.originalPath ? path.resolve(manifest.originalPath) : null;
@@ -1424,6 +1587,7 @@ export async function syncTrackedReposForWatch(
         }))
     );
     scannedCount += files.length;
+    const progress = createProgressReporter("sync-watch", files.length);
 
     const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
     for (const absolutePath of files) {
@@ -1451,6 +1615,7 @@ export async function syncTrackedReposForWatch(
             staleSourceIds.add(existing.sourceId);
           }
         }
+        progress.tick();
         continue;
       }
 
@@ -1460,7 +1625,9 @@ export async function syncTrackedReposForWatch(
       } else if (result.wasUpdated) {
         updated.push(result.manifest);
       }
+      progress.tick();
     }
+    progress.finish(`repo=${toPosix(path.relative(rootDir, repoRoot)) || "."}`);
 
     for (const manifest of repoManifests) {
       const originalPath = manifest.originalPath ? path.resolve(manifest.originalPath) : null;
@@ -1531,8 +1698,8 @@ async function prepareFileInput(
   let extractedText: string | undefined;
   let extractionArtifact: SourceExtractionArtifact | undefined;
   if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
-    extractedText = payloadBytes.toString("utf8");
-    title = titleFromText(path.basename(absoluteInput, path.extname(absoluteInput)), extractedText);
+    extractedText = extractedTextForPlainSource(absoluteInput, sourceKind, payloadBytes.toString("utf8"));
+    title = titleFromText(path.basename(absoluteInput, path.extname(absoluteInput)), extractedText, absoluteInput);
     extractionArtifact = createPlainTextExtractionArtifact(sourceKind, mimeType);
   } else if (sourceKind === "html") {
     const html = payloadBytes.toString("utf8");
@@ -1649,8 +1816,8 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     const extension = path.extname(inputUrl.pathname);
     storedExtension = extension || `.${mime.extension(mimeType) || "bin"}`;
     if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
-      extractedText = payloadBytes.toString("utf8");
-      title = titleFromText(title || inputUrl.hostname, extractedText);
+      extractedText = extractedTextForPlainSource(inputUrl.pathname, sourceKind, payloadBytes.toString("utf8"));
+      title = titleFromText(title || inputUrl.hostname, extractedText, inputUrl.pathname);
       extractionArtifact = createPlainTextExtractionArtifact(sourceKind, mimeType);
 
       if (sourceKind === "markdown" && options.includeAssets) {
@@ -1989,6 +2156,7 @@ export async function ingestDirectory(rootDir: string, inputDir: string, options
   const { files, skipped } = await collectDirectoryFiles(rootDir, absoluteInputDir, repoRoot, normalizedOptions);
   const imported: SourceManifest[] = [];
   const updated: SourceManifest[] = [];
+  const progress = createProgressReporter("ingest", files.length);
 
   for (const absolutePath of files) {
     const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
@@ -2001,7 +2169,9 @@ export async function ingestDirectory(rootDir: string, inputDir: string, options
     } else {
       skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "duplicate_content" });
     }
+    progress.tick();
   }
+  progress.finish(`imported=${imported.length}, updated=${updated.length}, skipped=${skipped.length}`);
 
   await appendLogEntry(rootDir, "ingest_directory", toPosix(path.relative(rootDir, absoluteInputDir)) || ".", [
     `repo_root=${toPosix(path.relative(rootDir, repoRoot)) || "."}`,

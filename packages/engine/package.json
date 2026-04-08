@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/engine",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "description": "Core engine for SwarmVault: ingest, compile, query, lint, and provider abstractions.",
   "type": "module",
   "main": "dist/index.js",
@@ -57,6 +57,7 @@
     "mime-types": "^3.0.1",
     "neo4j-driver": "^5.28.3",
     "pdfjs-dist": "^5.4.394",
+    "tree-sitter-wasms": "^0.1.13",
     "turndown": "^7.2.1",
     "typescript": "^5.9.3",
     "yaml": "^2.8.1",

@@ -373,7 +373,7 @@ function makeRationale(
 }
 
 function stripCodeExtension(filePath: string): string {
-  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
+  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
 }
 
 function manifestModuleName(manifest: SourceManifest, language: CodeLanguage): string | undefined {
@@ -1886,6 +1886,12 @@ export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage
   if (extension === ".java") {
     return "java";
   }
+  if (extension === ".kt" || extension === ".kts") {
+    return "kotlin";
+  }
+  if (extension === ".scala" || extension === ".sc") {
+    return "scala";
+  }
   if (extension === ".cs") {
     return "csharp";
   }
@@ -2005,6 +2011,10 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       return [".rs"];
     case "java":
       return [".java"];
+    case "kotlin":
+      return [".kt", ".kts"];
+    case "scala":
+      return [".scala", ".sc"];
     case "csharp":
       return [".cs"];
     case "php":
@@ -2070,9 +2080,16 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
         break;
       }
       case "java":
+      case "kotlin":
+      case "scala":
       case "csharp":
         if (normalizedNamespace) {
           recordAlias(aliases, `${normalizedNamespace}.${basename}`);
+        }
+        if (normalizedNamespace) {
+          for (const symbol of analysis.code.symbols) {
+            recordAlias(aliases, `${normalizedNamespace}.${symbol.name}`);
+          }
         }
         break;
       case "php":
@@ -2205,6 +2222,8 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
       return aliasMatches(lookup, codeImport.specifier);
     case "go":
     case "java":
+    case "kotlin":
+    case "scala":
     case "csharp":
       return aliasMatches(lookup, codeImport.specifier);
     case "php":
@@ -2254,6 +2273,8 @@ function importLooksLocal(manifest: SourceManifest, codeImport: CodeImport, cand
     case "powershell":
     case "c":
     case "cpp":
+    case "kotlin":
+    case "scala":
       return !codeImport.isExternal;
     default:
       return false;

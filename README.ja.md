@@ -110,13 +110,13 @@ swarmvault mcp
 
 | Input | 拡張子 / ソース | 抽出方法 |
 |-------|-----------------|----------|
-| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1` | tree-sitter ベースの AST とモジュール解決 |
+| Code | `.js .ts .py .go .rs .java .cs .c .cpp .php .rb .ps1 .kt .kts .scala .sc` | tree-sitter ベースの AST とモジュール解決 |
 | PDF | `.pdf` | ローカルでテキスト抽出 |
 | DOCX | `.docx` | ローカル抽出とメタデータ取得 |
 | HTML | `.html`, URLs | Readability + Turndown による Markdown 化 |
 | Images | `.png .jpg .webp` | Vision provider（設定されている場合） |
 | Research | arXiv, DOI, articles, X/Twitter | `swarmvault add` による正規化 Markdown |
-| Markdown | `.md .txt` | 直接 ingest |
+| Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest と軽量な `.rst` 見出し正規化 |
 | Browser clips | inbox bundles | `inbox import` によるアセット書き換え済み Markdown |
 
 <!-- readme-section:what-you-get -->
@@ -141,6 +141,8 @@ swarmvault mcp
 **Automation** - watch mode、git hooks、定期実行、inbox import により、ボルトを手動更新なしで最新に保てます。
 
 **外部グラフ連携** - HTML、SVG、GraphML、Cypher にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
+
+**大規模リポジトリ向けの堅牢化** - 大きな repo ingest や compile では抑制された進捗表示を出し、parser 互換性の失敗は該当ソースだけに閉じ込めて明示的な診断を残し、グラフレポートでは細かすぎるコミュニティをまとめて可読性を保ちます。
 
 各エッジには `extracted`、`inferred`、`ambiguous` のタグが付き、何が実際に見つかった情報で、何が推論かを常に判断できます。
 
