@@ -15,6 +15,7 @@ Install the CLI it depends on:
 ```bash
 npm install -g @swarmvaultai/cli
 swarmvault --version
+swarmvault source add https://github.com/karpathy/micrograd
 ```
 
 Requirements:
@@ -40,6 +41,7 @@ npm install -g @swarmvaultai/cli@latest
 
 ```bash
 swarmvault init --obsidian
+swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -67,19 +69,22 @@ The published ClawHub package is intentionally text-only in this release.
 
 1. Initialize the vault with `swarmvault init`.
 2. Treat `swarmvault.schema.md` as the vault contract before serious compile or query work.
-3. Add sources with `swarmvault ingest`, `swarmvault add`, or `swarmvault inbox import`.
-4. Compile with `swarmvault compile` or `swarmvault compile --approve`.
-5. Inspect `wiki/` and `state/` artifacts before broad re-search.
-6. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable.
-7. Use `swarmvault graph serve`, `swarmvault graph export`, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
+3. Use `swarmvault source add` when the input is a recurring local directory, public GitHub repo root, or docs hub that should stay registered.
+4. Add one-off material with `swarmvault ingest`, `swarmvault add`, or `swarmvault inbox import`.
+5. Compile with `swarmvault compile` or `swarmvault compile --approve`.
+6. Inspect `wiki/` and `state/` artifacts before broad re-search.
+7. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable.
+8. Use `swarmvault graph serve`, `swarmvault graph export`, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
 ## What SwarmVault Writes
 
 - `raw/sources/` and `raw/assets/` for canonical input storage
 - `wiki/` for compiled source, concept, entity, code, graph, and output pages
+- `wiki/outputs/source-briefs/` for recurring-source onboarding briefs
 - `wiki/candidates/` for staged concept/entity pages
 - `state/graph.json` for the compiled graph
 - `state/search.sqlite` for local search
+- `state/sources.json` plus `state/sources/<id>/` for managed-source registry state and working sync data
 - `state/approvals/` for compile approval bundles
 - `state/sessions/` and `state/jobs.ndjson` for saved run history
 

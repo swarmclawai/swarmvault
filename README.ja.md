@@ -54,6 +54,8 @@ my-vault/
 
 ```bash
 swarmvault init --obsidian
+swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -85,6 +87,19 @@ swarmvault graph push neo4j --dry-run
 ```
 
 他のバックエンドや設定例は [provider docs](https://www.swarmvault.ai/docs/providers) を参照してください。
+
+## リポジトリや docs ハブを直接追加
+
+SwarmVault をすぐ役立てる最短経路は、managed-source ワークフローです:
+
+```bash
+swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://example.com/docs/getting-started
+swarmvault source list
+swarmvault source reload --all
+```
+
+`source add` はソースを登録し、ボルトへ同期し、1 回 compile し、`wiki/outputs/source-briefs/` にソース別ブリーフを書きます。単発のファイルや URL には `ingest`、研究 URL の正規化には `add` を使ってください。
 
 <!-- readme-section:agent-setup -->
 ## エージェントと MCP の設定
@@ -126,6 +141,7 @@ clawhub install swarmvault
 | Research | arXiv, DOI, articles, X/Twitter | `swarmvault add` による正規化 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest と軽量な `.rst` 見出し正規化 |
 | Browser clips | inbox bundles | `inbox import` によるアセット書き換え済み Markdown |
+| Managed sources | ローカルディレクトリ、公開 GitHub リポジトリ root URL、docs ハブ URL | `swarmvault source add` によるレジストリ同期 |
 
 <!-- readme-section:what-you-get -->
 ## 得られるもの
@@ -147,6 +163,8 @@ clawhub install swarmvault
 **MCP server** - `swarmvault mcp` はボルトを stdio 経由で互換エージェントクライアントへ公開します。
 
 **Automation** - watch mode、git hooks、定期実行、inbox import により、ボルトを手動更新なしで最新に保てます。
+
+**Managed sources** - `swarmvault source add|list|reload|delete` により、繰り返し使うディレクトリ、公開 GitHub リポジトリ、docs サイトを名前付き同期ソースとして管理できます。レジストリは `state/sources.json`、ソース別ブリーフは `wiki/outputs/source-briefs/` に保存されます。
 
 **外部グラフ連携** - HTML、SVG、GraphML、Cypher にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
 

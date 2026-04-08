@@ -20,10 +20,12 @@ If you only want to use SwarmVault as a tool, install `@swarmvaultai/cli` instea
 ```ts
 import {
   addInput,
+  addManagedSource,
   benchmarkVault,
   compileVault,
   createMcpServer,
   createWebSearchAdapter,
+  deleteManagedSource,
   defaultVaultConfig,
   defaultVaultSchema,
   exploreVault,
@@ -40,6 +42,7 @@ import {
   getWebSearchAdapterForTask,
   lintVault,
   listGodNodes,
+  listManagedSourceRecords,
   listSchedules,
   loadVaultConfig,
   loadVaultSchema,
@@ -48,6 +51,7 @@ import {
   pushGraphNeo4j,
   queryGraphVault,
   queryVault,
+  reloadManagedSources,
   runWatchCycle,
   runSchedule,
   searchVault,
@@ -67,6 +71,7 @@ The engine also exports the main runtime types for providers, graph artifacts, p
 ```ts
 import {
   addInput,
+  addManagedSource,
   benchmarkVault,
   compileVault,
   exploreVault,
@@ -76,10 +81,12 @@ import {
   importInbox,
   initVault,
   installGitHooks,
+  listManagedSourceRecords,
   loadVaultSchemas,
   pushGraphNeo4j,
   queryGraphVault,
   queryVault,
+  reloadManagedSources,
   runWatchCycle,
   watchVault
 } from "@swarmvaultai/engine";
@@ -89,6 +96,8 @@ const rootDir = process.cwd();
 await initVault(rootDir, { obsidian: true });
 const schemas = await loadVaultSchemas(rootDir);
 console.log(schemas.root.path);
+const managed = await addManagedSource(rootDir, "https://github.com/karpathy/micrograd");
+console.log(managed.source.id);
 await addInput(rootDir, "https://arxiv.org/abs/2401.12345");
 await importInbox(rootDir);
 await compileVault(rootDir, {});
@@ -115,6 +124,8 @@ await pushGraphNeo4j(rootDir, {
 
 await runWatchCycle(rootDir, { repo: true });
 console.log(await getWatchStatus(rootDir));
+console.log(await listManagedSourceRecords(rootDir));
+await reloadManagedSources(rootDir, { all: true, compile: true });
 await installGitHooks(rootDir);
 
 const watcher = await watchVault(rootDir, { lint: true, repo: true });
@@ -170,10 +181,16 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 ### Ingest
 
+- `addManagedSource(rootDir, input, { compile, brief, maxPages, maxDepth })` registers and syncs a recurring source, then optionally compiles and writes a source brief
+- `listManagedSourceRecords(rootDir)` lists registry-backed managed sources from `state/sources.json`
+- `reloadManagedSources(rootDir, { id, all, compile, brief, maxPages, maxDepth })` re-syncs one managed source or the full registry
+- `deleteManagedSource(rootDir, id)` removes a managed-source registry entry and transient sync state without deleting canonical vault artifacts
 - `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local file path or URL
 - `addInput(rootDir, input, { author, contributor })` captures supported URLs into normalized markdown before ingesting them, or falls back to generic URL ingest
 - `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore, extractClasses })` recursively ingests a local directory as a repo-aware code/content source tree
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files plus markdown and HTML browser-clipper style bundles
+- managed sources support local directories, public GitHub repo root URLs, and bounded same-domain docs hubs
+- registry data lives in `state/sources.json`, working state lives under `state/sources/<id>/`, and source briefs are written to `wiki/outputs/source-briefs/<id>.md`
 - JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, C++, PHP, Ruby, PowerShell, Kotlin, and Scala inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
 - `.rst` and `.rest` inputs are treated as first-class text sources with lightweight heading and directive normalization before analysis
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
@@ -248,6 +265,8 @@ Running the engine produces a local workspace with these main areas:
 - `wiki/projects/`: generated project rollups over canonical pages
 - `wiki/candidates/`: staged concept and entity pages awaiting confirmation on a later compile
 - `state/manifests/`: source manifests
+- `state/sources.json`: managed-source registry state
+- `state/sources/`: managed-source working state such as GitHub checkouts and crawl metadata
 - `state/extracts/`: extracted markdown plus JSON sidecars describing extractor kind, warnings, PDF page counts, and image-vision metadata
 - `state/analyses/`: model analysis output
 - `state/code-index.json`: repo-aware code module aliases and local resolution data

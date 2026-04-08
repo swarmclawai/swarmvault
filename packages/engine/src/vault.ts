@@ -2881,7 +2881,7 @@ async function generateFollowUpQuestions(rootDir: string, question: string, answ
   return uniqueBy(response.questions, (item) => item).filter((item) => item !== question);
 }
 
-async function refreshVaultAfterOutputSave(rootDir: string): Promise<void> {
+export async function refreshVaultAfterOutputSave(rootDir: string): Promise<void> {
   const { config, paths } = await loadVaultConfig(rootDir);
   const schemas = await loadVaultSchemas(rootDir);
   const manifests = await listManifests(rootDir);

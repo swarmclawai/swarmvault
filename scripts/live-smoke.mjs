@@ -215,6 +215,124 @@ try {
   });
 
   if (lane === "heuristic") {
+    await runStep("managed-source-directory", async () => {
+      const managedDir = path.join(workspaceDir, "managed", "repo");
+      await fs.mkdir(managedDir, { recursive: true });
+      await fs.writeFile(path.join(managedDir, "README.md"), "# Managed Repo\n\nSwarmVault should manage this directory source.\n", "utf8");
+      await fs.writeFile(path.join(managedDir, "notes.md"), "# Managed Notes\n\nInitial notes for the managed source.\n", "utf8");
+
+      const added = await runCliJson(["source", "add", managedDir]);
+      assert.equal(added.source.kind, "directory", "source add did not classify the local directory as a directory source");
+      assert.equal(added.briefGenerated, true, "source add did not generate a brief for the local directory source");
+      await assertExists(added.source.briefPath);
+
+      const listed = await runCliJson(["source", "list"]);
+      assert.ok(Array.isArray(listed) && listed.some((entry) => entry.id === added.source.id), "source list did not include the managed directory source");
+
+      await fs.rm(path.join(managedDir, "notes.md"));
+      await fs.writeFile(path.join(managedDir, "guide.md"), "# Managed Guide\n\nUpdated notes for the managed source.\n", "utf8");
+      const reloaded = await runCliJson(["source", "reload", added.source.id]);
+      assert.ok(Array.isArray(reloaded.sources) && reloaded.sources.length === 1, "source reload did not return the refreshed directory source");
+      assert.ok((reloaded.sources[0].lastSyncCounts?.removedCount ?? 0) >= 1, "source reload did not detect the deleted directory file");
+
+      const reloadAll = await runCliJson(["source", "reload", "--all"]);
+      assert.ok(Array.isArray(reloadAll.sources) && reloadAll.sources.length >= 1, "source reload --all did not return managed sources");
+
+      const noBriefDir = path.join(workspaceDir, "managed", "no-brief");
+      await fs.mkdir(noBriefDir, { recursive: true });
+      await fs.writeFile(path.join(noBriefDir, "README.md"), "# No Brief\n\nThis source suppresses brief generation.\n", "utf8");
+      const addedNoBrief = await runCliJson(["source", "add", noBriefDir, "--no-brief"]);
+      assert.equal(addedNoBrief.briefGenerated, false, "source add --no-brief still generated a brief");
+
+      const deleted = await runCliJson(["source", "delete", addedNoBrief.source.id]);
+      assert.equal(deleted.removed.id, addedNoBrief.source.id, "source delete removed the wrong managed source");
+      const afterDelete = await runCliJson(["source", "list"]);
+      assert.ok(!afterDelete.some((entry) => entry.id === addedNoBrief.source.id), "source delete left the managed source in the registry");
+      await assertExists(path.join(workspaceDir, "raw"));
+      await assertExists(path.join(workspaceDir, "wiki"));
+    });
+
+    await runStep("managed-source-docs-crawl", async () => {
+      const server = await startFixtureServer({
+        "/docs/index.html": {
+          contentType: "text/html; charset=utf-8",
+          body: [
+            "<html><head><title>Tiny Docs</title></head><body>",
+            "<nav>",
+            '<a href="/docs/getting-started.html">Getting Started</a>',
+            '<a href="/docs/api.html">API</a>',
+            '<a href="/docs/reference.html">Reference</a>',
+            "</nav>",
+            "<main><h1>Tiny Docs</h1><p>Docs hub.</p></main>",
+            "</body></html>"
+          ].join("")
+        },
+        "/docs/getting-started.html": {
+          contentType: "text/html; charset=utf-8",
+          body: [
+            "<html><head><title>Getting Started</title></head><body>",
+            '<nav><a href="/docs/index.html">Home</a><a href="/docs/api.html">API</a></nav>',
+            "<main><h1>Getting Started</h1><p>Start here.</p></main>",
+            "</body></html>"
+          ].join("")
+        },
+        "/docs/api.html": {
+          contentType: "text/html; charset=utf-8",
+          body: [
+            "<html><head><title>API</title></head><body>",
+            '<nav><a href="/docs/index.html">Home</a><a href="/docs/reference.html">Reference</a></nav>',
+            "<main><h1>API</h1><p>API details.</p></main>",
+            "</body></html>"
+          ].join("")
+        },
+        "/docs/reference.html": {
+          contentType: "text/html; charset=utf-8",
+          body: [
+            "<html><head><title>Reference</title></head><body>",
+            '<nav><a href="/docs/index.html">Home</a></nav>',
+            "<main><h1>Reference</h1><p>Reference details.</p></main>",
+            "</body></html>"
+          ].join("")
+        }
+      });
+      try {
+        const docsSource = await runCliJson(
+          ["source", "add", `${server.baseUrl}/docs/index.html`, "--max-pages", "6", "--max-depth", "2"],
+          { env: { SWARMVAULT_ALLOW_PRIVATE_URLS: "1" } }
+        );
+        assert.equal(docsSource.source.kind, "crawl_url", "docs source add did not classify the docs URL as a crawl source");
+        assert.equal(docsSource.briefGenerated, true, "docs source add did not generate a source brief");
+        await assertExists(docsSource.source.briefPath);
+        const manifestsDir = path.join(workspaceDir, "state", "manifests");
+        const manifestNames = await fs.readdir(manifestsDir);
+        const docsManifests = await Promise.all(
+          manifestNames.map(async (name) => JSON.parse(await fs.readFile(path.join(manifestsDir, name), "utf8")))
+        );
+        assert.ok(
+          docsManifests.some((manifest) => typeof manifest.url === "string" && manifest.url.endsWith("/docs/getting-started.html")),
+          "docs crawl did not ingest linked docs pages"
+        );
+      } finally {
+        await server.close();
+      }
+    });
+
+    if (usesPublishedRegistryInstall(installSpecs)) {
+      await runStep("managed-source-public-github", async () => {
+        const githubSource = await runCliJson(["source", "add", "https://github.com/karpathy/micrograd"]);
+        assert.equal(githubSource.source.kind, "github_repo", "public GitHub source add did not classify the repo URL correctly");
+        assert.equal(githubSource.source.status, "ready", "public GitHub source add did not finish in a ready state");
+        assert.ok(Array.isArray(githubSource.source.sourceIds) && githubSource.source.sourceIds.length > 0, "public GitHub source add did not track any source ids");
+        await assertExists(path.join(workspaceDir, "state", "graph.json"));
+        await assertExists(path.join(workspaceDir, "state", "search.sqlite"));
+        await assertExists(githubSource.source.briefPath);
+        const listed = await runCliJson(["source", "list"]);
+        const entry = listed.find((item) => item.id === githubSource.source.id);
+        assert.ok(entry, "source list did not return the public GitHub source");
+        assert.equal(entry.status, "ready", "source list did not report the public GitHub source as ready");
+      });
+    }
+
     await runStep("inbox-import", async () => {
       await copyInboxBundle();
       const result = await runCliJson(["inbox", "import"]);
@@ -1113,19 +1231,19 @@ try {
 
     await runStep("watch-status", async () => {
       await fs.writeFile(
-        path.join(workspaceDir, "apps", "alpha", "notes.md"),
-        ["# Alpha Notes", "", "Repo watch should flag this for semantic refresh instead of auto-ingesting it."].join("\n"),
+        path.join(workspaceDir, "managed", "repo", "guide.md"),
+        ["# Managed Guide", "", "Repo watch should flag this for semantic refresh instead of auto-ingesting it."].join("\n"),
         "utf8"
       );
       const cycle = await runCliJson(["watch", "--repo", "--once"]);
       assert.ok(
-        (cycle.pendingSemanticRefreshPaths ?? []).some((entry) => entry === "apps/alpha/notes.md"),
+        (cycle.pendingSemanticRefreshPaths ?? []).some((entry) => entry.endsWith("guide.md")),
         "watch --repo --once did not report the pending semantic refresh path"
       );
       const status = await runCliJson(["watch", "status"]);
       assert.ok(Array.isArray(status.pendingSemanticRefresh), "watch status did not return pendingSemanticRefresh");
       assert.ok(
-        status.pendingSemanticRefresh.some((entry) => entry.path === "apps/alpha/notes.md"),
+        status.pendingSemanticRefresh.some((entry) => entry.path.endsWith("guide.md")),
         "watch status did not include the pending semantic refresh entry"
       );
     });
@@ -1397,6 +1515,18 @@ function parseArgs(argv) {
     }
   }
   return parsed;
+}
+
+function usesPublishedRegistryInstall(specs) {
+  return specs.every((spec) => {
+    if (spec.startsWith("file:") || spec.endsWith(".tgz")) {
+      return false;
+    }
+    if (path.isAbsolute(spec)) {
+      return false;
+    }
+    return spec.startsWith("@swarmvaultai/cli@");
+  });
 }
 
 async function readPackageVersion() {

@@ -54,6 +54,8 @@ my-vault/
 
 ```bash
 swarmvault init --obsidian
+swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -85,6 +87,19 @@ The built-in `heuristic` provider is useful for smoke tests and offline defaults
 ```
 
 See the [provider docs](https://www.swarmvault.ai/docs/providers) for other supported backends and configuration examples.
+
+## Point It At A Repo Or Docs Hub
+
+The fastest way to make SwarmVault useful is the managed-source flow:
+
+```bash
+swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://example.com/docs/getting-started
+swarmvault source list
+swarmvault source reload --all
+```
+
+`source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
 
 <!-- readme-section:agent-setup -->
 ## Agent and MCP Setup
@@ -126,6 +141,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Research | arXiv, DOI, articles, X/Twitter | Normalized markdown via `swarmvault add` |
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
+| Managed sources | local directories, public GitHub repo roots, docs hubs | Registry-backed sync via `swarmvault source add` |
 
 <!-- readme-section:what-you-get -->
 ## What You Get
@@ -151,6 +167,8 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 **MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio.
 
 **Automation** - watch mode, git hooks, recurring schedules, and inbox import keep the vault current without manual intervention.
+
+**Managed sources** - `swarmvault source add|list|reload|delete` turns recurring directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json` and source briefs under `wiki/outputs/source-briefs/`.
 
 **External graph sinks** - export to HTML, SVG, GraphML, and Cypher, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
 

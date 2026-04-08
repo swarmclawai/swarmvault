@@ -104,6 +104,9 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 
 - install the published CLI from npm into an isolated temporary prefix
 - initialize a fresh workspace
+- run `source add` against a small local directory fixture and verify `state/sources.json`
+- run `source list`, `source reload --all`, `source delete`, and `source add --no-brief`
+- run `source add` against a deterministic local docs fixture over HTTP and verify crawl sync plus source-brief output
 - ingest and compile a markdown fixture
 - ingest the tiny local fixture matrix under `smoke/fixtures/tiny-matrix/` and verify every shipped code language plus local `markdown`, `text`, `html`, `pdf`, `docx`, `image`, and `code` source kinds
 - ingest remote HTML and markdown fixtures over HTTP and verify remote image localization into `raw/assets/`
@@ -129,6 +132,7 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `install --agent aider`
 - verify the installed package writes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`, `.aider.conf.yml`, `.github/copilot-instructions.md`, and the expected hook/plugin artifacts
 - when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, OpenCode against `AGENTS.md` using Ollama, and Gemini CLI against `GEMINI.md`
+- on live npm-installed runs, execute `swarmvault source add https://github.com/karpathy/micrograd` and verify the registry entry, compile artifacts, and source brief
 
 ### OpenAI lane
 

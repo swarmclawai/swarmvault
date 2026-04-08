@@ -55,72 +55,89 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredPage[
   const outputsDir = path.join(wikiDir, "outputs");
   const entries = await fs.readdir(outputsDir, { withFileTypes: true }).catch(() => []);
   const outputs: StoredPage[] = [];
+  const queue = [{ absoluteDir: outputsDir, relativeDir: "outputs" }];
 
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "index.md") {
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
       continue;
     }
+    const currentEntries =
+      current.absoluteDir === outputsDir ? entries : await fs.readdir(current.absoluteDir, { withFileTypes: true }).catch(() => []);
 
-    const relativePath = path.posix.join("outputs", entry.name);
-    const absolutePath = path.join(outputsDir, entry.name);
-    const content = await fs.readFile(absolutePath, "utf8");
-    const parsed = matter(content);
-    const slug = entry.name.replace(/\.md$/, "");
-    const title = typeof parsed.data.title === "string" ? parsed.data.title : slug;
-    const pageId = typeof parsed.data.page_id === "string" ? parsed.data.page_id : `output:${slug}`;
-    const sourceIds = normalizeStringArray(parsed.data.source_ids);
-    const projectIds = normalizeProjectIds(parsed.data.project_ids);
-    const nodeIds = normalizeStringArray(parsed.data.node_ids);
-    const relatedPageIds = normalizeStringArray(parsed.data.related_page_ids);
-    const relatedNodeIds = normalizeStringArray(parsed.data.related_node_ids);
-    const relatedSourceIds = normalizeStringArray(parsed.data.related_source_ids);
-    const backlinks = normalizeStringArray(parsed.data.backlinks);
-    const compiledFrom = normalizeStringArray(parsed.data.compiled_from);
-    const stats = await fs.stat(absolutePath);
-    const createdAt =
-      typeof parsed.data.created_at === "string"
-        ? parsed.data.created_at
-        : stats.birthtimeMs > 0
-          ? stats.birthtime.toISOString()
-          : stats.mtime.toISOString();
-    const updatedAt = typeof parsed.data.updated_at === "string" ? parsed.data.updated_at : stats.mtime.toISOString();
+    for (const entry of currentEntries) {
+      if (entry.isDirectory()) {
+        queue.push({
+          absoluteDir: path.join(current.absoluteDir, entry.name),
+          relativeDir: path.posix.join(current.relativeDir, entry.name)
+        });
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "index.md") {
+        continue;
+      }
 
-    outputs.push({
-      page: {
-        id: pageId,
-        path: relativePath,
-        title,
-        kind: "output",
-        sourceIds,
-        projectIds,
-        nodeIds,
-        freshness: parsed.data.freshness === "stale" ? "stale" : "fresh",
-        status: normalizePageStatus(parsed.data.status, "active"),
-        confidence: typeof parsed.data.confidence === "number" ? parsed.data.confidence : 0.74,
-        backlinks,
-        schemaHash: typeof parsed.data.schema_hash === "string" ? parsed.data.schema_hash : "",
-        sourceHashes: normalizeSourceHashes(parsed.data.source_hashes),
-        relatedPageIds,
-        relatedNodeIds,
-        relatedSourceIds,
-        createdAt,
-        updatedAt,
-        compiledFrom: compiledFrom.length ? compiledFrom : relatedSourceIds,
-        managedBy: normalizePageManager(parsed.data.managed_by, "system"),
-        origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
-        question: typeof parsed.data.question === "string" ? parsed.data.question : undefined,
-        outputFormat:
-          parsed.data.output_format === "report" ||
-          parsed.data.output_format === "slides" ||
-          parsed.data.output_format === "chart" ||
-          parsed.data.output_format === "image"
-            ? (parsed.data.output_format as OutputFormat)
-            : "markdown",
-        outputAssets: normalizeOutputAssets(parsed.data.output_assets)
-      },
-      content,
-      contentHash: sha256(content)
-    });
+      const relativePath = path.posix.join(current.relativeDir, entry.name);
+      const absolutePath = path.join(current.absoluteDir, entry.name);
+      const content = await fs.readFile(absolutePath, "utf8");
+      const parsed = matter(content);
+      const slug = relativePath.replace(/^outputs\//, "").replace(/\.md$/, "");
+      const title = typeof parsed.data.title === "string" ? parsed.data.title : path.basename(slug);
+      const pageId = typeof parsed.data.page_id === "string" ? parsed.data.page_id : `output:${slug}`;
+      const sourceIds = normalizeStringArray(parsed.data.source_ids);
+      const projectIds = normalizeProjectIds(parsed.data.project_ids);
+      const nodeIds = normalizeStringArray(parsed.data.node_ids);
+      const relatedPageIds = normalizeStringArray(parsed.data.related_page_ids);
+      const relatedNodeIds = normalizeStringArray(parsed.data.related_node_ids);
+      const relatedSourceIds = normalizeStringArray(parsed.data.related_source_ids);
+      const backlinks = normalizeStringArray(parsed.data.backlinks);
+      const compiledFrom = normalizeStringArray(parsed.data.compiled_from);
+      const stats = await fs.stat(absolutePath);
+      const createdAt =
+        typeof parsed.data.created_at === "string"
+          ? parsed.data.created_at
+          : stats.birthtimeMs > 0
+            ? stats.birthtime.toISOString()
+            : stats.mtime.toISOString();
+      const updatedAt = typeof parsed.data.updated_at === "string" ? parsed.data.updated_at : stats.mtime.toISOString();
+
+      outputs.push({
+        page: {
+          id: pageId,
+          path: relativePath,
+          title,
+          kind: "output",
+          sourceIds,
+          projectIds,
+          nodeIds,
+          freshness: parsed.data.freshness === "stale" ? "stale" : "fresh",
+          status: normalizePageStatus(parsed.data.status, "active"),
+          confidence: typeof parsed.data.confidence === "number" ? parsed.data.confidence : 0.74,
+          backlinks,
+          schemaHash: typeof parsed.data.schema_hash === "string" ? parsed.data.schema_hash : "",
+          sourceHashes: normalizeSourceHashes(parsed.data.source_hashes),
+          relatedPageIds,
+          relatedNodeIds,
+          relatedSourceIds,
+          createdAt,
+          updatedAt,
+          compiledFrom: compiledFrom.length ? compiledFrom : relatedSourceIds,
+          managedBy: normalizePageManager(parsed.data.managed_by, "system"),
+          origin: typeof parsed.data.origin === "string" ? (parsed.data.origin as OutputOrigin) : undefined,
+          question: typeof parsed.data.question === "string" ? parsed.data.question : undefined,
+          outputFormat:
+            parsed.data.output_format === "report" ||
+            parsed.data.output_format === "slides" ||
+            parsed.data.output_format === "chart" ||
+            parsed.data.output_format === "image"
+              ? (parsed.data.output_format as OutputFormat)
+              : "markdown",
+          outputAssets: normalizeOutputAssets(parsed.data.output_assets)
+        },
+        content,
+        contentHash: sha256(content)
+      });
+    }
   }
 
   return outputs.sort((left, right) => left.page.title.localeCompare(right.page.title));
