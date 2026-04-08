@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/cli",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "description": "Global CLI for SwarmVault.",
   "type": "module",
   "main": "dist/index.js",
@@ -43,7 +43,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@swarmvaultai/engine": "0.1.31",
+    "@swarmvaultai/engine": "0.1.32",
     "commander": "^14.0.1"
   },
   "devDependencies": {

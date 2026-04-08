@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.32
+
+- Fixed a watch shutdown race so `watchVault().close()` waits for any in-flight watch cycle to finish before returning, preventing late file writes from racing temp-workspace cleanup and automation teardown
+
 ## 0.1.31
 
 - Added deterministic contradiction detection that compares claims across sources by topic overlap and opposing polarity, surfaces `contradicts` edges in the graph, and writes a Contradictions section to `wiki/graph/report.md`
