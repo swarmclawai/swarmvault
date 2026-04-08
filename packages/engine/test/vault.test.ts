@@ -1696,4 +1696,33 @@ describe("swarmvault workflow", () => {
     const sourcePage = matter(await fs.readFile(path.join(rootDir, "wiki", "sources", `${guideManifest?.sourceId}.md`), "utf8"));
     expect(sourcePage.data.freshness).toBe("stale");
   });
+
+  it("includes tags field in analysis and page frontmatter after compile", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(
+      path.join(rootDir, "tags-test.md"),
+      [
+        "# Cryptography Primer",
+        "",
+        "This document covers symmetric encryption, public-key cryptography, and hash functions.",
+        "Distributed systems rely on cryptographic protocols for secure communication."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manifest = await ingestInput(rootDir, "tags-test.md");
+    await compileVault(rootDir);
+
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis).toHaveProperty("tags");
+    expect(Array.isArray(analysis.tags)).toBe(true);
+
+    const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
+    const parsed = matter(await fs.readFile(sourcePagePath, "utf8"));
+    expect(Array.isArray(parsed.data.tags)).toBe(true);
+    expect(parsed.data.tags).toContain("source");
+  });
 });

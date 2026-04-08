@@ -426,6 +426,7 @@ export interface SourceAnalysis {
   entities: AnalyzedTerm[];
   claims: SourceClaim[];
   questions: string[];
+  tags: string[];
   rationales: SourceRationale[];
   code?: CodeAnalysis;
   producedAt: string;
