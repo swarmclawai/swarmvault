@@ -1095,6 +1095,13 @@ export interface GraphReportArtifact {
     sourceType: SourceCaptureType;
     updatedAt: string;
   }>;
+  contradictions: Array<{
+    sourceIdA: string;
+    sourceIdB: string;
+    claimA: string;
+    claimB: string;
+    confidenceDelta: number;
+  }>;
 }
 
 export interface ScheduledCompileTask {

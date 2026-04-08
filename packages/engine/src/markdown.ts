@@ -820,6 +820,13 @@ export function buildGraphReportArtifact(input: {
     Pick<GraphPage, "id" | "path" | "title" | "updatedAt"> & { sourceType: NonNullable<GraphPage["sourceType"]> }
   >;
   graphHash: string;
+  contradictions?: Array<{
+    sourceIdA: string;
+    sourceIdB: string;
+    claimA: { text: string; confidence: number };
+    claimB: { text: string; confidence: number };
+    similarity: number;
+  }>;
 }): GraphReportArtifact {
   const firstPartyGraph = filterGraphBySourceClass(input.graph, "first_party");
   const reportGraph = firstPartyGraph.nodes.length ? firstPartyGraph : input.graph;
@@ -913,6 +920,13 @@ export function buildGraphReportArtifact(input: {
       title: page.title,
       sourceType: page.sourceType,
       updatedAt: page.updatedAt
+    })),
+    contradictions: (input.contradictions ?? []).map((c) => ({
+      sourceIdA: c.sourceIdA,
+      sourceIdB: c.sourceIdB,
+      claimA: c.claimA.text,
+      claimB: c.claimB.text,
+      confidenceDelta: Math.abs(c.claimA.confidence - c.claimB.confidence)
     }))
   };
 }
@@ -1053,6 +1067,15 @@ export function buildGraphReportPage(input: {
           return `- ${sourceLabel} ${connection.relation} ${targetLabel} (${connection.evidenceClass}, ${connection.confidence.toFixed(2)}). Why: ${connection.why}. ${connection.explanation} Path: ${connection.pathSummary}.`;
         })
       : ["- No cross-community links detected."]),
+    "",
+    "## Contradictions",
+    "",
+    ...(input.report.contradictions.length
+      ? input.report.contradictions.map(
+          (c) =>
+            `- **${c.claimA}** vs **${c.claimB}** (sources: \`${c.sourceIdA}\`, \`${c.sourceIdB}\`, confidence delta: ${c.confidenceDelta.toFixed(2)})`
+        )
+      : ["- No contradictions detected."]),
     "",
     "## Group Patterns",
     "",

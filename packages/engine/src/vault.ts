@@ -1105,6 +1105,63 @@ function buildGoPackageSymbolLookups(
   );
 }
 
+function claimTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .match(/[a-z][a-z0-9-]{2,}/g)
+      ?.filter((t) => !new Set(["the", "and", "for", "that", "this", "with", "are", "was", "from", "has", "not", "all", "but"]).has(t)) ??
+      []
+  );
+}
+
+function claimJaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 0;
+  let intersection = 0;
+  for (const token of a) {
+    if (b.has(token)) intersection++;
+  }
+  return intersection / (a.size + b.size - intersection);
+}
+
+interface DetectedContradiction {
+  sourceIdA: string;
+  sourceIdB: string;
+  claimA: { text: string; confidence: number };
+  claimB: { text: string; confidence: number };
+  similarity: number;
+}
+
+function detectContradictions(analyses: SourceAnalysis[]): DetectedContradiction[] {
+  const contradictions: DetectedContradiction[] = [];
+  const claimsWithTokens = analyses.flatMap((analysis) =>
+    analysis.claims
+      .filter((c) => c.polarity === "positive" || c.polarity === "negative")
+      .map((c) => ({ sourceId: analysis.sourceId, claim: c, tokens: claimTokens(c.text) }))
+  );
+
+  for (let i = 0; i < claimsWithTokens.length; i++) {
+    for (let j = i + 1; j < claimsWithTokens.length; j++) {
+      const a = claimsWithTokens[i];
+      const b = claimsWithTokens[j];
+      if (a.sourceId === b.sourceId) continue;
+      if (a.claim.polarity === b.claim.polarity) continue;
+      const similarity = claimJaccardSimilarity(a.tokens, b.tokens);
+      if (similarity >= 0.3) {
+        contradictions.push({
+          sourceIdA: a.sourceId,
+          sourceIdB: b.sourceId,
+          claimA: { text: a.claim.text, confidence: a.claim.confidence },
+          claimB: { text: b.claim.text, confidence: b.claim.confidence },
+          similarity
+        });
+      }
+    }
+  }
+
+  return contradictions;
+}
+
 function buildGraph(
   manifests: SourceManifest[],
   analyses: SourceAnalysis[],
@@ -1542,7 +1599,8 @@ async function buildGraphOrientationPages(
   graph: GraphArtifact,
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
   schemaHash: string,
-  previousCompiledAt?: string
+  previousCompiledAt?: string,
+  contradictions: DetectedContradiction[] = []
 ): Promise<{ records: ManagedPageRecord[]; report: GraphReportArtifact }> {
   const benchmark = await readJsonFile<BenchmarkArtifact>(paths.benchmarkPath);
   const communityRecords: ManagedPageRecord[] = [];
@@ -1576,7 +1634,8 @@ async function buildGraphOrientationPages(
     benchmark,
     benchmarkStale: benchmark ? benchmark.graphHash !== graphHash(graph) : false,
     recentResearchSources: recentResearchSourcePages(graph, previousCompiledAt),
-    graphHash: graphHash(graph)
+    graphHash: graphHash(graph),
+    contradictions
   });
   const reportAbsolutePath = path.join(paths.wikiDir, "graph", "report.md");
   const reportRecord = await buildManagedGraphPage(
@@ -2073,6 +2132,22 @@ async function syncVaultArtifacts(
   const compiledPages = records.map((record) => record.page);
   const basePages = [...compiledPages, ...input.outputPages, ...input.insightPages];
   const structuralGraph = buildGraph(input.manifests, input.analyses, basePages, input.sourceProjects, input.codeIndex);
+  const contradictions = detectContradictions(input.analyses);
+  for (const contradiction of contradictions) {
+    const edgeId = `contradiction:${contradiction.sourceIdA}->${contradiction.sourceIdB}`;
+    if (!structuralGraph.edges.some((e) => e.id === edgeId)) {
+      structuralGraph.edges.push({
+        id: edgeId,
+        source: `source:${contradiction.sourceIdA}`,
+        target: `source:${contradiction.sourceIdB}`,
+        relation: "contradicts",
+        status: "conflicted",
+        evidenceClass: "ambiguous",
+        confidence: Math.abs(contradiction.claimA.confidence - contradiction.claimB.confidence),
+        provenance: [contradiction.sourceIdA, contradiction.sourceIdB]
+      });
+    }
+  }
   const embeddingEdges = await embeddingSimilarityEdges(rootDir, structuralGraph).catch(() => []);
   const baseGraph =
     embeddingEdges.length > 0
@@ -2089,7 +2164,13 @@ async function syncVaultArtifacts(
           } satisfies GraphArtifact;
         })()
       : structuralGraph;
-  const graphOrientation = await buildGraphOrientationPages(baseGraph, paths, globalSchemaHash, input.previousState?.generatedAt);
+  const graphOrientation = await buildGraphOrientationPages(
+    baseGraph,
+    paths,
+    globalSchemaHash,
+    input.previousState?.generatedAt,
+    contradictions
+  );
   records.push(...graphOrientation.records);
   const allPages = [...basePages, ...graphOrientation.records.map((record) => record.page)];
   const graph: GraphArtifact = {

@@ -1750,4 +1750,28 @@ describe("swarmvault workflow", () => {
     expect(sourceNode).toHaveProperty("tags");
     expect(Array.isArray(sourceNode?.tags)).toBe(true);
   });
+
+  it("detects contradictions between opposing claims across sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(
+      path.join(rootDir, "pro-encryption.md"),
+      "# Encryption Policy\n\nEncryption for data at rest is enabled and active in production systems.",
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "no-encryption.md"),
+      "# Security Policy\n\nEncryption for data at rest is not enabled in production systems.",
+      "utf8"
+    );
+    await ingestInput(rootDir, "pro-encryption.md");
+    await ingestInput(rootDir, "no-encryption.md");
+    await compileVault(rootDir);
+    const graph: GraphArtifact = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8"));
+    const conflictedEdges = graph.edges.filter((e) => e.relation === "contradicts");
+    expect(conflictedEdges.length).toBeGreaterThan(0);
+    expect(conflictedEdges[0].evidenceClass).toBe("ambiguous");
+    const report = await fs.readFile(path.join(rootDir, "wiki", "graph", "report.md"), "utf8");
+    expect(report).toContain("Contradictions");
+  });
 });
