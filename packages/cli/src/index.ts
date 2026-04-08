@@ -559,6 +559,7 @@ review
     log(`${approval.approvalId} pending=${approval.pendingCount} accepted=${approval.acceptedCount} rejected=${approval.rejectedCount}`);
     for (const entry of approval.entries) {
       log(`- ${entry.status} ${entry.changeType} ${entry.pageId} ${entry.nextPath ?? entry.previousPath ?? ""}`.trim());
+      if (entry.changeSummary) log(`  Summary: ${entry.changeSummary}`);
     }
   });
 

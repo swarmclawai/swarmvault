@@ -23,8 +23,10 @@ import {
   installAgent,
   installGitHooks,
   lintVault,
+  listApprovals,
   queryGraphVault,
   queryVault,
+  readApproval,
   runWatchCycle,
   uninstallGitHooks,
   watchVault
@@ -1794,5 +1796,28 @@ describe("swarmvault workflow", () => {
     const findings = await lintVault(rootDir, { deep: false, web: false, conflicts: true });
     const contradictionFindings = findings.filter((f) => f.code === "contradiction");
     expect(contradictionFindings.length).toBeGreaterThan(0);
+  });
+
+  it("review show includes a change summary for approval entries", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(path.join(rootDir, "evolving.md"), "# Topic\n\nOriginal content about the topic.", "utf8");
+    await ingestInput(rootDir, "evolving.md");
+    await compileVault(rootDir);
+    await fs.writeFile(
+      path.join(rootDir, "evolving.md"),
+      "# Topic\n\nUpdated content about the topic with new details and expanded coverage.",
+      "utf8"
+    );
+    await ingestInput(rootDir, "evolving.md");
+    await compileVault(rootDir, { approve: true });
+    const approvals = await listApprovals(rootDir);
+    expect(approvals.length).toBeGreaterThan(0);
+    const detail = await readApproval(rootDir, approvals[0].approvalId);
+    const updatedEntries = detail.entries.filter((e) => e.changeType === "update");
+    expect(updatedEntries.length).toBeGreaterThan(0);
+    expect(updatedEntries[0].changeSummary).toBeDefined();
+    expect(typeof updatedEntries[0].changeSummary).toBe("string");
+    expect(updatedEntries[0].changeSummary!.length).toBeGreaterThan(0);
   });
 });

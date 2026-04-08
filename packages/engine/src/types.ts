@@ -607,6 +607,8 @@ export interface ApprovalSummary {
 export interface ApprovalEntryDetail extends ApprovalEntry {
   currentContent?: string;
   stagedContent?: string;
+  changeSummary?: string;
+  diff?: string;
 }
 
 export interface ApprovalDetail extends ApprovalSummary {

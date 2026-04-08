@@ -60,6 +60,7 @@ import {
 import { rebuildSearchIndex, searchPages } from "./search.js";
 import { aggregateManifestSourceClass } from "./source-classification.js";
 import type {
+  ApprovalChangeType,
   ApprovalDetail,
   ApprovalEntry,
   ApprovalManifest,
@@ -2929,6 +2930,35 @@ function sortGraphPages(pages: GraphPage[]): GraphPage[] {
   return [...pages].sort((left, right) => left.path.localeCompare(right.path) || left.title.localeCompare(right.title));
 }
 
+function computeChangeSummary(current: string | undefined, staged: string | undefined, changeType: ApprovalChangeType): string {
+  if (changeType === "create") return "New page";
+  if (changeType === "delete") return "Removed page";
+  if (changeType === "promote") return "Promoted from candidate";
+  if (!current || !staged) return "Updated page";
+
+  const currentParsed = matter(current);
+  const stagedParsed = matter(staged);
+  const changes: string[] = [];
+
+  const currentTags = (currentParsed.data.tags ?? []) as string[];
+  const stagedTags = (stagedParsed.data.tags ?? []) as string[];
+  const addedTags = stagedTags.filter((t: string) => !currentTags.includes(t));
+  const removedTags = currentTags.filter((t: string) => !stagedTags.includes(t));
+  if (addedTags.length) changes.push(`added ${addedTags.length} tag(s)`);
+  if (removedTags.length) changes.push(`removed ${removedTags.length} tag(s)`);
+
+  if (currentParsed.data.title !== stagedParsed.data.title) changes.push("updated title");
+
+  const currentLines = currentParsed.content.trim().split("\n").length;
+  const stagedLines = stagedParsed.content.trim().split("\n").length;
+  const lineDelta = stagedLines - currentLines;
+  if (lineDelta > 0) changes.push(`added ${lineDelta} line(s)`);
+  else if (lineDelta < 0) changes.push(`removed ${Math.abs(lineDelta)} line(s)`);
+  else if (currentParsed.content !== stagedParsed.content) changes.push("modified content");
+
+  return changes.length ? changes.join(", ") : "no visible changes";
+}
+
 export async function listApprovals(rootDir: string): Promise<ApprovalSummary[]> {
   const { paths } = await loadVaultConfig(rootDir);
   const manifests = await Promise.all(
@@ -2961,11 +2991,13 @@ export async function readApproval(rootDir: string, approvalId: string): Promise
       const stagedContent = entry.nextPath
         ? await fs.readFile(path.join(paths.approvalsDir, approvalId, "wiki", entry.nextPath), "utf8").catch(() => undefined)
         : undefined;
-      return {
+      const detail = {
         ...entry,
         currentContent,
         stagedContent
       };
+      detail.changeSummary = computeChangeSummary(detail.currentContent, detail.stagedContent, detail.changeType);
+      return detail;
     })
   );
 
