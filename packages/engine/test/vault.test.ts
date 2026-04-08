@@ -1820,4 +1820,22 @@ describe("swarmvault workflow", () => {
     expect(typeof updatedEntries[0].changeSummary).toBe("string");
     expect(updatedEntries[0].changeSummary!.length).toBeGreaterThan(0);
   });
+
+  it("review show with diff option includes unified diff output", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(path.join(rootDir, "diffme.md"), "# Original\n\nLine one.\nLine two.", "utf8");
+    await ingestInput(rootDir, "diffme.md");
+    await compileVault(rootDir);
+    await fs.writeFile(path.join(rootDir, "diffme.md"), "# Original\n\nLine one changed.\nLine two.\nLine three added.", "utf8");
+    await ingestInput(rootDir, "diffme.md");
+    await compileVault(rootDir, { approve: true });
+    const approvals = await listApprovals(rootDir);
+    const detail = await readApproval(rootDir, approvals[0].approvalId, { diff: true });
+    const updatedEntries = detail.entries.filter((e) => e.changeType === "update");
+    expect(updatedEntries.length).toBeGreaterThan(0);
+    expect(updatedEntries[0].diff).toBeDefined();
+    expect(updatedEntries[0].diff).toContain("---");
+    expect(updatedEntries[0].diff).toContain("+++");
+  });
 });

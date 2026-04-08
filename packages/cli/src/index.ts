@@ -550,8 +550,9 @@ review
   .command("show")
   .description("Show the entries inside a staged approval bundle.")
   .argument("<approvalId>", "Approval bundle identifier")
-  .action(async (approvalId: string) => {
-    const approval = await readApproval(process.cwd(), approvalId);
+  .option("--diff", "Show unified diff for each entry", false)
+  .action(async (approvalId: string, options: { diff?: boolean }) => {
+    const approval = await readApproval(process.cwd(), approvalId, { diff: options.diff });
     if (isJson()) {
       emitJson(approval);
       return;
@@ -560,6 +561,11 @@ review
     for (const entry of approval.entries) {
       log(`- ${entry.status} ${entry.changeType} ${entry.pageId} ${entry.nextPath ?? entry.previousPath ?? ""}`.trim());
       if (entry.changeSummary) log(`  Summary: ${entry.changeSummary}`);
+      if (entry.diff) {
+        log("");
+        log(entry.diff);
+        log("");
+      }
     }
   });
 

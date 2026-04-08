@@ -2930,6 +2930,39 @@ function sortGraphPages(pages: GraphPage[]): GraphPage[] {
   return [...pages].sort((left, right) => left.path.localeCompare(right.path) || left.title.localeCompare(right.title));
 }
 
+function computeUnifiedDiff(current: string, staged: string, label: string): string {
+  const currentLines = current.split("\n");
+  const stagedLines = staged.split("\n");
+  const output: string[] = [`--- a/${label}`, `+++ b/${label}`];
+
+  const n = currentLines.length;
+  const m = stagedLines.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = currentLines[i] === stagedLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && currentLines[i] === stagedLines[j]) {
+      output.push(` ${currentLines[i]}`);
+      i++;
+      j++;
+    } else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) {
+      output.push(`+${stagedLines[j]}`);
+      j++;
+    } else {
+      output.push(`-${currentLines[i]}`);
+      i++;
+    }
+  }
+
+  return output.join("\n");
+}
+
 function computeChangeSummary(current: string | undefined, staged: string | undefined, changeType: ApprovalChangeType): string {
   if (changeType === "create") return "New page";
   if (changeType === "delete") return "Removed page";
@@ -2979,7 +3012,7 @@ export async function listApprovals(rootDir: string): Promise<ApprovalSummary[]>
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-export async function readApproval(rootDir: string, approvalId: string): Promise<ApprovalDetail> {
+export async function readApproval(rootDir: string, approvalId: string, options?: { diff?: boolean }): Promise<ApprovalDetail> {
   const { paths } = await loadVaultConfig(rootDir);
   const manifest = await readApprovalManifest(paths, approvalId);
   const details = await Promise.all(
@@ -2997,6 +3030,9 @@ export async function readApproval(rootDir: string, approvalId: string): Promise
         stagedContent
       };
       detail.changeSummary = computeChangeSummary(detail.currentContent, detail.stagedContent, detail.changeType);
+      if (options?.diff && detail.currentContent && detail.stagedContent) {
+        detail.diff = computeUnifiedDiff(detail.currentContent, detail.stagedContent, detail.nextPath ?? detail.pageId);
+      }
       return detail;
     })
   );
