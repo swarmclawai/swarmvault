@@ -219,6 +219,7 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
   let consecutiveFailures = 0;
   let currentDebounceMs = baseDebounceMs;
   const reasons = new Set<string>();
+  let activeCycle: Promise<void> | null = null;
 
   const watcher = chokidar.watch(watchTargets, {
     ignoreInitial: true,
@@ -272,7 +273,12 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
     }
 
     timer = setTimeout(() => {
-      void runCycle();
+      const cycle = runCycle();
+      activeCycle = cycle.finally(() => {
+        if (activeCycle === cycle) {
+          activeCycle = null;
+        }
+      });
     }, currentDebounceMs);
   };
 
@@ -461,6 +467,7 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
         clearTimeout(timer);
       }
       await watcher.close();
+      await activeCycle;
     }
   };
 }
