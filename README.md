@@ -1,16 +1,44 @@
 # SwarmVault
 
+<!-- readme-language-nav:start -->
+**Languages:** [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+<!-- readme-language-nav:end -->
+
 [![npm](https://img.shields.io/npm/v/@swarmvaultai/cli)](https://www.npmjs.com/package/@swarmvaultai/cli)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
 **A local-first knowledge compiler for AI agents.** Turn raw files, URLs, and code into a persistent knowledge vault. Instead of losing work inside chat history, you get a markdown wiki, a knowledge graph, local search, and reviewable artifacts that stay on disk.
 
+Documentation on the website is currently English-first. If wording drifts between translations, [README.md](README.md) is the canonical source.
+
 > Most "chat with your docs" tools answer a question and throw away the work. SwarmVault treats the vault itself as the product. Every operation writes durable artifacts you can inspect, diff, and keep improving.
+
+<!-- readme-section:install -->
+## Install
+
+SwarmVault requires Node `>=24`.
 
 ```bash
 npm install -g @swarmvaultai/cli
 ```
+
+Verify the install:
+
+```bash
+swarmvault --version
+```
+
+Update to the latest published release:
+
+```bash
+npm install -g @swarmvaultai/cli@latest
+```
+
+The global CLI already includes the graph viewer workflow and MCP server flow. End users do not need to install `@swarmvaultai/viewer` separately.
+
+<!-- readme-section:quickstart -->
+## Quickstart
 
 ```text
 my-vault/
@@ -34,6 +62,33 @@ swarmvault graph serve
 swarmvault graph push neo4j --dry-run
 ```
 
+<!-- readme-section:provider-setup -->
+## Configure a Real Provider
+
+The built-in `heuristic` provider is useful for smoke tests and offline defaults, but it is not meant for serious synthesis quality. For real compile and query work, point the vault at a proper model provider:
+
+```json
+{
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "model": "gpt-4o",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    }
+  },
+  "tasks": {
+    "compileProvider": "primary",
+    "queryProvider": "primary",
+    "embeddingProvider": "primary"
+  }
+}
+```
+
+See the [provider docs](https://www.swarmvault.ai/docs/providers) for other supported backends and configuration examples.
+
+<!-- readme-section:agent-setup -->
+## Agent and MCP Setup
+
 Set up your coding agent so it knows about the vault:
 
 ```bash
@@ -50,7 +105,8 @@ Or expose the vault directly over MCP:
 swarmvault mcp
 ```
 
-Works with any mix of input types:
+<!-- readme-section:input-types -->
+## Works With Any Mix Of Input Types
 
 | Input | Extensions / Sources | Extraction |
 |-------|---------------------|------------|
@@ -63,6 +119,7 @@ Works with any mix of input types:
 | Markdown | `.md .txt` | Direct ingest |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 
+<!-- readme-section:what-you-get -->
 ## What You Get
 
 **Knowledge graph with provenance** - every edge traces back to a specific source and claim. Nodes carry freshness, confidence, and community membership.
@@ -87,6 +144,7 @@ Works with any mix of input types:
 
 Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know what was found vs guessed.
 
+<!-- readme-section:platform-support -->
 ## Platform Support
 
 | Agent | Install command |
@@ -103,6 +161,7 @@ Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know w
 
 Claude Code, OpenCode, Gemini CLI, and Copilot also support `--hook` for graph-first context injection.
 
+<!-- readme-section:worked-examples -->
 ## Worked Examples
 
 | Example | Focus | Source |
@@ -113,6 +172,7 @@ Claude Code, OpenCode, Gemini CLI, and Copilot also support `--hook` for graph-f
 
 Each folder has real input files and actual output so you can run it yourself and verify. See the [examples guide](https://www.swarmvault.ai/docs/getting-started/examples) for step-by-step walkthroughs.
 
+<!-- readme-section:providers -->
 ## Providers
 
 SwarmVault routes by capability, not brand. Built-in provider types:
@@ -121,6 +181,7 @@ SwarmVault routes by capability, not brand. Built-in provider types:
 
 See the [provider docs](https://www.swarmvault.ai/docs/providers) for configuration examples.
 
+<!-- readme-section:packages -->
 ## Packages
 
 | Package | Purpose |
@@ -129,6 +190,16 @@ See the [provider docs](https://www.swarmvault.ai/docs/providers) for configurat
 | `@swarmvaultai/engine` | Runtime library for ingest, compile, query, lint, watch, MCP |
 | `@swarmvaultai/viewer` | Graph viewer (included in CLI, no separate install needed) |
 
+<!-- readme-section:help -->
+## Need Help?
+
+- Docs: https://www.swarmvault.ai/docs
+- Providers: https://www.swarmvault.ai/docs/providers
+- Troubleshooting: https://www.swarmvault.ai/docs/getting-started/troubleshooting
+- npm package: https://www.npmjs.com/package/@swarmvaultai/cli
+- GitHub issues: https://github.com/swarmclawai/swarmvault/issues
+
+<!-- readme-section:development -->
 ## Development
 
 ```bash
@@ -140,6 +211,7 @@ pnpm build
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for PR guidelines, and [docs/live-testing.md](docs/live-testing.md) for the published-package validation workflow.
 
+<!-- readme-section:links -->
 ## Links
 
 - Website: https://www.swarmvault.ai
@@ -147,6 +219,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for PR guidelines, and [docs/live-testing
 - npm: https://www.npmjs.com/package/@swarmvaultai/cli
 - GitHub: https://github.com/swarmclawai/swarmvault
 
+<!-- readme-section:license -->
 ## License
 
 MIT
