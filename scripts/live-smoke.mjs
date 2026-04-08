@@ -218,12 +218,34 @@ try {
 
     await runStep("add-url-capture", async () => {
       const server = await startFixtureServer({
+        "/article": {
+          contentType: "text/html; charset=utf-8",
+          body: [
+            "<html><head>",
+            '<meta property="og:title" content="Research Article Capture" />',
+            '<meta name="author" content="Ada Lovelace" />',
+            '<meta property="article:published_time" content="2026-04-08T09:00:00Z" />',
+            '<meta name="keywords" content="graphs, benchmarks" />',
+            "</head><body>",
+            "<article><p>Graph reports should explain why connections matter.</p></article>",
+            "</body></html>"
+          ].join("\n")
+        },
         "/capture.md": {
           contentType: "text/plain; charset=utf-8",
           body: ["# Captured Link", "", "SwarmVault add falls back to generic URL ingest for unsupported URLs."].join("\n")
         }
       });
       try {
+        const articleUrl = `${server.baseUrl}/article`;
+        const article = await runCliJson(["add", articleUrl, "--contributor", "Smoke"]);
+        assert.equal(article.captureType, "article", "article capture did not report article");
+        assert.equal(article.fallback, false, "article capture unexpectedly fell back");
+        const articleSource = await fs.readFile(path.join(workspaceDir, article.manifest.storedPath), "utf8");
+        assert.ok(articleSource.includes("source_type: article"), "article capture did not record source_type");
+        assert.ok(articleSource.includes("canonical_url:"), "article capture did not record canonical_url");
+        assert.ok(articleSource.includes(articleUrl), "article capture did not preserve canonical_url");
+
         const result = await runCliJson(["add", `${server.baseUrl}/capture.md`, "--author", "Wayde"]);
         assert.equal(result.captureType, "url", "add fallback did not report url capture");
         assert.equal(result.fallback, true, "add fallback did not report fallback=true");
@@ -308,11 +330,25 @@ try {
   });
 
   await runStep("benchmark", async () => {
+    const autoBenchmarkPath = path.join(workspaceDir, "state", "benchmark.json");
+    await assertExists(autoBenchmarkPath);
+    const autoBenchmark = JSON.parse(await fs.readFile(autoBenchmarkPath, "utf8"));
+    assert.ok(autoBenchmark.graphHash, "compile did not write graphHash into benchmark.json");
+    assert.ok(autoBenchmark.summary?.reductionRatio >= 0, "compile benchmark summary missing reduction ratio");
+
+    const graphReportJsonPath = path.join(workspaceDir, "wiki", "graph", "report.json");
+    await assertExists(graphReportJsonPath);
+    const graphReportArtifact = JSON.parse(await fs.readFile(graphReportJsonPath, "utf8"));
+    assert.equal(graphReportArtifact.benchmark?.stale, true, "graph report benchmark should go stale after query-save changes the graph");
+    assert.ok(Array.isArray(graphReportArtifact.suggestedQuestions), "graph report did not include suggested questions");
+
     const result = await runCliJson(["benchmark", "--question", "How does this vault describe durable outputs?"]);
     assert.ok(result.avgQueryTokens > 0, "benchmark did not compute avgQueryTokens");
-    await assertExists(path.join(workspaceDir, "state", "benchmark.json"));
     const graphReport = await fs.readFile(path.join(workspaceDir, "wiki", "graph", "report.md"), "utf8");
-    assert.ok(graphReport.includes("## Benchmark"), "graph report did not include benchmark summary");
+    assert.ok(graphReport.includes("## Benchmark Summary"), "graph report did not include benchmark summary");
+    assert.ok(graphReport.includes("## Suggested Questions"), "graph report did not include suggested questions");
+    const refreshedGraphReportArtifact = JSON.parse(await fs.readFile(graphReportJsonPath, "utf8"));
+    assert.equal(refreshedGraphReportArtifact.benchmark?.stale, false, "benchmark rerun did not refresh graph report freshness");
   });
 
   if (lane === "heuristic") {

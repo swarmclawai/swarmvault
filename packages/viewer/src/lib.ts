@@ -41,6 +41,7 @@ export type ViewerGraphPage = {
   title: string;
   kind: string;
   status: string;
+  sourceType?: string;
   projectIds: string[];
   content: string;
   assets: ViewerOutputAsset[];
@@ -61,6 +62,7 @@ export type ViewerGraphArtifact = {
     title: string;
     kind: string;
     status: string;
+    sourceType?: string;
     projectIds: string[];
     nodeIds: string[];
     backlinks: string[];
@@ -77,6 +79,7 @@ export type ViewerSearchResult = {
   kind?: string;
   status?: string;
   projectIds: string[];
+  sourceType?: string;
 };
 
 export type ViewerPagePayload = {
@@ -217,11 +220,58 @@ export type ViewerWatchStatus = {
   }>;
 };
 
+export type ViewerGraphReport = {
+  generatedAt: string;
+  graphHash: string;
+  overview: {
+    nodes: number;
+    edges: number;
+    pages: number;
+    communities: number;
+  };
+  benchmark?: {
+    generatedAt: string;
+    stale: boolean;
+    summary: {
+      questionCount: number;
+      uniqueVisitedNodes: number;
+      finalContextTokens: number;
+      naiveCorpusTokens: number;
+      avgReduction: number;
+      reductionRatio: number;
+    };
+    questionCount: number;
+  };
+  surprisingConnections: Array<{
+    id: string;
+    sourceNodeId: string;
+    sourceLabel: string;
+    targetNodeId: string;
+    targetLabel: string;
+    relation: string;
+    evidenceClass: string;
+    confidence: number;
+    pathNodeIds: string[];
+    pathEdgeIds: string[];
+    pathSummary: string;
+    explanation: string;
+  }>;
+  suggestedQuestions: string[];
+  recentResearchSources: Array<{
+    pageId: string;
+    path: string;
+    title: string;
+    sourceType: string;
+    updatedAt: string;
+  }>;
+};
+
 declare global {
   interface Window {
     __SWARMVAULT_EMBEDDED_DATA__?: {
       graph: ViewerGraphArtifact;
       pages: ViewerGraphPage[];
+      report?: ViewerGraphReport;
     };
   }
 }
@@ -249,6 +299,7 @@ export type ViewerSearchOptions = {
   kind?: string;
   status?: string;
   project?: string;
+  sourceType?: string;
 };
 
 export async function fetchGraphArtifact(input = "/api/graph", init?: RequestInit): Promise<ViewerGraphArtifact> {
@@ -271,6 +322,7 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
   const kind = options.kind ?? "all";
   const status = options.status ?? "all";
   const project = options.project ?? "all";
+  const sourceType = options.sourceType ?? "all";
   if (embedded) {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) {
@@ -282,6 +334,7 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
       .filter((page) =>
         project === "all" ? true : project === "unassigned" ? page.projectIds.length === 0 : page.projectIds.includes(project)
       )
+      .filter((page) => (sourceType === "all" ? true : (page.sourceType ?? "") === sourceType))
       .map((page) => {
         const haystack = `${page.title}\n${page.content}`.toLowerCase();
         const score = haystack.includes(normalizedQuery) ? haystack.indexOf(normalizedQuery) : Number.POSITIVE_INFINITY;
@@ -293,7 +346,8 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
           rank: score,
           kind: page.kind,
           status: page.status,
-          projectIds: page.projectIds
+          projectIds: page.projectIds,
+          sourceType: page.sourceType
         };
       })
       .filter((page) => Number.isFinite(page.rank))
@@ -306,7 +360,8 @@ export async function searchViewerPages(query: string, options: ViewerSearchOpti
     limit: String(limit),
     kind,
     status,
-    project
+    project,
+    sourceType
   });
   const response = await fetch(`/api/search?${params.toString()}`);
   if (!response.ok) {
@@ -329,7 +384,8 @@ export async function fetchViewerPage(path: string): Promise<ViewerPagePayload> 
         page_id: page.pageId,
         kind: page.kind,
         status: page.status,
-        project_ids: page.projectIds
+        project_ids: page.projectIds,
+        source_type: page.sourceType
       },
       content: page.content,
       assets: page.assets ?? []
@@ -360,6 +416,21 @@ export async function fetchGraphQuery(
     throw new Error(`Failed to query graph: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<ViewerGraphQueryResult>;
+}
+
+export async function fetchGraphReport(): Promise<ViewerGraphReport | null> {
+  const embedded = embeddedData();
+  if (embedded) {
+    return embedded.report ?? null;
+  }
+  const response = await fetch("/api/graph-report");
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Failed to load graph report: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<ViewerGraphReport>;
 }
 
 export async function fetchGraphPath(from: string, to: string): Promise<ViewerGraphPathResult> {

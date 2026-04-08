@@ -138,6 +138,13 @@ const vaultConfigSchema = z.object({
         .optional()
     })
     .optional(),
+  benchmark: z
+    .object({
+      enabled: z.boolean().optional(),
+      questions: z.array(z.string().min(1)).optional(),
+      maxQuestions: z.number().int().positive().optional()
+    })
+    .optional(),
   webSearch: z
     .object({
       providers: z.record(z.string(), webSearchProviderConfigSchema),
@@ -181,6 +188,11 @@ export function defaultVaultConfig(): VaultConfig {
       maxParallelRoles: 2,
       compilePostPass: false,
       roles: {}
+    },
+    benchmark: {
+      enabled: true,
+      questions: [],
+      maxQuestions: 3
     }
   };
 }

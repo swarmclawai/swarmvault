@@ -10,6 +10,7 @@ import {
   fetchGraphExplain,
   fetchGraphPath,
   fetchGraphQuery,
+  fetchGraphReport,
   fetchViewerPage,
   fetchWatchStatus,
   searchViewerPages,
@@ -21,6 +22,7 @@ import {
   type ViewerGraphNode,
   type ViewerGraphPathResult,
   type ViewerGraphQueryResult,
+  type ViewerGraphReport,
   type ViewerOutputAsset,
   type ViewerPagePayload,
   type ViewerSearchResult,
@@ -62,8 +64,10 @@ export function App() {
   const [pageStatusFilter, setPageStatusFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [communityFilter, setCommunityFilter] = useState<string>("all");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ViewerSearchResult[]>([]);
+  const [graphReport, setGraphReport] = useState<ViewerGraphReport | null>(null);
   const [graphQueryInput, setGraphQueryInput] = useState("");
   const [graphQueryResult, setGraphQueryResult] = useState<ViewerGraphQueryResult | null>(null);
   const [pathFrom, setPathFrom] = useState("");
@@ -96,6 +100,11 @@ export function App() {
   const projectOptions = uniqueStrings(graph?.pages?.flatMap((page) => page.projectIds ?? []) ?? []).sort((left, right) =>
     left.localeCompare(right)
   );
+  const sourceTypeOptions = uniqueStrings(
+    graph?.pages
+      ?.flatMap((page) => (page.kind === "source" && page.sourceType ? [page.sourceType] : []))
+      .sort((left, right) => left.localeCompare(right)) ?? []
+  );
   const communityOptions = uniqueStrings((graph?.communities ?? []).map((community) => community.id)).sort((left, right) =>
     left.localeCompare(right)
   );
@@ -115,6 +124,7 @@ export function App() {
     let nextApprovalError: string | null = null;
     let nextCandidateError: string | null = null;
     let nextWatchError: string | null = null;
+    let nextGraphReport: ViewerGraphReport | null = null;
     const [nextGraph, nextApprovals, nextCandidates, nextWatchStatus] = await Promise.all([
       fetchGraphArtifact().catch(() => emptyGraph()),
       fetchApprovals().catch((error: unknown) => {
@@ -134,9 +144,11 @@ export function App() {
         } satisfies ViewerWatchStatus;
       })
     ]);
+    nextGraphReport = await fetchGraphReport().catch(() => null);
 
     startTransition(() => {
       setGraph(nextGraph);
+      setGraphReport(nextGraphReport);
       setApprovals(nextApprovals);
       setCandidates(nextCandidates);
       setWatchStatus(nextWatchStatus);
@@ -350,7 +362,8 @@ export function App() {
       limit: 10,
       kind: kindFilter,
       status: pageStatusFilter,
-      project: projectFilter
+      project: projectFilter,
+      sourceType: sourceTypeFilter
     })
       .then((nextResults) => {
         if (!cancelled) {
@@ -369,7 +382,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [deferredQuery, kindFilter, pageStatusFilter, projectFilter]);
+  }, [deferredQuery, kindFilter, pageStatusFilter, projectFilter, sourceTypeFilter]);
 
   useEffect(() => {
     if (!selected?.pageId) {
@@ -548,6 +561,17 @@ export function App() {
             </select>
           </label>
           <label className="filter">
+            Source type
+            <select value={sourceTypeFilter} onChange={(event) => setSourceTypeFilter(event.target.value)}>
+              <option value="all">All</option>
+              {sourceTypeOptions.map((sourceType) => (
+                <option key={sourceType} value={sourceType}>
+                  {sourceType}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter">
             Community
             <select value={communityFilter} onChange={(event) => setCommunityFilter(event.target.value)}>
               <option value="all">All</option>
@@ -591,6 +615,10 @@ export function App() {
           <span>Pending Refresh</span>
           <strong>{watchStatus?.pendingSemanticRefresh.length ?? 0}</strong>
         </article>
+        <article>
+          <span>Benchmark</span>
+          <strong>{graphReport?.benchmark ? `${(graphReport.benchmark.summary.reductionRatio * 100).toFixed(1)}%` : "Not run"}</strong>
+        </article>
       </section>
 
       {watchStatus?.pendingSemanticRefresh.length ? (
@@ -614,6 +642,65 @@ export function App() {
               </article>
             ))}
           </div>
+        </section>
+      ) : null}
+
+      {graphReport ? (
+        <section className="panel" style={{ marginBottom: "1rem" }}>
+          <h2>Graph Report</h2>
+          <p>
+            Nodes {graphReport.overview.nodes} • Edges {graphReport.overview.edges} • Communities {graphReport.overview.communities}
+          </p>
+          {graphReport.benchmark ? (
+            <p>
+              Benchmark {graphReport.benchmark.stale ? "stale" : "fresh"} • final context {graphReport.benchmark.summary.finalContextTokens}{" "}
+              • naive corpus {graphReport.benchmark.summary.naiveCorpusTokens} • reduction{" "}
+              {(graphReport.benchmark.summary.reductionRatio * 100).toFixed(1)}%
+            </p>
+          ) : (
+            <p>No benchmark summary is available yet.</p>
+          )}
+          {graphReport.surprisingConnections.length ? (
+            <div className="linked-pages">
+              <span className="panel-label">Surprising Connections</span>
+              <div className="action-row">
+                {graphReport.surprisingConnections.slice(0, 4).map((connection) => (
+                  <button
+                    key={connection.id}
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      setPathFrom(connection.sourceNodeId);
+                      setPathTo(connection.targetNodeId);
+                      void (async () => {
+                        try {
+                          const result = await fetchGraphPath(connection.sourceNodeId, connection.targetNodeId);
+                          setPathResult(result);
+                          setGraphError(null);
+                        } catch (error) {
+                          setGraphError(error instanceof Error ? error.message : String(error));
+                        }
+                      })();
+                    }}
+                  >
+                    {connection.sourceLabel} {"->"} {connection.targetLabel}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {graphReport.recentResearchSources.length ? (
+            <div className="linked-pages">
+              <span className="panel-label">New Research Sources</span>
+              <div className="action-row">
+                {graphReport.recentResearchSources.slice(0, 4).map((page) => (
+                  <button key={page.pageId} type="button" className="link-button" onClick={() => void openPagePath(page.path, page.pageId)}>
+                    {page.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -680,6 +767,7 @@ export function App() {
                       {result.kind ?? "page"} / {result.status ?? "active"}
                     </span>
                     <strong>{result.title}</strong>
+                    {result.sourceType ? <p>Source type: {result.sourceType}</p> : null}
                     <p>{result.projectIds.length ? result.projectIds.join(", ") : "global / unassigned"}</p>
                     <p>{result.snippet}</p>
                   </button>
@@ -858,6 +946,7 @@ export function App() {
                   {typeof activePage.frontmatter.kind === "string" ? activePage.frontmatter.kind : "page"} /{" "}
                   {typeof activePage.frontmatter.status === "string" ? activePage.frontmatter.status : "active"}
                 </p>
+                {typeof activePage.frontmatter.source_type === "string" ? <p>Source type: {activePage.frontmatter.source_type}</p> : null}
                 <p>
                   Projects:{" "}
                   {Array.isArray(activePage.frontmatter.project_ids)

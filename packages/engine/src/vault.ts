@@ -4,7 +4,13 @@ import matter from "gray-matter";
 import { z } from "zod";
 import { installConfiguredAgents } from "./agents.js";
 import { analysisSignature, analyzeSource } from "./analysis.js";
-import { benchmarkQueryTokens, buildBenchmarkArtifact, DEFAULT_BENCHMARK_QUESTIONS, estimateCorpusWords } from "./benchmark.js";
+import {
+  benchmarkQueryTokens,
+  buildBenchmarkArtifact,
+  defaultBenchmarkQuestionsForGraph,
+  estimateCorpusWords,
+  graphHash
+} from "./benchmark.js";
 import { buildCodeIndex, enrichResolvedCodeImports, modulePageTitle } from "./code-analysis.js";
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
@@ -16,6 +22,7 @@ import {
   buildAggregatePage,
   buildCommunitySummaryPage,
   buildExploreHubPage,
+  buildGraphReportArtifact,
   buildGraphReportPage,
   buildIndexPage,
   buildModulePage,
@@ -71,6 +78,7 @@ import type {
   GraphPage,
   GraphPathResult,
   GraphQueryResult,
+  GraphReportArtifact,
   InitOptions,
   LintFinding,
   LintOptions,
@@ -1362,11 +1370,40 @@ function buildGraph(
   };
 }
 
+function recentResearchSourcePages(
+  graph: GraphArtifact,
+  previousCompiledAt?: string
+): Array<{
+  id: string;
+  path: string;
+  title: string;
+  updatedAt: string;
+  sourceType: NonNullable<GraphPage["sourceType"]>;
+}> {
+  const previousTimestamp = previousCompiledAt ? Date.parse(previousCompiledAt) : Number.NaN;
+  return graph.pages
+    .filter(
+      (page): page is GraphPage & { sourceType: NonNullable<GraphPage["sourceType"]> } =>
+        page.kind === "source" && Boolean(page.sourceType) && page.sourceType !== "url"
+    )
+    .filter((page) => Number.isNaN(previousTimestamp) || Date.parse(page.updatedAt) > previousTimestamp)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.title.localeCompare(right.title))
+    .slice(0, 8)
+    .map((page) => ({
+      id: page.id,
+      path: page.path,
+      title: page.title,
+      updatedAt: page.updatedAt,
+      sourceType: page.sourceType
+    }));
+}
+
 async function buildGraphOrientationPages(
   graph: GraphArtifact,
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
-  schemaHash: string
-): Promise<ManagedPageRecord[]> {
+  schemaHash: string,
+  previousCompiledAt?: string
+): Promise<{ records: ManagedPageRecord[]; report: GraphReportArtifact }> {
   const benchmark = await readJsonFile<BenchmarkArtifact>(paths.benchmarkPath);
   const communityRecords: ManagedPageRecord[] = [];
 
@@ -1393,6 +1430,14 @@ async function buildGraphOrientationPages(
     );
   }
 
+  const report = buildGraphReportArtifact({
+    graph,
+    communityPages: communityRecords.map((record) => record.page),
+    benchmark,
+    benchmarkStale: benchmark ? benchmark.graphHash !== graphHash(graph) : false,
+    recentResearchSources: recentResearchSourcePages(graph, previousCompiledAt),
+    graphHash: graphHash(graph)
+  });
   const reportAbsolutePath = path.join(paths.wikiDir, "graph", "report.md");
   const reportRecord = await buildManagedGraphPage(
     reportAbsolutePath,
@@ -1406,12 +1451,14 @@ async function buildGraphOrientationPages(
         graph,
         schemaHash,
         metadata,
-        communityPages: communityRecords.map((record) => record.page),
-        benchmark
+        report
       })
   );
 
-  return [reportRecord, ...communityRecords];
+  return {
+    records: [reportRecord, ...communityRecords],
+    report
+  };
 }
 
 async function writePage(wikiDir: string, relativePath: string, content: string, changedPages: string[]): Promise<void> {
@@ -1878,9 +1925,9 @@ async function syncVaultArtifacts(
   const compiledPages = records.map((record) => record.page);
   const basePages = [...compiledPages, ...input.outputPages, ...input.insightPages];
   const baseGraph = buildGraph(input.manifests, input.analyses, basePages, input.sourceProjects, input.codeIndex);
-  const graphOrientationRecords = await buildGraphOrientationPages(baseGraph, paths, globalSchemaHash);
-  records.push(...graphOrientationRecords);
-  const allPages = [...basePages, ...graphOrientationRecords.map((record) => record.page)];
+  const graphOrientation = await buildGraphOrientationPages(baseGraph, paths, globalSchemaHash, input.previousState?.generatedAt);
+  records.push(...graphOrientation.records);
+  const allPages = [...basePages, ...graphOrientation.records.map((record) => record.page)];
   const graph: GraphArtifact = {
     ...baseGraph,
     pages: allPages
@@ -2061,6 +2108,7 @@ async function syncVaultArtifacts(
   }
 
   await writeJsonFile(paths.graphPath, graph);
+  await writeJsonFile(path.join(paths.wikiDir, "graph", "report.json"), graphOrientation.report);
   await writeJsonFile(paths.codeIndexPath, input.codeIndex);
   await writeJsonFile(paths.compileStatePath, {
     generatedAt: graph.generatedAt,
@@ -2101,20 +2149,22 @@ async function syncVaultArtifacts(
 async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Promise<void> {
   const { config, paths } = await loadVaultConfig(rootDir);
   const schemas = await loadVaultSchemas(rootDir);
+  const compileState = await readJsonFile<CompileState>(paths.compileStatePath);
   const globalSchemaHash = schemas.effective.global.hash;
   const currentGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
   const basePages = pages.filter((page) => page.kind !== "graph_report" && page.kind !== "community_summary");
-  const graphOrientationRecords = currentGraph
+  const graphOrientation: { records: ManagedPageRecord[]; report: GraphReportArtifact | null } = currentGraph
     ? await buildGraphOrientationPages(
         {
           ...currentGraph,
           pages: basePages
         },
         paths,
-        globalSchemaHash
+        globalSchemaHash,
+        compileState?.generatedAt
       )
-    : [];
-  const pagesWithGraph = sortGraphPages([...basePages, ...graphOrientationRecords.map((record) => record.page)]);
+    : { records: [], report: null };
+  const pagesWithGraph = sortGraphPages([...basePages, ...graphOrientation.records.map((record) => record.page)]);
   if (currentGraph) {
     await writeJsonFile(paths.graphPath, {
       ...currentGraph,
@@ -2225,8 +2275,11 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
     );
   }
 
-  for (const record of graphOrientationRecords) {
+  for (const record of graphOrientation.records) {
     await writeFileIfChanged(path.join(paths.wikiDir, record.page.path), record.content);
+  }
+  if (graphOrientation.report) {
+    await writeJsonFile(path.join(paths.wikiDir, "graph", "report.json"), graphOrientation.report);
   }
 
   const existingProjectIndexPaths = (await listFilesRecursive(paths.projectsDir))
@@ -2245,7 +2298,7 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
   const existingGraphPages = (await listFilesRecursive(path.join(paths.wikiDir, "graph").replace(/\/$/, "")).catch(() => []))
     .filter((absolutePath) => absolutePath.endsWith(".md"))
     .map((absolutePath) => toPosix(path.relative(paths.wikiDir, absolutePath)));
-  const allowedGraphPages = new Set(["graph/index.md", ...graphOrientationRecords.map((record) => record.page.path)]);
+  const allowedGraphPages = new Set(["graph/index.md", ...graphOrientation.records.map((record) => record.page.path)]);
   await Promise.all(
     existingGraphPages
       .filter((relativePath) => !allowedGraphPages.has(relativePath))
@@ -3074,6 +3127,22 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
   }
 }
 
+async function runConfiguredBenchmark(rootDir: string, config: VaultConfig): Promise<{ ok: boolean; error?: string }> {
+  if (config.benchmark?.enabled === false) {
+    return { ok: true };
+  }
+
+  try {
+    await benchmarkVault(rootDir);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 export async function compileVault(rootDir: string, options: CompileOptions = {}): Promise<CompileResult> {
   const startedAt = new Date().toISOString();
   const { config, paths } = await initWorkspace(rootDir);
@@ -3140,6 +3209,10 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     !options.approve
   ) {
     const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+    const benchmark = await runConfiguredBenchmark(rootDir, config);
+    if (graph && benchmark.ok) {
+      await refreshIndexesAndSearch(rootDir, graph.pages);
+    }
     await recordSession(rootDir, {
       operation: "compile",
       title: `Compiled ${manifests.length} source(s)`,
@@ -3157,7 +3230,8 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
         `clean=${manifests.length}`,
         `outputs=${outputPages.length}`,
         `insights=${insightPages.length}`,
-        `schema=${schemas.effective.global.hash.slice(0, 12)}`
+        `schema=${schemas.effective.global.hash.slice(0, 12)}`,
+        `benchmark=${benchmark.ok ? "ok" : `error:${benchmark.error}`}`
       ]
     });
     return {
@@ -3290,6 +3364,10 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
       postPassApprovalDir = staged.approvalDir;
     }
   }
+  const benchmark = options.approve ? { ok: true } : await runConfiguredBenchmark(rootDir, config);
+  if (!options.approve && benchmark.ok) {
+    await refreshIndexesAndSearch(rootDir, sync.allPages);
+  }
 
   await recordSession(rootDir, {
     operation: "compile",
@@ -3312,7 +3390,8 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
       `promoted=${sync.promotedPageIds.length}`,
       `staged=${sync.staged}`,
       `postPassApproval=${postPassApprovalId ?? "none"}`,
-      `schema=${schemas.effective.global.hash.slice(0, 12)}`
+      `schema=${schemas.effective.global.hash.slice(0, 12)}`,
+      `benchmark=${benchmark.ok ? "ok" : `error:${benchmark.error}`}`
     ]
   });
 
@@ -3735,7 +3814,7 @@ export async function queryGraphVault(
 }
 
 export async function benchmarkVault(rootDir: string, options: BenchmarkOptions = {}): Promise<BenchmarkArtifact> {
-  const { paths } = await loadVaultConfig(rootDir);
+  const { config, paths } = await loadVaultConfig(rootDir);
   const graph = await ensureCompiledGraph(rootDir);
   const manifests = await listManifests(rootDir);
   const pageContentsById = new Map<string, string>();
@@ -3757,8 +3836,12 @@ export async function benchmarkVault(rootDir: string, options: BenchmarkOptions 
     pageContentsById.set(page.id, parsed.content);
   }
 
+  const configuredQuestions = (config.benchmark?.questions ?? []).map((question) => normalizeWhitespace(question)).filter(Boolean);
+  const maxQuestions = Math.max(1, options.maxQuestions ?? config.benchmark?.maxQuestions ?? 3);
   const questions = (options.questions ?? []).map((question) => normalizeWhitespace(question)).filter(Boolean);
-  const sampleQuestions = questions.length ? questions : [...DEFAULT_BENCHMARK_QUESTIONS];
+  const sampleQuestions = (
+    questions.length ? questions : configuredQuestions.length ? configuredQuestions : defaultBenchmarkQuestionsForGraph(graph, maxQuestions)
+  ).slice(0, maxQuestions);
   const perQuestion = sampleQuestions.map((question) => {
     const searchResults = searchPages(paths.searchDbPath, question, { limit: 12 });
     const result = queryGraph(graph, question, searchResults, { budget: 12 });
@@ -3768,6 +3851,7 @@ export async function benchmarkVault(rootDir: string, options: BenchmarkOptions 
       queryTokens: metrics.queryTokens,
       reduction: metrics.reduction,
       visitedNodeIds: result.visitedNodeIds,
+      visitedEdgeIds: result.visitedEdgeIds,
       pageIds: result.pageIds
     };
   });

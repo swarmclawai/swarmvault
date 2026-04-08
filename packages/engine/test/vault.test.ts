@@ -547,7 +547,7 @@ describe("swarmvault workflow", () => {
     }
   });
 
-  it("captures arXiv ids and tweet URLs through the add workflow", async () => {
+  it("captures arXiv ids, DOI/article URLs, and tweet URLs through the add workflow", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
 
@@ -563,6 +563,63 @@ describe("swarmvault workflow", () => {
             '<meta name="citation_author" content="Grace Hopper" />',
             "</head><body>",
             '<blockquote class="abstract">Abstract: Parser-backed ingest keeps graphs grounded.</blockquote>',
+            "</body></html>"
+          ].join(""),
+          {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" }
+          }
+        );
+      }
+      if (url === "https://doi.org/10.5555/swarmvault-doi" || url === "https://doi.org/10.5555%2Fswarmvault-doi") {
+        return new Response(
+          [
+            "<html><head>",
+            '<link rel="canonical" href="https://papers.example/swarmvault-study" />',
+            '<meta name="citation_title" content="SwarmVault DOI Capture" />',
+            '<meta name="citation_author" content="Leslie Lamport" />',
+            '<meta name="citation_doi" content="10.5555/swarmvault-doi" />',
+            '<meta name="keywords" content="knowledge graphs, parser-first" />',
+            "</head><body>",
+            "<article><p>DOI redirects should normalize into research captures.</p></article>",
+            "</body></html>"
+          ].join(""),
+          {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" }
+          }
+        );
+      }
+      if (url === "https://papers.example/swarmvault-study") {
+        return new Response(
+          [
+            "<html><head>",
+            '<link rel="canonical" href="https://papers.example/swarmvault-study" />',
+            '<meta property="og:title" content="SwarmVault DOI Capture" />',
+            '<meta name="citation_author" content="Leslie Lamport" />',
+            '<meta name="citation_doi" content="10.5555/swarmvault-doi" />',
+            '<meta name="keywords" content="knowledge graphs, parser-first" />',
+            "</head><body>",
+            "<article><p>Resolved DOI landing pages should become normalized markdown captures.</p></article>",
+            "</body></html>"
+          ].join(""),
+          {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" }
+          }
+        );
+      }
+      if (url === "https://example.test/article") {
+        return new Response(
+          [
+            "<html><head>",
+            '<link rel="canonical" href="https://example.test/article" />',
+            '<meta property="og:title" content="Article Capture" />',
+            '<meta name="author" content="Grace Hopper" />',
+            '<meta property="article:published_time" content="2026-04-08T09:00:00Z" />',
+            '<meta name="keywords" content="agents, vaults" />',
+            "</head><body>",
+            "<article><p>Generic research article URLs should become normalized markdown captures too.</p></article>",
             "</body></html>"
           ].join(""),
           {
@@ -588,16 +645,38 @@ describe("swarmvault workflow", () => {
 
     try {
       const arxiv = await addInput(rootDir, "2401.12345", { author: "Wayde" });
+      const doi = await addInput(rootDir, "10.5555/swarmvault-doi");
+      const article = await addInput(rootDir, "https://example.test/article", { contributor: "SwarmVault" });
       const tweet = await addInput(rootDir, "https://x.com/example/status/1234567890", { contributor: "SwarmVault" });
 
       expect(arxiv.captureType).toBe("arxiv");
       expect(arxiv.fallback).toBe(false);
       expect(arxiv.normalizedUrl).toBe("https://arxiv.org/abs/2401.12345");
-      expect(await fs.readFile(path.join(rootDir, arxiv.manifest.storedPath), "utf8")).toContain("## Abstract");
+      const arxivStored = matter(await fs.readFile(path.join(rootDir, arxiv.manifest.storedPath), "utf8"));
+      expect(arxivStored.data.source_type).toBe("arxiv");
+      expect(arxivStored.content).toContain("## Abstract");
+
+      expect(doi.captureType).toBe("doi");
+      expect(doi.fallback).toBe(false);
+      expect(doi.normalizedUrl).toBe("https://papers.example/swarmvault-study");
+      const doiStored = matter(await fs.readFile(path.join(rootDir, doi.manifest.storedPath), "utf8"));
+      expect(doiStored.data.source_type).toBe("doi");
+      expect(doiStored.data.doi).toBe("10.5555/swarmvault-doi");
+      expect(doiStored.data.canonical_url).toBe("https://papers.example/swarmvault-study");
+      expect(doiStored.data.tags).toEqual(["knowledge graphs", "parser-first"]);
+
+      expect(article.captureType).toBe("article");
+      expect(article.fallback).toBe(false);
+      const articleStored = matter(await fs.readFile(path.join(rootDir, article.manifest.storedPath), "utf8"));
+      expect(articleStored.data.source_type).toBe("article");
+      expect(articleStored.data.authors).toEqual(["Grace Hopper"]);
+      expect(articleStored.data.tags).toEqual(["agents", "vaults"]);
 
       expect(tweet.captureType).toBe("tweet");
       expect(tweet.fallback).toBe(false);
-      expect(await fs.readFile(path.join(rootDir, tweet.manifest.storedPath), "utf8")).toContain("## Content");
+      const tweetStored = matter(await fs.readFile(path.join(rootDir, tweet.manifest.storedPath), "utf8"));
+      expect(tweetStored.data.source_type).toBe("tweet");
+      expect(tweetStored.content).toContain("## Content");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -650,6 +729,25 @@ describe("swarmvault workflow", () => {
     await ingestInput(rootDir, "note.md");
     await compileVault(rootDir);
 
+    const autoBenchmarkArtifact = JSON.parse(await fs.readFile(path.join(rootDir, "state", "benchmark.json"), "utf8")) as {
+      graphHash: string;
+      sampleQuestions: string[];
+      summary: { reductionRatio: number };
+    };
+    expect(autoBenchmarkArtifact.graphHash).toBeTruthy();
+    expect(autoBenchmarkArtifact.sampleQuestions.length).toBeGreaterThan(0);
+    expect(autoBenchmarkArtifact.summary.reductionRatio).toBeGreaterThanOrEqual(0);
+
+    const autoGraphReportArtifact = JSON.parse(await fs.readFile(path.join(rootDir, "wiki", "graph", "report.json"), "utf8")) as {
+      benchmark?: { stale: boolean; summary: { reductionRatio: number } };
+      overview: { nodes: number };
+      suggestedQuestions: string[];
+    };
+    expect(autoGraphReportArtifact.overview.nodes).toBeGreaterThan(0);
+    expect(autoGraphReportArtifact.benchmark?.stale).toBe(false);
+    expect(autoGraphReportArtifact.benchmark?.summary.reductionRatio).toBeGreaterThanOrEqual(0);
+    expect(autoGraphReportArtifact.suggestedQuestions.length).toBeGreaterThan(0);
+
     const benchmark = await benchmarkVault(rootDir, {
       questions: ["How does this vault describe graph-guided context reduction?"]
     });
@@ -662,8 +760,9 @@ describe("swarmvault workflow", () => {
     expect(benchmarkArtifact.sampleQuestions).toEqual(benchmark.sampleQuestions);
 
     const graphReport = await fs.readFile(path.join(rootDir, "wiki", "graph", "report.md"), "utf8");
-    expect(graphReport).toContain("## Benchmark");
+    expect(graphReport).toContain("## Benchmark Summary");
     expect(graphReport).toContain("Reduction Ratio");
+    expect(graphReport).toContain("## Suggested Questions");
 
     const exportsDir = path.join(rootDir, "exports");
     const svg = await exportGraphFormat(rootDir, "svg", path.join(exportsDir, "graph.svg"));

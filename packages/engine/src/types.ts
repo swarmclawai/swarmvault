@@ -47,6 +47,7 @@ export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "binary" | "code";
+export type SourceCaptureType = "arxiv" | "doi" | "tweet" | "article" | "url";
 export type CodeLanguage =
   | "javascript"
   | "jsx"
@@ -184,6 +185,11 @@ export interface VaultConfig {
   agents: AgentType[];
   schedules?: Record<string, ScheduleJobConfig>;
   orchestration?: OrchestrationConfig;
+  benchmark?: {
+    enabled?: boolean;
+    questions?: string[];
+    maxQuestions?: number;
+  };
   webSearch?: {
     providers: Record<string, WebSearchProviderConfig>;
     tasks: {
@@ -297,6 +303,7 @@ export interface SourceManifest {
   title: string;
   originType: "file" | "url";
   sourceKind: SourceKind;
+  sourceType?: SourceCaptureType;
   language?: CodeLanguage;
   originalPath?: string;
   repoRelativePath?: string;
@@ -445,6 +452,7 @@ export interface GraphPage {
   path: string;
   title: string;
   kind: PageKind;
+  sourceType?: SourceCaptureType;
   sourceIds: string[];
   projectIds: string[];
   nodeIds: string[];
@@ -616,6 +624,7 @@ export interface SearchResult {
   kind?: PageKind;
   status?: PageStatus;
   projectIds: string[];
+  sourceType?: SourceCaptureType;
 }
 
 export interface QueryOptions {
@@ -863,7 +872,7 @@ export interface AddOptions extends IngestOptions {
 }
 
 export interface AddResult {
-  captureType: "arxiv" | "tweet" | "url";
+  captureType: SourceCaptureType;
   manifest: SourceManifest;
   normalizedUrl: string;
   title: string;
@@ -875,11 +884,22 @@ export interface BenchmarkQuestionResult {
   queryTokens: number;
   reduction: number;
   visitedNodeIds: string[];
+  visitedEdgeIds: string[];
   pageIds: string[];
+}
+
+export interface BenchmarkSummary {
+  questionCount: number;
+  uniqueVisitedNodes: number;
+  finalContextTokens: number;
+  naiveCorpusTokens: number;
+  avgReduction: number;
+  reductionRatio: number;
 }
 
 export interface BenchmarkArtifact {
   generatedAt: string;
+  graphHash: string;
   corpusWords: number;
   corpusTokens: number;
   nodes: number;
@@ -888,10 +908,79 @@ export interface BenchmarkArtifact {
   reductionRatio: number;
   sampleQuestions: string[];
   perQuestion: BenchmarkQuestionResult[];
+  questionResults: BenchmarkQuestionResult[];
+  summary: BenchmarkSummary;
 }
 
 export interface BenchmarkOptions {
   questions?: string[];
+  maxQuestions?: number;
+}
+
+export interface GraphReportArtifact {
+  generatedAt: string;
+  graphHash: string;
+  overview: {
+    nodes: number;
+    edges: number;
+    pages: number;
+    communities: number;
+  };
+  benchmark?: {
+    generatedAt: string;
+    stale: boolean;
+    summary: BenchmarkSummary;
+    questionCount: number;
+  };
+  godNodes: Array<{
+    nodeId: string;
+    label: string;
+    pageId?: string;
+    degree?: number;
+    bridgeScore?: number;
+  }>;
+  bridgeNodes: Array<{
+    nodeId: string;
+    label: string;
+    pageId?: string;
+    degree?: number;
+    bridgeScore?: number;
+  }>;
+  thinCommunities: Array<{
+    id: string;
+    label: string;
+    nodeCount: number;
+    pageId?: string;
+    path?: string;
+    title?: string;
+  }>;
+  surprisingConnections: Array<{
+    id: string;
+    sourceNodeId: string;
+    sourceLabel: string;
+    targetNodeId: string;
+    targetLabel: string;
+    relation: string;
+    evidenceClass: EvidenceClass;
+    confidence: number;
+    pathNodeIds: string[];
+    pathEdgeIds: string[];
+    pathSummary: string;
+    explanation: string;
+  }>;
+  suggestedQuestions: string[];
+  communityPages: Array<{
+    id: string;
+    path: string;
+    title: string;
+  }>;
+  recentResearchSources: Array<{
+    pageId: string;
+    path: string;
+    title: string;
+    sourceType: SourceCaptureType;
+    updatedAt: string;
+  }>;
 }
 
 export interface ScheduledCompileTask {

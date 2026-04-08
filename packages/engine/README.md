@@ -169,8 +169,8 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 ### Compile + Query
 
 - `compileVault(rootDir, { approve })` writes wiki pages, graph data, and search state using the vault schema as guidance, or stages a review bundle
-- compile also writes graph orientation pages such as `wiki/graph/report.md` and `wiki/graph/communities/<community>.md`
-- `benchmarkVault(rootDir, { questions })` writes `state/benchmark.json` and folds the latest benchmark summary into `wiki/graph/report.md`
+- compile also writes graph orientation pages such as `wiki/graph/report.md`, `wiki/graph/report.json`, and `wiki/graph/communities/<community>.md`
+- `benchmarkVault(rootDir, { questions })` writes `state/benchmark.json` and folds the latest benchmark summary into `wiki/graph/report.md` and `wiki/graph/report.json`
 - `queryVault(rootDir, { question, save, format, review })` answers against the compiled vault using the same schema layer and saves by default
 - `exploreVault(rootDir, { question, steps, format, review })` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
@@ -220,6 +220,7 @@ Running the engine produces a local workspace with these main areas:
 - `raw/assets/`: copied attachments referenced by ingested markdown bundles and remote URL ingests
 - `wiki/`: generated markdown pages, the append-only `log.md` activity trail, staged candidates, saved query outputs, exploration hub pages, and a human-only `insights/` area
 - `wiki/graph/`: generated graph report pages and per-community summaries derived from `state/graph.json`
+- `wiki/graph/report.json`: machine-readable graph report data used by the viewer and export surfaces
 - `wiki/outputs/assets/`: local chart/image artifacts and JSON manifests for saved visual outputs
 - `wiki/code/`: generated module pages for ingested code sources
 - `wiki/projects/`: generated project rollups over canonical pages
@@ -241,6 +242,7 @@ Saved outputs are indexed immediately into the graph page registry and search in
 Code sources also emit module, symbol, and parser-backed rationale nodes into `state/graph.json`, so local imports, exports, inheritance, same-module call edges, and rationale links are queryable through the same viewer and search pipeline.
 Ingest, inbox import, compile, query, lint, review, and candidate operations also append human-readable entries to `wiki/log.md`.
 PDF sources now go through a local text-extraction pass before analysis, and image sources use the configured `visionProvider` for structured OCR/diagram extraction when a real multimodal provider is available. When image extraction is unavailable, SwarmVault records an explicit warning in the extraction sidecar and carries that warning forward into analysis instead of silently treating the source as empty.
+Compile and repo-refresh runs also keep benchmark artifacts current by default, so graph report consumers can show freshness and stale-state without requiring a separate benchmark command first.
 
 ## Notes
 

@@ -1,5 +1,6 @@
 import matter from "gray-matter";
 import { modulePageTitle } from "./code-analysis.js";
+import { shortestGraphPath } from "./graph-tools.js";
 import type {
   BenchmarkArtifact,
   Freshness,
@@ -7,6 +8,7 @@ import type {
   GraphEdge,
   GraphNode,
   GraphPage,
+  GraphReportArtifact,
   OutputAsset,
   OutputFormat,
   OutputOrigin,
@@ -16,7 +18,7 @@ import type {
   SourceAnalysis,
   SourceManifest
 } from "./types.js";
-import { slugify, uniqueBy } from "./utils.js";
+import { normalizeWhitespace, slugify, uniqueBy } from "./utils.js";
 
 export interface ManagedPageMetadata {
   status: PageStatus;
@@ -37,6 +39,10 @@ export interface GeneratedPageDecorations {
 
 function uniqueStrings(values: string[]): string[] {
   return uniqueBy(values.filter(Boolean), (value) => value);
+}
+
+function safeFrontmatter<T extends Record<string, unknown>>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function decoratedTags(baseTags: string[], decorations?: GeneratedPageDecorations): string[] {
@@ -139,6 +145,7 @@ export function buildSourcePage(
     page_id: pageId,
     kind: "source",
     title: analysis.title,
+    ...(manifest.sourceType ? { source_type: manifest.sourceType } : {}),
     tags: decoratedTags(analysis.code ? ["source", "code"] : ["source"], decorations),
     source_ids: [manifest.sourceId],
     project_ids: decorations?.projectIds ?? [],
@@ -162,6 +169,7 @@ export function buildSourcePage(
     "",
     `Source ID: \`${manifest.sourceId}\``,
     manifest.url ? `Source URL: ${manifest.url}` : `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
+    ...(manifest.sourceType ? [`Source Type: \`${manifest.sourceType}\``, ""] : [""]),
     "",
     "## Summary",
     "",
@@ -213,6 +221,7 @@ export function buildSourcePage(
       path: relativePath,
       title: analysis.title,
       kind: "source",
+      sourceType: manifest.sourceType,
       sourceIds: [manifest.sourceId],
       projectIds: decorations?.projectIds ?? [],
       nodeIds,
@@ -230,7 +239,7 @@ export function buildSourcePage(
       compiledFrom: metadata.compiledFrom,
       managedBy: metadata.managedBy
     },
-    content: matter.stringify(body, frontmatter)
+    content: matter.stringify(body, safeFrontmatter(frontmatter))
   };
 }
 
@@ -653,16 +662,16 @@ function suggestedGraphQuestions(graph: GraphArtifact): string[] {
   ]).slice(0, 6);
 }
 
-export function buildGraphReportPage(input: {
+export function buildGraphReportArtifact(input: {
   graph: GraphArtifact;
-  schemaHash: string;
-  metadata: ManagedGraphPageMetadata;
   communityPages: Pick<GraphPage, "id" | "path" | "title">[];
   benchmark?: BenchmarkArtifact | null;
-}): GraphPageRecord {
-  const pageId = "graph:report";
-  const pathValue = pagePathFor("graph_report", "report");
-  const pagesById = new Map(input.graph.pages.map((page) => [page.id, page]));
+  benchmarkStale?: boolean;
+  recentResearchSources?: Array<
+    Pick<GraphPage, "id" | "path" | "title" | "updatedAt"> & { sourceType: NonNullable<GraphPage["sourceType"]> }
+  >;
+  graphHash: string;
+}): GraphReportArtifact {
   const nodesById = new Map(input.graph.nodes.map((node) => [node.id, node]));
   const godNodes = input.graph.nodes
     .filter((node) => node.isGodNode)
@@ -672,15 +681,126 @@ export function buildGraphReportPage(input: {
     .filter((node) => (node.bridgeScore ?? 0) > 0)
     .sort((left, right) => (right.bridgeScore ?? 0) - (left.bridgeScore ?? 0))
     .slice(0, 8);
-  const surprisingEdges = crossCommunityEdges(input.graph).slice(0, 8);
-  const thinCommunities = (input.graph.communities ?? []).filter((community) => community.nodeIds.length <= 2);
-  const relatedNodeIds = uniqueStrings([...godNodes, ...bridgeNodes].map((node) => node.id));
-  const relatedPageIds = uniqueStrings([
-    ...godNodes.map((node) => node.pageId ?? ""),
-    ...bridgeNodes.map((node) => node.pageId ?? ""),
-    ...input.communityPages.map((page) => page.id)
+  const thinCommunities = (input.graph.communities ?? [])
+    .filter((community) => community.nodeIds.length <= 2)
+    .map((community) => {
+      const page = input.communityPages.find((candidate) => candidate.id === `graph:${community.id}`);
+      return {
+        id: community.id,
+        label: community.label,
+        nodeCount: community.nodeIds.length,
+        pageId: page?.id,
+        path: page?.path,
+        title: page?.title
+      };
+    });
+  const surprisingConnections = crossCommunityEdges(input.graph)
+    .slice(0, 8)
+    .map((edge) => {
+      const source = nodesById.get(edge.source);
+      const target = nodesById.get(edge.target);
+      const path = shortestGraphPath(input.graph, edge.source, edge.target);
+      const sourceCommunity = source?.communityId
+        ? input.graph.communities?.find((community) => community.id === source.communityId)
+        : undefined;
+      const targetCommunity = target?.communityId
+        ? input.graph.communities?.find((community) => community.id === target.communityId)
+        : undefined;
+      return {
+        id: edge.id,
+        sourceNodeId: edge.source,
+        sourceLabel: source?.label ?? edge.source,
+        targetNodeId: edge.target,
+        targetLabel: target?.label ?? edge.target,
+        relation: edge.relation,
+        evidenceClass: edge.evidenceClass,
+        confidence: edge.confidence,
+        pathNodeIds: path.nodeIds,
+        pathEdgeIds: path.edgeIds,
+        pathSummary: path.summary,
+        explanation: normalizeWhitespace(
+          [
+            `${source?.label ?? edge.source} links ${sourceCommunity?.label ? `from ${sourceCommunity.label}` : ""}`.trim(),
+            `to ${target?.label ?? edge.target}${targetCommunity?.label ? ` in ${targetCommunity.label}` : ""}`.trim(),
+            `through ${edge.relation} with ${edge.evidenceClass} evidence at ${edge.confidence.toFixed(2)} confidence.`
+          ].join(" ")
+        )
+      };
+    });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    graphHash: input.graphHash,
+    overview: {
+      nodes: input.graph.nodes.length,
+      edges: input.graph.edges.length,
+      pages: input.graph.pages.length,
+      communities: input.graph.communities?.length ?? 0
+    },
+    benchmark: input.benchmark
+      ? {
+          generatedAt: input.benchmark.generatedAt,
+          stale: input.benchmarkStale ?? false,
+          summary: input.benchmark.summary,
+          questionCount: input.benchmark.sampleQuestions.length
+        }
+      : undefined,
+    godNodes: godNodes.map((node) => ({
+      nodeId: node.id,
+      label: node.label,
+      pageId: node.pageId,
+      degree: node.degree,
+      bridgeScore: node.bridgeScore
+    })),
+    bridgeNodes: bridgeNodes.map((node) => ({
+      nodeId: node.id,
+      label: node.label,
+      pageId: node.pageId,
+      degree: node.degree,
+      bridgeScore: node.bridgeScore
+    })),
+    thinCommunities,
+    surprisingConnections,
+    suggestedQuestions: suggestedGraphQuestions(input.graph),
+    communityPages: input.communityPages.map((page) => ({
+      id: page.id,
+      path: page.path,
+      title: page.title
+    })),
+    recentResearchSources: (input.recentResearchSources ?? []).map((page) => ({
+      pageId: page.id,
+      path: page.path,
+      title: page.title,
+      sourceType: page.sourceType,
+      updatedAt: page.updatedAt
+    }))
+  };
+}
+
+export function buildGraphReportPage(input: {
+  graph: GraphArtifact;
+  schemaHash: string;
+  metadata: ManagedGraphPageMetadata;
+  report: GraphReportArtifact;
+}): GraphPageRecord {
+  const pageId = "graph:report";
+  const pathValue = pagePathFor("graph_report", "report");
+  const pagesById = new Map(input.graph.pages.map((page) => [page.id, page]));
+  const nodesById = new Map(input.graph.nodes.map((node) => [node.id, node]));
+  const relatedNodeIds = uniqueStrings([
+    ...input.report.godNodes.map((node) => node.nodeId),
+    ...input.report.bridgeNodes.map((node) => node.nodeId)
   ]);
-  const relatedSourceIds = uniqueStrings(relatedNodeIds.flatMap((nodeId) => nodesById.get(nodeId)?.sourceIds ?? []));
+  const relatedPageIds = uniqueStrings([
+    ...input.report.godNodes.map((node) => node.pageId ?? ""),
+    ...input.report.bridgeNodes.map((node) => node.pageId ?? ""),
+    ...input.report.communityPages.map((page) => page.id),
+    ...input.report.recentResearchSources.map((page) => page.pageId)
+  ]);
+  const relatedSourceIds = uniqueStrings([
+    ...relatedNodeIds.flatMap((nodeId) => nodesById.get(nodeId)?.sourceIds ?? []),
+    ...input.report.recentResearchSources.flatMap((page) => pagesById.get(page.pageId)?.sourceIds ?? [])
+  ]);
 
   const frontmatter = {
     page_id: pageId,
@@ -710,59 +830,82 @@ export function buildGraphReportPage(input: {
     "",
     "## Overview",
     "",
-    `- Nodes: ${input.graph.nodes.length}`,
-    `- Edges: ${input.graph.edges.length}`,
-    `- Pages: ${input.graph.pages.length}`,
-    `- Communities: ${input.graph.communities?.length ?? 0}`,
+    `- Nodes: ${input.report.overview.nodes}`,
+    `- Edges: ${input.report.overview.edges}`,
+    `- Pages: ${input.report.overview.pages}`,
+    `- Communities: ${input.report.overview.communities}`,
     "",
-    ...(input.benchmark
+    "## Benchmark Summary",
+    "",
+    ...(input.report.benchmark
       ? [
-          "## Benchmark",
-          "",
-          `- Corpus Tokens: ${input.benchmark.corpusTokens}`,
-          `- Avg Query Tokens: ${input.benchmark.avgQueryTokens}`,
-          `- Reduction Ratio: ${(input.benchmark.reductionRatio * 100).toFixed(1)}%`,
-          `- Sample Questions: ${input.benchmark.sampleQuestions.length}`,
+          `- Generated At: ${input.report.benchmark.generatedAt}`,
+          `- Status: ${input.report.benchmark.stale ? "Stale (graph changed since benchmark ran)" : "Fresh"}`,
+          `- Naive Corpus Tokens: ${input.report.benchmark.summary.naiveCorpusTokens}`,
+          `- Final Context Tokens: ${input.report.benchmark.summary.finalContextTokens}`,
+          `- Unique Nodes Considered: ${input.report.benchmark.summary.uniqueVisitedNodes}`,
+          `- Reduction Ratio: ${(input.report.benchmark.summary.reductionRatio * 100).toFixed(1)}%`,
+          `- Questions: ${input.report.benchmark.questionCount}`,
           ""
         ]
-      : []),
-    "## God Nodes",
+      : ["- No benchmark results yet.", ""]),
+    "## Top God Nodes",
     "",
-    ...(godNodes.length
-      ? godNodes.map((node) => `- ${graphNodeLink(node, pagesById)} (${nodeSummary(node)})`)
+    ...(input.report.godNodes.length
+      ? input.report.godNodes.map((node) => {
+          const graphNode = nodesById.get(node.nodeId);
+          return graphNode ? `- ${graphNodeLink(graphNode, pagesById)} (${nodeSummary(graphNode)})` : `- \`${node.nodeId}\``;
+        })
       : ["- No high-connectivity nodes detected."]),
     "",
-    "## Bridge Nodes",
+    "## Top Bridge Nodes",
     "",
-    ...(bridgeNodes.length
-      ? bridgeNodes.map((node) => `- ${graphNodeLink(node, pagesById)} (${nodeSummary(node)})`)
+    ...(input.report.bridgeNodes.length
+      ? input.report.bridgeNodes.map((node) => {
+          const graphNode = nodesById.get(node.nodeId);
+          return graphNode ? `- ${graphNodeLink(graphNode, pagesById)} (${nodeSummary(graphNode)})` : `- \`${node.nodeId}\``;
+        })
       : ["- No cross-community bridge nodes detected."]),
     "",
     "## Communities",
     "",
-    ...(input.communityPages.length
-      ? input.communityPages.map((page) => `- ${pageLink(page)}`)
+    ...(input.report.communityPages.length
+      ? input.report.communityPages.map((page) => `- ${pageLink(page)}`)
       : ["- No community summaries generated yet."]),
     "",
-    "## Thin Communities",
+    "## Thin Or Underlinked Areas",
     "",
-    ...(thinCommunities.length
-      ? thinCommunities.map((community) => `- ${community.label} (${community.nodeIds.length} node(s))`)
+    ...(input.report.thinCommunities.length
+      ? input.report.thinCommunities.map((community) =>
+          community.path
+            ? `- [[${community.path.replace(/\.md$/, "")}|${community.title ?? community.label}]] (${community.nodeCount} node(s))`
+            : `- ${community.label} (${community.nodeCount} node(s))`
+        )
       : ["- No thin communities detected."]),
     "",
-    "## Cross-Community Surprises",
+    "## Surprising Connections",
     "",
-    ...(surprisingEdges.length
-      ? surprisingEdges.map((edge) => {
-          const source = nodesById.get(edge.source);
-          const target = nodesById.get(edge.target);
-          return `- ${source ? graphNodeLink(source, pagesById) : `\`${edge.source}\``} ${edge.relation} ${target ? graphNodeLink(target, pagesById) : `\`${edge.target}\``} (${edge.evidenceClass}, ${edge.confidence.toFixed(2)})`;
+    ...(input.report.surprisingConnections.length
+      ? input.report.surprisingConnections.map((connection) => {
+          const source = nodesById.get(connection.sourceNodeId);
+          const target = nodesById.get(connection.targetNodeId);
+          const sourceLabel = source ? graphNodeLink(source, pagesById) : `\`${connection.sourceNodeId}\``;
+          const targetLabel = target ? graphNodeLink(target, pagesById) : `\`${connection.targetNodeId}\``;
+          return `- ${sourceLabel} ${connection.relation} ${targetLabel} (${connection.evidenceClass}, ${connection.confidence.toFixed(2)}). ${connection.explanation} Path: ${connection.pathSummary}.`;
         })
       : ["- No cross-community links detected."]),
     "",
-    "## Suggested Follow-Up Questions",
+    "## New Research Sources",
     "",
-    ...suggestedGraphQuestions(input.graph).map((question) => `- ${question}`),
+    ...(input.report.recentResearchSources.length
+      ? input.report.recentResearchSources.map(
+          (page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]] (\`${page.sourceType}\`, updated ${page.updatedAt})`
+        )
+      : ["- No newly captured research sources since the previous compile."]),
+    "",
+    "## Suggested Questions",
+    "",
+    ...input.report.suggestedQuestions.map((question) => `- ${question}`),
     ""
   ].join("\n");
 

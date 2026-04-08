@@ -87,9 +87,12 @@ Useful flags:
 Capture supported URLs through a normalized markdown layer before ingesting them into the vault.
 
 - arXiv abstract URLs and bare arXiv ids become durable markdown captures
+- DOI URLs and bare DOI strings normalize into article-style research captures
+- generic article URLs use a readability-style capture path with normalized research frontmatter
 - X/Twitter URLs use a graceful public capture path
 - unsupported URLs fall back to generic URL ingest instead of failing
 - optional metadata: `--author <name>` and `--contributor <name>`
+- normalized captures record fields such as `source_type`, `source_url`, `canonical_url`, `title`, `authors`, `published_at`, `updated_at`, `doi`, and `tags` when available
 
 ### `swarmvault inbox import [dir]`
 
@@ -116,8 +119,9 @@ With `--approve`, compile writes a staged review bundle into `state/approvals/` 
 Measure graph-guided context reduction against a naive full-corpus read.
 
 - writes the latest result to `state/benchmark.json`
-- updates `wiki/graph/report.md` with the current benchmark summary
+- updates `wiki/graph/report.md` and `wiki/graph/report.json` with the current benchmark summary
 - accepts repeatable `--question` inputs for vault-specific benchmarks
+- compile and repo-aware refresh runs also keep the benchmark/report artifacts up to date by default
 
 ### `swarmvault review list|show|accept|reject`
 

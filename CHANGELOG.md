@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.23
+
+- Expanded `swarmvault add` from arXiv/X capture into a broader research-aware capture surface with DOI URLs, bare DOI strings, and generic article URLs that normalize into markdown with stable research frontmatter such as `source_type`, `canonical_url`, `authors`, `published_at`, and `tags`
+- Added automatic benchmark refresh on successful compile and repo-refresh-driven compile runs, keeping `state/benchmark.json` current by default instead of requiring a separate manual benchmark step
+- Added `wiki/graph/report.json` as a machine-readable graph report companion and upgraded the markdown report plus local graph workspace with benchmark freshness, surprising-connection summaries, recent research-source surfacing, and source-type filtering
+- Expanded engine tests, packaged smoke coverage, and OSS/site docs to validate DOI/article capture, benchmark/report freshness transitions, and the richer graph-report trust surfaces
+
 ## 0.1.22
 
 - Added first-class mixed-corpus extraction artifacts under `state/extracts/`, keeping extracted markdown in `state/extracts/<sourceId>.md` and adding JSON sidecars with extractor metadata, warnings, provider/model info, and PDF page counts

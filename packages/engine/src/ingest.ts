@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readability } from "@mozilla/readability";
+import matter from "gray-matter";
 import ignore from "ignore";
 import { JSDOM } from "jsdom";
 import mime from "mime-types";
@@ -45,6 +46,10 @@ const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
 const DEFAULT_MAX_DIRECTORY_FILES = 5000;
 const BUILT_IN_REPO_IGNORES = new Set([".git", "node_modules", "dist", "build", ".next", "coverage", ".venv", "vendor", "target"]);
 
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
 type PreparedAttachment = {
   relativePath: string;
   mimeType: string;
@@ -56,6 +61,7 @@ type PreparedInput = {
   title: string;
   originType: SourceManifest["originType"];
   sourceKind: SourceManifest["sourceKind"];
+  sourceType?: SourceManifest["sourceType"];
   language?: SourceManifest["language"];
   originalPath?: string;
   repoRelativePath?: string;
@@ -226,6 +232,25 @@ function arxivIdFromInput(input: string): string | null {
   }
 }
 
+function doiFromInput(input: string): string | null {
+  const trimmed = input.trim();
+  if (/^10\.\S+\/\S+$/i.test(trimmed)) {
+    return trimmed.replace(/\s+/g, "");
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname === "doi.org" || url.hostname === "dx.doi.org") {
+      const doi = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+      return /^10\.\S+\/\S+$/i.test(doi) ? doi : null;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function isTweetUrl(input: string): boolean {
   try {
     const url = new URL(input);
@@ -235,28 +260,34 @@ function isTweetUrl(input: string): boolean {
   }
 }
 
-function markdownFrontmatter(value: Record<string, string | undefined>): string[] {
-  const lines = ["---"];
-  for (const [key, rawValue] of Object.entries(value)) {
-    if (!rawValue) {
-      continue;
-    }
-    lines.push(`${key}: "${rawValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
-  }
-  lines.push("---", "");
-  return lines;
+function markdownFrontmatter(value: Record<string, string | string[] | undefined>): string[] {
+  const normalized = Object.fromEntries(
+    Object.entries(value).filter(([, rawValue]) =>
+      Array.isArray(rawValue) ? rawValue.length > 0 : Boolean(typeof rawValue === "string" ? rawValue.trim() : rawValue)
+    )
+  );
+  return matter.stringify("", normalized).trimEnd().split("\n").concat([""]);
 }
 
-function prepareCapturedMarkdownInput(input: { title: string; url: string; markdown: string; logDetails?: string[] }): PreparedInput {
+function prepareCapturedMarkdownInput(input: {
+  title: string;
+  url: string;
+  markdown: string;
+  sourceType: NonNullable<SourceManifest["sourceType"]>;
+  attachments?: PreparedAttachment[];
+  logDetails?: string[];
+}): PreparedInput {
   return {
     title: input.title,
     originType: "url",
     sourceKind: "markdown",
+    sourceType: input.sourceType,
     url: normalizeOriginUrl(input.url),
     mimeType: "text/markdown",
     storedExtension: ".md",
     payloadBytes: Buffer.from(input.markdown, "utf8"),
     extractedText: input.markdown,
+    attachments: input.attachments,
     logDetails: input.logDetails
   };
 }
@@ -267,6 +298,18 @@ async function fetchText(url: string): Promise<string> {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
   }
   return response.text();
+}
+
+async function fetchResolvedText(url: string): Promise<{ text: string; finalUrl: string; contentType: string }> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+  }
+  return {
+    text: await response.text(),
+    finalUrl: normalizeOriginUrl(response.url || url),
+    contentType: response.headers.get("content-type")?.split(";")[0]?.trim() || "text/html"
+  };
 }
 
 function domTextFromHtml(html: string, baseUrl: string): string {
@@ -295,11 +338,19 @@ async function captureArxivMarkdown(
     .filter((value): value is string => Boolean(value));
   const authorsText = authors.join(", ") || stripLeadingLabel(document.querySelector(".authors")?.textContent?.trim() ?? "", "Authors:");
   const abstract = stripLeadingLabel(document.querySelector("blockquote.abstract")?.textContent?.trim() ?? "", "Abstract:");
+  const categories = [...document.querySelectorAll(".subheader .primary-subject, .metatable .tablecell.subjects")]
+    .flatMap((node) => (node.textContent ?? "").split(/;/g))
+    .map((value) => value.trim())
+    .filter(Boolean);
   const capturedAt = new Date().toISOString();
   const markdown = [
     ...markdownFrontmatter({
-      capture_type: "arxiv",
+      source_type: "arxiv",
       source_url: normalizedUrl,
+      canonical_url: normalizedUrl,
+      title,
+      authors,
+      tags: uniqueStrings(categories),
       arxiv_id: arxivId,
       author: options.author,
       contributor: options.contributor,
@@ -346,8 +397,11 @@ async function captureTweetMarkdown(
   const capturedAt = new Date().toISOString();
   const markdown = [
     ...markdownFrontmatter({
-      capture_type: "tweet",
+      source_type: "tweet",
       source_url: normalizedUrl,
+      canonical_url: canonicalUrl,
+      title,
+      authors: postAuthor ? [postAuthor] : undefined,
       author: options.author,
       contributor: options.contributor,
       captured_at: capturedAt
@@ -369,6 +423,128 @@ async function captureTweetMarkdown(
   ].join("\n");
 
   return { title, normalizedUrl, markdown };
+}
+
+function firstMetaContent(document: Document, selectors: string[]): string | undefined {
+  for (const selector of selectors) {
+    const value = document.querySelector(selector)?.getAttribute("content")?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function metaContents(document: Document, selectors: string[]): string[] {
+  return uniqueStrings(
+    selectors.flatMap((selector) =>
+      [...document.querySelectorAll(selector)].map((node) => node.getAttribute("content")?.trim() ?? "").filter(Boolean)
+    )
+  );
+}
+
+function splitKeywords(value: string | undefined): string[] {
+  return uniqueStrings(
+    (value ?? "")
+      .split(/[;,]/g)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+}
+
+async function captureArticleMarkdown(
+  rootDir: string,
+  input: string,
+  options: AddOptions,
+  extra: {
+    sourceType: "article" | "doi";
+    sourceUrl?: string;
+    doi?: string;
+  } = { sourceType: "article" }
+): Promise<{ title: string; normalizedUrl: string; markdown: string; attachments?: PreparedAttachment[] }> {
+  const resolved = await fetchResolvedText(input);
+  if (!resolved.contentType.includes("html")) {
+    throw new Error(`Unsupported article content type: ${resolved.contentType}`);
+  }
+
+  const dom = new JSDOM(resolved.text, { url: resolved.finalUrl });
+  const document = dom.window.document;
+  const canonicalHref = document.querySelector('link[rel="canonical"]')?.getAttribute("href")?.trim();
+  const canonicalUrl = canonicalHref ? normalizeOriginUrl(new URL(canonicalHref, resolved.finalUrl).toString()) : resolved.finalUrl;
+  const title =
+    firstMetaContent(document, ['meta[name="citation_title"]', 'meta[property="og:title"]', 'meta[name="twitter:title"]']) ??
+    (document.title.trim() || canonicalUrl);
+  const authors = uniqueStrings([
+    ...metaContents(document, ['meta[name="citation_author"]']),
+    ...metaContents(document, ['meta[name="author"]', 'meta[property="article:author"]'])
+  ]);
+  const publishedAt = firstMetaContent(document, [
+    'meta[name="citation_publication_date"]',
+    'meta[name="citation_online_date"]',
+    'meta[property="article:published_time"]',
+    'meta[name="pubdate"]'
+  ]);
+  const updatedAt = firstMetaContent(document, ['meta[property="article:modified_time"]', 'meta[name="lastmod"]']);
+  const tags = uniqueStrings([
+    ...metaContents(document, ['meta[property="article:tag"]']),
+    ...splitKeywords(firstMetaContent(document, ['meta[name="keywords"]']))
+  ]);
+  const inferredDoi =
+    extra.doi ??
+    firstMetaContent(document, ['meta[name="citation_doi"]', 'meta[name="dc.identifier"]'])?.replace(/^doi:\s*/i, "") ??
+    undefined;
+  const normalizedOptions = normalizeIngestOptions(options);
+  const prepared = await prepareUrlInput(rootDir, canonicalUrl, normalizedOptions);
+  if (prepared.sourceKind !== "markdown" && prepared.sourceKind !== "text") {
+    throw new Error(`Unsupported prepared article kind: ${prepared.sourceKind}`);
+  }
+  const body = prepared.extractedText ?? prepared.payloadBytes.toString("utf8");
+  const capturedAt = new Date().toISOString();
+  const markdown = [
+    ...markdownFrontmatter({
+      source_type: extra.sourceType,
+      source_url: extra.sourceUrl ?? input,
+      canonical_url: canonicalUrl,
+      title,
+      authors,
+      published_at: publishedAt,
+      updated_at: updatedAt,
+      doi: inferredDoi,
+      tags,
+      author: options.author,
+      contributor: options.contributor,
+      captured_at: capturedAt
+    }),
+    body.trim(),
+    "",
+    "## Source",
+    "",
+    `- URL: ${canonicalUrl}`,
+    ...(extra.sourceType === "doi" && inferredDoi ? [`- DOI: ${inferredDoi}`] : []),
+    ""
+  ].join("\n");
+  return {
+    title,
+    normalizedUrl: canonicalUrl,
+    markdown,
+    attachments: prepared.attachments
+  };
+}
+
+async function captureDoiMarkdown(
+  rootDir: string,
+  input: string,
+  options: AddOptions
+): Promise<{ title: string; normalizedUrl: string; markdown: string; attachments?: PreparedAttachment[] }> {
+  const doi = doiFromInput(input);
+  if (!doi) {
+    throw new Error(`Could not determine a DOI from ${input}`);
+  }
+  return captureArticleMarkdown(rootDir, `https://doi.org/${encodeURIComponent(doi)}`, options, {
+    sourceType: "doi",
+    sourceUrl: input,
+    doi
+  });
 }
 
 function manifestMatchesOrigin(manifest: SourceManifest, prepared: PreparedInput): boolean {
@@ -803,6 +979,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     existingByOrigin.extractionHash === extractionHash &&
     existingByOrigin.title === prepared.title &&
     existingByOrigin.sourceKind === prepared.sourceKind &&
+    existingByOrigin.sourceType === prepared.sourceType &&
     existingByOrigin.language === prepared.language &&
     existingByOrigin.mimeType === prepared.mimeType &&
     existingByOrigin.repoRelativePath === prepared.repoRelativePath
@@ -857,6 +1034,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     title: prepared.title,
     originType: prepared.originType,
     sourceKind: prepared.sourceKind,
+    sourceType: prepared.sourceType,
     language: prepared.language,
     originalPath: prepared.originalPath,
     repoRelativePath: prepared.repoRelativePath,
@@ -929,6 +1107,7 @@ function preparedMatchesManifest(manifest: SourceManifest, prepared: PreparedInp
     manifest.extractionHash === (prepared.extractionHash ?? buildExtractionHash(prepared.extractedText, prepared.extractionArtifact)) &&
     manifest.title === prepared.title &&
     manifest.sourceKind === prepared.sourceKind &&
+    manifest.sourceType === prepared.sourceType &&
     manifest.language === prepared.language &&
     manifest.mimeType === prepared.mimeType &&
     manifest.repoRelativePath === prepared.repoRelativePath
@@ -1262,7 +1441,8 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     throw new Error(`Failed to fetch ${input}: ${response.status} ${response.statusText}`);
   }
 
-  const inputUrl = new URL(input);
+  const finalUrl = normalizeOriginUrl(response.url || input);
+  const inputUrl = new URL(finalUrl);
   const originalPayloadBytes = Buffer.from(await response.arrayBuffer());
   let payloadBytes = originalPayloadBytes;
   let mimeType = resolveUrlMimeType(input, response);
@@ -1278,14 +1458,14 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
 
   if (sourceKind === "html" || mimeType.startsWith("text/html")) {
     const html = originalPayloadBytes.toString("utf8");
-    const initialConversion = await convertHtmlToMarkdown(html, input);
+    const initialConversion = await convertHtmlToMarkdown(html, finalUrl);
     title = initialConversion.title;
 
     let localizedHtml = html;
     let localAssetReplacements: Map<string, string> | undefined;
     if (options.includeAssets) {
       const { attachments: remoteAttachments, skippedCount } = await collectRemoteImageAttachments(
-        extractHtmlImageReferences(html, input),
+        extractHtmlImageReferences(html, finalUrl),
         options
       );
       if (remoteAttachments.length) {
@@ -1295,7 +1475,7 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
         localAssetReplacements = new Map(
           remoteAttachments.map((attachment) => [attachment.originalPath ?? "", `../assets/${sourceId}/${attachment.relativePath}`])
         );
-        localizedHtml = rewriteHtmlImageReferences(html, input, localAssetReplacements);
+        localizedHtml = rewriteHtmlImageReferences(html, finalUrl, localAssetReplacements);
         logDetails.push(`remote_assets=${remoteAttachments.length}`);
       }
       if (skippedCount) {
@@ -1304,12 +1484,12 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     }
 
     const converted =
-      localizedHtml === html && !attachments?.length ? initialConversion : await convertHtmlToMarkdown(localizedHtml, input);
+      localizedHtml === html && !attachments?.length ? initialConversion : await convertHtmlToMarkdown(localizedHtml, finalUrl);
     extractedText = converted.markdown;
     extractionArtifact = createHtmlReadabilityExtractionArtifact("markdown", "text/markdown");
     if (localAssetReplacements?.size) {
       const absoluteLocalAssetReplacements = new Map(
-        [...localAssetReplacements.values()].map((replacement) => [new URL(replacement, input).toString(), replacement])
+        [...localAssetReplacements.values()].map((replacement) => [new URL(replacement, finalUrl).toString(), replacement])
       );
       extractedText = rewriteMarkdownImageTargets(extractedText, absoluteLocalAssetReplacements);
     }
@@ -1327,7 +1507,7 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
 
       if (sourceKind === "markdown" && options.includeAssets) {
         const { attachments: remoteAttachments, skippedCount } = await collectRemoteImageAttachments(
-          extractMarkdownImageReferences(extractedText, input),
+          extractMarkdownImageReferences(extractedText, finalUrl),
           options
         );
         if (remoteAttachments.length) {
@@ -1337,7 +1517,7 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
           const replacements = new Map(
             remoteAttachments.map((attachment) => [attachment.originalPath ?? "", `../assets/${sourceId}/${attachment.relativePath}`])
           );
-          extractedText = rewriteMarkdownImageReferences(extractedText, input, replacements);
+          extractedText = rewriteMarkdownImageReferences(extractedText, finalUrl, replacements);
           payloadBytes = Buffer.from(extractedText, "utf8");
           logDetails.push(`remote_assets=${remoteAttachments.length}`);
         }
@@ -1366,7 +1546,7 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     originType: "url",
     sourceKind,
     language,
-    url: input,
+    url: finalUrl,
     mimeType,
     storedExtension,
     payloadBytes,
@@ -1505,8 +1685,8 @@ export async function ingestInput(rootDir: string, input: string, options?: Inge
 
 export async function addInput(rootDir: string, input: string, options: AddOptions = {}): Promise<AddResult> {
   const { paths } = await initWorkspace(rootDir);
-  if (!isHttpUrl(input) && !arxivIdFromInput(input)) {
-    throw new Error("`swarmvault add` only supports URLs and bare arXiv ids in the current release.");
+  if (!isHttpUrl(input) && !arxivIdFromInput(input) && !doiFromInput(input)) {
+    throw new Error("`swarmvault add` only supports URLs, bare arXiv ids, and bare DOI strings in the current release.");
   }
 
   let prepared: PreparedInput | null = null;
@@ -1521,9 +1701,22 @@ export async function addInput(rootDir: string, input: string, options: AddOptio
         title: captured.title,
         url: captured.normalizedUrl,
         markdown: captured.markdown,
+        sourceType: "arxiv",
         logDetails: ["capture_type=arxiv"]
       });
       captureType = "arxiv";
+      normalizedUrl = captured.normalizedUrl;
+    } else if (doiFromInput(input)) {
+      const captured = await captureDoiMarkdown(rootDir, input, options);
+      prepared = prepareCapturedMarkdownInput({
+        title: captured.title,
+        url: captured.normalizedUrl,
+        markdown: captured.markdown,
+        sourceType: "doi",
+        attachments: captured.attachments,
+        logDetails: ["capture_type=doi"]
+      });
+      captureType = "doi";
       normalizedUrl = captured.normalizedUrl;
     } else if (isTweetUrl(input)) {
       const captured = await captureTweetMarkdown(input, options);
@@ -1531,9 +1724,25 @@ export async function addInput(rootDir: string, input: string, options: AddOptio
         title: captured.title,
         url: captured.normalizedUrl,
         markdown: captured.markdown,
+        sourceType: "tweet",
         logDetails: ["capture_type=tweet"]
       });
       captureType = "tweet";
+      normalizedUrl = captured.normalizedUrl;
+    } else if (isHttpUrl(input)) {
+      const captured = await captureArticleMarkdown(rootDir, input, options, {
+        sourceType: "article",
+        sourceUrl: input
+      });
+      prepared = prepareCapturedMarkdownInput({
+        title: captured.title,
+        url: captured.normalizedUrl,
+        markdown: captured.markdown,
+        sourceType: "article",
+        attachments: captured.attachments,
+        logDetails: ["capture_type=article"]
+      });
+      captureType = "article";
       normalizedUrl = captured.normalizedUrl;
     }
   } catch {
@@ -1541,7 +1750,11 @@ export async function addInput(rootDir: string, input: string, options: AddOptio
   }
 
   if (!prepared) {
-    normalizedUrl = arxivIdFromInput(input) ? `https://arxiv.org/abs/${arxivIdFromInput(input)}` : normalizeOriginUrl(input);
+    normalizedUrl = arxivIdFromInput(input)
+      ? `https://arxiv.org/abs/${arxivIdFromInput(input)}`
+      : doiFromInput(input)
+        ? `https://doi.org/${encodeURIComponent(doiFromInput(input) ?? "")}`
+        : normalizeOriginUrl(input);
     return {
       captureType: "url",
       manifest: await ingestInput(rootDir, normalizedUrl, options),

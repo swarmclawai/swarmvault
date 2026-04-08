@@ -1,5 +1,5 @@
-import type { BenchmarkArtifact, BenchmarkQuestionResult, GraphArtifact, GraphQueryResult } from "./types.js";
-import { normalizeWhitespace } from "./utils.js";
+import type { BenchmarkArtifact, BenchmarkQuestionResult, GraphArtifact, GraphPage, GraphQueryResult } from "./types.js";
+import { normalizeWhitespace, sha256, uniqueBy } from "./utils.js";
 
 const CHARS_PER_TOKEN = 4;
 
@@ -10,6 +10,8 @@ export const DEFAULT_BENCHMARK_QUESTIONS = [
   "Where are the biggest knowledge gaps?",
   "What evidence should I read first?"
 ];
+
+const RESEARCH_BENCHMARK_QUESTION = "Which research sources should I read first, and why?";
 
 function nodeMap(graph: GraphArtifact) {
   return new Map(graph.nodes.map((node) => [node.id, node]));
@@ -72,8 +74,78 @@ export function benchmarkQueryTokens(
     queryTokens,
     reduction: 0,
     visitedNodeIds: queryResult.visitedNodeIds,
+    visitedEdgeIds: queryResult.visitedEdgeIds,
     pageIds: queryResult.pageIds
   };
+}
+
+export function graphHash(graph: GraphArtifact): string {
+  const hashedPages = graph.pages.filter((page) => page.kind !== "graph_report" && page.kind !== "community_summary");
+  const normalized = JSON.stringify(
+    {
+      nodes: [...graph.nodes]
+        .map((node) => ({
+          id: node.id,
+          type: node.type,
+          label: node.label,
+          pageId: node.pageId ?? null,
+          communityId: node.communityId ?? null,
+          degree: node.degree ?? null,
+          bridgeScore: node.bridgeScore ?? null,
+          isGodNode: node.isGodNode ?? false,
+          sourceIds: [...node.sourceIds].sort(),
+          projectIds: [...node.projectIds].sort()
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      edges: [...graph.edges]
+        .map((edge) => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          relation: edge.relation,
+          status: edge.status,
+          evidenceClass: edge.evidenceClass,
+          confidence: edge.confidence,
+          provenance: [...edge.provenance].sort()
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      pages: [...hashedPages]
+        .map((page) => ({
+          id: page.id,
+          path: page.path,
+          kind: page.kind,
+          status: page.status,
+          sourceType: page.sourceType ?? null,
+          sourceIds: [...page.sourceIds].sort(),
+          projectIds: [...page.projectIds].sort(),
+          nodeIds: [...page.nodeIds].sort()
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      communities: [...(graph.communities ?? [])]
+        .map((community) => ({
+          id: community.id,
+          label: community.label,
+          nodeIds: [...community.nodeIds].sort()
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id))
+    },
+    null,
+    0
+  );
+  return sha256(normalized);
+}
+
+function hasResearchSources(pages: GraphPage[]): boolean {
+  return pages.some((page) => page.kind === "source" && Boolean(page.sourceType) && page.sourceType !== "url");
+}
+
+export function defaultBenchmarkQuestionsForGraph(graph: GraphArtifact, maxQuestions = 3): string[] {
+  const normalizedLimit = Math.max(1, Math.min(maxQuestions, DEFAULT_BENCHMARK_QUESTIONS.length));
+  const questions = [...DEFAULT_BENCHMARK_QUESTIONS];
+  if (hasResearchSources(graph.pages)) {
+    questions.unshift(RESEARCH_BENCHMARK_QUESTION);
+  }
+  return uniqueBy(questions, (item) => item).slice(0, normalizedLimit);
 }
 
 export function buildBenchmarkArtifact(input: {
@@ -93,9 +165,19 @@ export function buildBenchmarkArtifact(input: {
     ? Math.max(1, Math.round(perQuestion.reduce((total, entry) => total + entry.queryTokens, 0) / perQuestion.length))
     : 0;
   const reductionRatio = avgQueryTokens ? Number(Math.max(0, 1 - avgQueryTokens / Math.max(1, corpusTokens)).toFixed(3)) : 0;
+  const uniqueVisitedNodes = new Set(perQuestion.flatMap((entry) => entry.visitedNodeIds)).size;
+  const summary = {
+    questionCount: input.questions.length,
+    uniqueVisitedNodes,
+    finalContextTokens: avgQueryTokens,
+    naiveCorpusTokens: corpusTokens,
+    avgReduction: reductionRatio,
+    reductionRatio
+  } satisfies BenchmarkArtifact["summary"];
 
   return {
     generatedAt: new Date().toISOString(),
+    graphHash: graphHash(input.graph),
     corpusWords: input.corpusWords,
     corpusTokens,
     nodes: input.graph.nodes.length,
@@ -103,6 +185,8 @@ export function buildBenchmarkArtifact(input: {
     avgQueryTokens,
     reductionRatio,
     sampleQuestions: input.questions,
-    perQuestion
+    perQuestion,
+    questionResults: perQuestion,
+    summary
   };
 }

@@ -157,14 +157,28 @@ export async function startGraphServer(rootDir: string, port?: number): Promise<
       const kind = url.searchParams.get("kind") ?? "all";
       const status = url.searchParams.get("status") ?? "all";
       const project = url.searchParams.get("project") ?? "all";
+      const sourceType = url.searchParams.get("sourceType") ?? "all";
       const results = searchPages(paths.searchDbPath, query, {
         limit: Number.isFinite(limit) ? limit : 10,
         kind,
         status,
-        project
+        project,
+        sourceType
       });
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(results));
+      return;
+    }
+
+    if (url.pathname === "/api/graph-report") {
+      const reportPath = path.join(paths.wikiDir, "graph", "report.json");
+      if (!(await fileExists(reportPath))) {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "Graph report artifact not found. Run `swarmvault compile` first." }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(await fs.readFile(reportPath, "utf8"));
       return;
     }
 
@@ -313,6 +327,7 @@ export async function exportGraphHtml(rootDir: string, outputPath: string): Prom
             title: loaded.title,
             kind: page.kind,
             status: page.status,
+            sourceType: page.sourceType,
             projectIds: page.projectIds,
             content: loaded.content,
             assets: await Promise.all(
@@ -338,7 +353,8 @@ export async function exportGraphHtml(rootDir: string, outputPath: string): Prom
 
   const script = await fs.readFile(scriptPath, "utf8");
   const style = stylePath && (await fileExists(stylePath)) ? await fs.readFile(stylePath, "utf8") : "";
-  const embeddedData = JSON.stringify({ graph, pages: pages.filter(Boolean) }, null, 2).replace(/</g, "\\u003c");
+  const report = await readJsonFile(path.join(paths.wikiDir, "graph", "report.json"));
+  const embeddedData = JSON.stringify({ graph, pages: pages.filter(Boolean), report }, null, 2).replace(/</g, "\\u003c");
   const html = [
     "<!doctype html>",
     '<html lang="en">',

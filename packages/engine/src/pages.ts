@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import type { GraphPage, OutputAsset, OutputFormat, OutputOrigin, PageKind, PageManager, PageStatus } from "./types.js";
+import type { GraphPage, OutputAsset, OutputFormat, OutputOrigin, PageKind, PageManager, PageStatus, SourceCaptureType } from "./types.js";
 import { fileExists, listFilesRecursive, sha256, slugify, toPosix } from "./utils.js";
 
 export interface StoredPage {
@@ -34,6 +34,10 @@ export function normalizePageStatus(value: unknown, fallback: PageStatus = "acti
 
 export function normalizePageManager(value: unknown, fallback: PageManager = "system"): PageManager {
   return value === "human" || value === "system" ? value : fallback;
+}
+
+function normalizeSourceType(value: unknown): SourceCaptureType | undefined {
+  return value === "arxiv" || value === "doi" || value === "tweet" || value === "article" || value === "url" ? value : undefined;
 }
 
 function normalizeOutputFormat(value: unknown, fallback: OutputFormat = "markdown"): OutputFormat {
@@ -181,6 +185,7 @@ export function parseStoredPage(
     path: relativePath,
     title,
     kind,
+    sourceType: normalizeSourceType(parsed.data.source_type),
     sourceIds,
     projectIds,
     nodeIds,

@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import type { GraphPage, PageKind, PageStatus, SearchResult } from "./types.js";
+import type { GraphPage, PageKind, PageStatus, SearchResult, SourceCaptureType } from "./types.js";
 import { ensureDir } from "./utils.js";
 
 export interface SearchPageFilters {
   kind?: string;
   status?: string;
   project?: string;
+  sourceType?: string;
 }
 
 export interface SearchQueryOptions extends SearchPageFilters {
@@ -51,6 +52,10 @@ function normalizeStatus(value: unknown): PageStatus | undefined {
   return value === "draft" || value === "candidate" || value === "active" || value === "archived" ? value : undefined;
 }
 
+function normalizeSourceType(value: unknown): SourceCaptureType | undefined {
+  return value === "arxiv" || value === "doi" || value === "tweet" || value === "article" || value === "url" ? value : undefined;
+}
+
 export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wikiDir: string): Promise<void> {
   await ensureDir(path.dirname(dbPath));
   const DatabaseSync = getDatabaseSync();
@@ -66,6 +71,7 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
       body TEXT NOT NULL,
       kind TEXT NOT NULL,
       status TEXT NOT NULL,
+      source_type TEXT NOT NULL,
       project_ids TEXT NOT NULL,
       project_key TEXT NOT NULL
     );
@@ -80,7 +86,7 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
   `);
 
   const insertPage = db.prepare(
-    "INSERT INTO pages (id, path, title, body, kind, status, project_ids, project_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO pages (id, path, title, body, kind, status, source_type, project_ids, project_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   for (const page of pages) {
@@ -94,6 +100,7 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
       parsed.content,
       page.kind,
       page.status,
+      typeof parsed.data.source_type === "string" ? parsed.data.source_type : "",
       JSON.stringify(page.projectIds),
       page.projectIds.map((projectId) => `|${projectId}|`).join("")
     );
@@ -130,6 +137,10 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
       params.push(`%|${options.project}|%`);
     }
   }
+  if (options.sourceType && options.sourceType !== "all") {
+    clauses.push("pages.source_type = ?");
+    params.push(options.sourceType);
+  }
 
   const statement = db.prepare(`
     SELECT
@@ -138,6 +149,7 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
       pages.title AS title,
       pages.kind AS kind,
       pages.status AS status,
+      pages.source_type AS sourceType,
       pages.project_ids AS projectIds,
       snippet(page_search, 1, '[', ']', '...', 16) AS snippet,
       bm25(page_search) AS rank
@@ -165,6 +177,7 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
     title: String(row.title ?? ""),
     kind: normalizeKind(row.kind),
     status: normalizeStatus(row.status),
+    sourceType: normalizeSourceType(row.sourceType),
     snippet: String(row.snippet ?? ""),
     rank: Number(row.rank ?? 0)
   }));
