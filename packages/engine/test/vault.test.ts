@@ -1725,4 +1725,29 @@ describe("swarmvault workflow", () => {
     expect(Array.isArray(parsed.data.tags)).toBe(true);
     expect(parsed.data.tags).toContain("source");
   });
+
+  it("propagates tags from analysis onto source nodes in graph.json", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(
+      path.join(rootDir, "graph-tags-test.md"),
+      [
+        "# Distributed Systems Overview",
+        "",
+        "This document covers consensus algorithms, fault tolerance, and distributed ledgers.",
+        "Blockchain and peer-to-peer networks rely on cryptographic proofs for trust."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manifest = await ingestInput(rootDir, "graph-tags-test.md");
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+
+    const sourceNode = graph.nodes.find((node) => node.type === "source" && node.sourceIds.includes(manifest.sourceId));
+    expect(sourceNode).toBeDefined();
+    expect(sourceNode).toHaveProperty("tags");
+    expect(Array.isArray(sourceNode?.tags)).toBe(true);
+  });
 });

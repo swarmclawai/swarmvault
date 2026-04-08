@@ -1114,18 +1114,23 @@ function buildGraph(
 ): GraphArtifact {
   const manifestsById = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
   const goPackageSymbolLookups = buildGoPackageSymbolLookups(analyses, manifestsById);
-  const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
-    id: `source:${manifest.sourceId}`,
-    type: "source",
-    label: manifest.title,
-    pageId: `source:${manifest.sourceId}`,
-    freshness: "fresh",
-    confidence: 1,
-    sourceIds: [manifest.sourceId],
-    projectIds: scopedProjectIdsFromSources([manifest.sourceId], sourceProjects),
-    sourceClass: manifest.sourceClass,
-    language: manifest.language
-  }));
+  const analysesBySourceId = new Map(analyses.map((analysis) => [analysis.sourceId, analysis]));
+  const sourceNodes: GraphNode[] = manifests.map((manifest) => {
+    const analysis = analysesBySourceId.get(manifest.sourceId);
+    return {
+      id: `source:${manifest.sourceId}`,
+      type: "source",
+      label: manifest.title,
+      pageId: `source:${manifest.sourceId}`,
+      freshness: "fresh",
+      confidence: 1,
+      sourceIds: [manifest.sourceId],
+      projectIds: scopedProjectIdsFromSources([manifest.sourceId], sourceProjects),
+      sourceClass: manifest.sourceClass,
+      language: manifest.language,
+      tags: analysis?.tags ?? []
+    };
+  });
 
   const conceptMap = new Map<string, GraphNode>();
   const entityMap = new Map<string, GraphNode>();
@@ -1142,8 +1147,6 @@ function buildGraph(
     edgesById.add(edge.id);
     edges.push(edge);
   };
-
-  const analysesBySourceId = new Map(analyses.map((analysis) => [analysis.sourceId, analysis]));
 
   for (const analysis of analyses) {
     for (const concept of analysis.concepts) {

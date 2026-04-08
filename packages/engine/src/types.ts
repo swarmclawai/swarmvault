@@ -449,6 +449,7 @@ export interface GraphNode {
   degree?: number;
   bridgeScore?: number;
   isGodNode?: boolean;
+  tags?: string[];
 }
 
 export interface GraphEdge {
