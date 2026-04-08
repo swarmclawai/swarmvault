@@ -174,9 +174,10 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `queryVault(rootDir, { question, save, format, review })` answers against the compiled vault using the same schema layer and saves by default
 - `exploreVault(rootDir, { question, steps, format, review })` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
-- `queryGraphVault(rootDir, question, { traversal, budget })` runs deterministic local graph search without a model provider
+- `queryGraphVault(rootDir, question, { traversal, budget })` runs deterministic local graph search without a model provider and includes matching group patterns when relevant
 - `pathGraphVault(rootDir, from, to)` returns the shortest graph path between two targets
-- `explainGraphVault(rootDir, target)` returns node, community, neighbor, and provenance details
+- `explainGraphVault(rootDir, target)` returns node, community, neighbor, provenance, and group-pattern details
+- `listGraphHyperedges(rootDir, target?, limit?)` returns graph hyperedges globally or for a specific node/page target
 - `listGodNodes(rootDir, limit)` returns the most connected bridge-heavy graph nodes
 - project-aware compile also builds `wiki/projects/index.md` plus `wiki/projects/<project>/index.md` rollups without duplicating page trees
 - human-authored insight pages in `wiki/insights/` are indexed into search and available to query without being rewritten by compile
@@ -208,7 +209,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `exportGraphHtml(rootDir, outputPath)` exports the graph workspace as a standalone HTML file
 - `exportGraphFormat(rootDir, "svg" | "graphml" | "cypher", outputPath)` exports the graph into interoperable file formats
 
-The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, ingestion, compile, lint, and graph-native read operations such as graph query, node explain, neighbor lookup, shortest path, and god-node listing, along with resources for config, graph, manifests, schema, page content, and session artifacts.
+The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, ingestion, compile, lint, graph report reads, hyperedge reads, and graph-native read operations such as graph query, node explain, neighbor lookup, shortest path, and god-node listing, along with resources for config, graph, manifests, schema, page content, and session artifacts.
 
 ## Artifacts
 
@@ -230,7 +231,7 @@ Running the engine produces a local workspace with these main areas:
 - `state/analyses/`: model analysis output
 - `state/code-index.json`: repo-aware code module aliases and local resolution data
 - `state/benchmark.json`: latest benchmark/trust summary for the current vault
-- `state/graph.json`: compiled graph
+- `state/graph.json`: compiled graph, including semantic-similarity edges and hyperedge-style group patterns
 - `state/search.sqlite`: full-text index
 - `state/sessions/`: canonical session artifacts
 - `state/approvals/`: staged review bundles from `compileVault({ approve: true })`
@@ -242,7 +243,7 @@ Saved outputs are indexed immediately into the graph page registry and search in
 Code sources also emit module, symbol, and parser-backed rationale nodes into `state/graph.json`, so local imports, exports, inheritance, same-module call edges, and rationale links are queryable through the same viewer and search pipeline.
 Ingest, inbox import, compile, query, lint, review, and candidate operations also append human-readable entries to `wiki/log.md`.
 PDF sources now go through a local text-extraction pass before analysis, and image sources use the configured `visionProvider` for structured OCR/diagram extraction when a real multimodal provider is available. When image extraction is unavailable, SwarmVault records an explicit warning in the extraction sidecar and carries that warning forward into analysis instead of silently treating the source as empty.
-Compile and repo-refresh runs also keep benchmark artifacts current by default, so graph report consumers can show freshness and stale-state without requiring a separate benchmark command first.
+Compile and repo-refresh runs also keep benchmark artifacts current by default, so graph report consumers can show freshness and stale-state without requiring a separate benchmark command first. The graph report now also carries deterministic “why this is surprising” explanations plus group-pattern sections built from hyperedges.
 
 ## Notes
 

@@ -15,7 +15,8 @@ import { buildCodeIndex, enrichResolvedCodeImports, modulePageTitle } from "./co
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { runDeepLint } from "./deep-lint.js";
-import { explainGraphTarget, queryGraph, shortestGraphPath, topGodNodes } from "./graph-tools.js";
+import { enrichGraph } from "./graph-enrichment.js";
+import { explainGraphTarget, listHyperedges, queryGraph, shortestGraphPath, topGodNodes } from "./graph-tools.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
 import { recordSession } from "./logs.js";
 import {
@@ -74,6 +75,7 @@ import type {
   GraphArtifact,
   GraphEdge,
   GraphExplainResult,
+  GraphHyperedge,
   GraphNode,
   GraphPage,
   GraphPathResult,
@@ -1358,12 +1360,25 @@ function buildGraph(
     ...conceptMap.values(),
     ...entityMap.values()
   ];
-  const metrics = deriveGraphMetrics(graphNodes, edges);
+  const enriched = enrichGraph(
+    {
+      generatedAt: new Date().toISOString(),
+      nodes: graphNodes,
+      edges,
+      communities: [],
+      sources: manifests,
+      pages
+    },
+    manifests,
+    analyses
+  );
+  const metrics = deriveGraphMetrics(graphNodes, enriched.edges);
 
   return {
     generatedAt: new Date().toISOString(),
     nodes: metrics.nodes,
-    edges,
+    edges: enriched.edges,
+    hyperedges: enriched.hyperedges,
     communities: metrics.communities,
     sources: manifests,
     pages
@@ -2453,6 +2468,7 @@ async function stageOutputApprovalBundle(
     generatedAt: new Date().toISOString(),
     nodes: previousGraph?.nodes ?? [],
     edges: previousGraph?.edges ?? [],
+    hyperedges: previousGraph?.hyperedges ?? [],
     sources: previousGraph?.sources ?? [],
     pages: nextPages
   };
@@ -2802,6 +2818,7 @@ export async function acceptApproval(rootDir: string, approvalId: string, target
     generatedAt: new Date().toISOString(),
     nodes: currentGraph?.nodes ?? bundleGraph?.nodes ?? [],
     edges: currentGraph?.edges ?? bundleGraph?.edges ?? [],
+    hyperedges: currentGraph?.hyperedges ?? bundleGraph?.hyperedges ?? [],
     sources: currentGraph?.sources ?? bundleGraph?.sources ?? [],
     pages: sortGraphPages(nextPages)
   };
@@ -2914,6 +2931,7 @@ export async function promoteCandidate(rootDir: string, target: string): Promise
     generatedAt: nextUpdatedAt,
     nodes: graph?.nodes ?? [],
     edges: graph?.edges ?? [],
+    hyperedges: graph?.hyperedges ?? [],
     sources: graph?.sources ?? [],
     pages: nextPages
   };
@@ -2959,6 +2977,7 @@ export async function archiveCandidate(rootDir: string, target: string): Promise
     generatedAt: new Date().toISOString(),
     nodes: graph?.nodes ?? [],
     edges: graph?.edges ?? [],
+    hyperedges: graph?.hyperedges ?? [],
     sources: graph?.sources ?? [],
     pages: nextPages
   };
@@ -3876,6 +3895,16 @@ export async function pathGraphVault(rootDir: string, from: string, to: string):
 export async function explainGraphVault(rootDir: string, target: string): Promise<GraphExplainResult> {
   const graph = await ensureCompiledGraph(rootDir);
   return explainGraphTarget(graph, target);
+}
+
+export async function listGraphHyperedges(rootDir: string, target?: string, limit = 25): Promise<GraphHyperedge[]> {
+  const graph = await ensureCompiledGraph(rootDir);
+  return listHyperedges(graph, target, limit);
+}
+
+export async function readGraphReport(rootDir: string): Promise<GraphReportArtifact | null> {
+  const { paths } = await loadVaultConfig(rootDir);
+  return readJsonFile<GraphReportArtifact>(path.join(paths.wikiDir, "graph", "report.json"));
 }
 
 export async function listGodNodes(rootDir: string, limit = 10): Promise<GraphNode[]> {

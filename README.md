@@ -42,7 +42,7 @@ my-vault/
 
 - A markdown-first wiki that stays usable in Obsidian or plain Git
 - A structured graph artifact with provenance, freshness, projects, and saved outputs
-- Graph-first report pages plus deterministic local graph query, path, explain, and god-node tools
+- Graph-first report pages plus deterministic local graph query, path, explain, god-node, semantic-similarity, and group-pattern surfaces
 - Automatic benchmark artifacts plus worked examples for measuring graph-guided context reduction after compile and repo-refresh runs
 - Research-aware URL capture for arXiv, DOI, article, and X/Twitter sources with normalized frontmatter
 - Save-first `query` and `explore` workflows, including `report`, `slides`, `chart`, and `image` outputs
@@ -227,9 +227,9 @@ Generated source, concept, entity, output, and index pages also carry lifecycle 
 - `swarmvault mcp`: start a local MCP server over stdio
 - `swarmvault review list|show|accept|reject`: inspect and resolve staged approval bundles
 - `swarmvault candidate list|promote|archive`: inspect and resolve staged concept and entity candidates
-- `swarmvault graph query "<question>" [--dfs] [--budget <n>]`: run a deterministic local graph traversal seeded from local search
+- `swarmvault graph query "<question>" [--dfs] [--budget <n>]`: run a deterministic local graph traversal seeded from local search and matching group patterns
 - `swarmvault graph path <from> <to>`: return the shortest high-confidence path between two graph targets
-- `swarmvault graph explain <target>`: inspect graph metadata, community membership, neighbors, and provenance for a node or page
+- `swarmvault graph explain <target>`: inspect graph metadata, community membership, neighbors, provenance, and group-pattern membership for a node or page
 - `swarmvault graph god-nodes [--limit <n>]`: list the most connected bridge-heavy nodes in the current graph
 - `swarmvault graph serve`: open the local graph workspace with graph, search, and page preview
 - `swarmvault graph export --html|--svg|--graphml|--cypher <output>`: export the graph workspace as HTML, SVG, GraphML, or Cypher
@@ -256,7 +256,7 @@ SwarmVault is designed so useful work compounds:
 - saved outputs are indexed immediately into search and the graph page registry
 - saved outputs immediately refresh related source, concept, and entity pages
 - `chart` and `image` saves also write local assets into `wiki/outputs/assets/<slug>/`
-- compile also writes `wiki/graph/report.md`, `wiki/graph/report.json`, `wiki/graph/index.md`, and per-community graph summary pages
+- compile also writes `wiki/graph/report.md`, `wiki/graph/report.json`, `wiki/graph/index.md`, and per-community graph summary pages with richer surprising-connection and group-pattern sections
 - new concept and entity pages land in `wiki/candidates/` first, then promote on the next matching compile
 - `review` turns `compile --approve` bundles into a local accept/reject workflow instead of a dead-end staging directory
 - `candidate` lets you promote or archive staged concept and entity pages without waiting for another compile

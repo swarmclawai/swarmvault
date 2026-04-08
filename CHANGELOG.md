@@ -4,6 +4,13 @@
 
 Nothing yet.
 
+## 0.1.24
+
+- Added compile-time graph enrichment with deterministic `semantically_similar_to` edges, bounded `similarityReasons`, and first-class `hyperedges` derived from multi-node graph motifs instead of ad hoc report-only heuristics
+- Upgraded `wiki/graph/report.md` and the new `wiki/graph/report.json` companion with stronger surprise scoring, explicit `why` explanations, supporting path relations/evidence classes, and a new `Group Patterns` section grounded in hyperedge data
+- Expanded graph tooling across `graph query`, `graph explain`, GraphML/Cypher export, MCP, and the local workspace so similarity edges and group patterns are queryable, explorable, and exported instead of being hidden inside markdown only
+- Updated engine tests, OSS docs, site docs, and the root spec notes for the richer graph-quality model while explicitly keeping deeper hyperedge visualization and direct Neo4j push deferred
+
 ## 0.1.23
 
 - Expanded `swarmvault add` from arXiv/X capture into a broader research-aware capture surface with DOI URLs, bare DOI strings, and generic article URLs that normalize into markdown with stable research frontmatter such as `source_type`, `canonical_url`, `authors`, `published_at`, and `tags`

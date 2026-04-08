@@ -47,7 +47,7 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 function emptyGraph(): ViewerGraphArtifact {
-  return { generatedAt: "", nodes: [], edges: [], communities: [], pages: [] };
+  return { generatedAt: "", nodes: [], edges: [], hyperedges: [], communities: [], pages: [] };
 }
 
 function assetUrl(asset: ViewerOutputAsset): string {
@@ -221,7 +221,8 @@ export function App() {
           .filter((edge) => edgeStatusFilter === "all" || edge.status === edgeStatusFilter)
           .map((edge) => ({
             data: edge,
-            classes: pathEdgeSet.has(edge.id) ? "path-edge" : ""
+            classes:
+              `${pathEdgeSet.has(edge.id) ? "path-edge " : ""}${edge.relation === "semantically_similar_to" ? "similarity-edge" : ""}`.trim()
           }))
       ],
       layout: {
@@ -288,6 +289,14 @@ export function App() {
             label: "data(relation)",
             "font-size": 9,
             color: "#cbd5e1"
+          }
+        },
+        {
+          selector: ".similarity-edge",
+          style: {
+            "line-style": "dashed",
+            "line-color": "#f97316",
+            "target-arrow-color": "#f97316"
           }
         },
         {
@@ -689,6 +698,31 @@ export function App() {
               </div>
             </div>
           ) : null}
+          {graphReport.groupPatterns.length ? (
+            <div className="linked-pages">
+              <span className="panel-label">Group Patterns</span>
+              <div className="action-row">
+                {graphReport.groupPatterns.slice(0, 4).map((hyperedge) => (
+                  <button
+                    key={hyperedge.id}
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      const nextNodeId = hyperedge.nodeIds[0];
+                      const element = nextNodeId ? cyRef.current?.getElementById(nextNodeId) : null;
+                      if (element) {
+                        cyRef.current?.elements().unselect();
+                        element.select();
+                        cyRef.current?.center(element);
+                      }
+                    }}
+                  >
+                    {hyperedge.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {graphReport.recentResearchSources.length ? (
             <div className="linked-pages">
               <span className="panel-label">New Research Sources</span>
@@ -726,6 +760,28 @@ export function App() {
                   <>
                     <p>{graphQueryResult.summary}</p>
                     <div className="action-row">
+                      {graphQueryResult.hyperedgeIds
+                        .map((hyperedgeId) => graph?.hyperedges?.find((hyperedge) => hyperedge.id === hyperedgeId))
+                        .filter((hyperedge): hyperedge is NonNullable<typeof hyperedge> => Boolean(hyperedge))
+                        .slice(0, 2)
+                        .map((hyperedge) => (
+                          <button
+                            key={hyperedge.id}
+                            type="button"
+                            className="link-button"
+                            onClick={() => {
+                              const nextNodeId = hyperedge.nodeIds[0];
+                              const element = nextNodeId ? cyRef.current?.getElementById(nextNodeId) : null;
+                              if (element) {
+                                cyRef.current?.elements().unselect();
+                                element.select();
+                                cyRef.current?.center(element);
+                              }
+                            }}
+                          >
+                            {hyperedge.label}
+                          </button>
+                        ))}
                       {graphQueryResult.pageIds
                         .map((pageId) => graph?.pages?.find((page) => page.id === pageId))
                         .filter((page): page is NonNullable<typeof page> => Boolean(page))
@@ -905,6 +961,32 @@ export function App() {
                 <p>Degree: {selected.degree ?? 0}</p>
                 <p>Bridge score: {selected.bridgeScore ?? 0}</p>
                 <p>God node: {selected.isGodNode ? "Yes" : "No"}</p>
+                {graphExplain?.hyperedges.length ? (
+                  <div className="linked-pages">
+                    <span className="panel-label">Group Patterns</span>
+                    <div className="action-row">
+                      {graphExplain.hyperedges.slice(0, 6).map((hyperedge) => (
+                        <button
+                          key={hyperedge.id}
+                          type="button"
+                          className="link-button"
+                          onClick={() => {
+                            const nextNodeId = hyperedge.nodeIds.find((nodeId) => nodeId !== selected.id) ?? hyperedge.nodeIds[0];
+                            const element = nextNodeId ? cyRef.current?.getElementById(nextNodeId) : null;
+                            if (element) {
+                              cyRef.current?.elements().unselect();
+                              element.select();
+                              cyRef.current?.center(element);
+                            }
+                          }}
+                        >
+                          {hyperedge.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p>{graphExplain.hyperedges[0]?.why}</p>
+                  </div>
+                ) : null}
                 {graphExplain?.neighbors.length ? (
                   <div className="linked-pages">
                     <span className="panel-label">Neighbors</span>

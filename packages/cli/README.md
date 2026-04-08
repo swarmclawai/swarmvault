@@ -227,7 +227,7 @@ Start the local graph workspace backed by `state/graph.json`, `/api/search`, `/a
 
 ### `swarmvault graph query "<question>" [--dfs] [--budget <n>]`
 
-Run a deterministic local graph traversal seeded from local search and graph labels.
+Run a deterministic local graph traversal seeded from local search, graph labels, and matching group patterns.
 
 ### `swarmvault graph path <from> <to>`
 
@@ -235,7 +235,7 @@ Return the shortest high-confidence path between two graph targets.
 
 ### `swarmvault graph explain <target>`
 
-Inspect graph metadata, community membership, neighbors, and provenance for a node or page.
+Inspect graph metadata, community membership, neighbors, provenance, and group-pattern membership for a node or page.
 
 ### `swarmvault graph god-nodes [--limit <n>]`
 

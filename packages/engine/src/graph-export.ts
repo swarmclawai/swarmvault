@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadVaultConfig } from "./config.js";
-import type { GraphArtifact, GraphExportFormat, GraphExportResult, GraphNode, GraphPage } from "./types.js";
+import type { GraphArtifact, GraphExportFormat, GraphExportResult, GraphHyperedge, GraphNode, GraphPage } from "./types.js";
 import { ensureDir, fileExists, readJsonFile } from "./utils.js";
 
 const NODE_COLORS: Record<string, string> = {
@@ -41,6 +41,10 @@ function graphPageById(graph: GraphArtifact): Map<string, GraphPage> {
 
 function graphNodeById(graph: GraphArtifact): Map<string, GraphNode> {
   return new Map(graph.nodes.map((node) => [node.id, node]));
+}
+
+function exportHyperedgeNodeId(hyperedge: GraphHyperedge): string {
+  return `hyperedge:${hyperedge.id}`;
 }
 
 function sortedCommunities(graph: GraphArtifact): Array<{ id: string; label: string; nodeIds: string[] }> {
@@ -229,6 +233,11 @@ function renderGraphMl(graph: GraphArtifact): string {
     { id: "n_community", for: "node", name: "communityId", type: "string" },
     { id: "n_degree", for: "node", name: "degree", type: "double" },
     { id: "n_bridge", for: "node", name: "bridgeScore", type: "double" },
+    { id: "n_relation", for: "node", name: "relation", type: "string" },
+    { id: "n_evidence", for: "node", name: "evidenceClass", type: "string" },
+    { id: "n_confidence", for: "node", name: "confidence", type: "double" },
+    { id: "n_source_pages", for: "node", name: "sourcePageIds", type: "string" },
+    { id: "n_why", for: "node", name: "why", type: "string" },
     { id: "e_relation", for: "edge", name: "relation", type: "string" },
     { id: "e_status", for: "edge", name: "status", type: "string" },
     { id: "e_evidence", for: "edge", name: "evidenceClass", type: "string" },
@@ -267,6 +276,21 @@ function renderGraphMl(graph: GraphArtifact): string {
     }
     lines.push("    </node>");
   }
+  for (const hyperedge of [...(graph.hyperedges ?? [])].sort((left, right) => left.id.localeCompare(right.id))) {
+    lines.push(`    <node id="${xmlEscape(exportHyperedgeNodeId(hyperedge))}">`);
+    for (const [key, value] of [
+      ["n_label", hyperedge.label],
+      ["n_type", "hyperedge"],
+      ["n_relation", hyperedge.relation],
+      ["n_evidence", hyperedge.evidenceClass],
+      ["n_confidence", hyperedge.confidence],
+      ["n_source_pages", hyperedge.sourcePageIds],
+      ["n_why", hyperedge.why]
+    ] as Array<[string, unknown]>) {
+      lines.push(`      <data key="${key}">${xmlEscape(graphMlData(value))}</data>`);
+    }
+    lines.push("    </node>");
+  }
   for (const edge of [...graph.edges].sort((left, right) => left.id.localeCompare(right.id))) {
     lines.push(`    <edge id="${xmlEscape(edge.id)}" source="${xmlEscape(edge.source)}" target="${xmlEscape(edge.target)}">`);
     for (const [key, value] of [
@@ -279,6 +303,23 @@ function renderGraphMl(graph: GraphArtifact): string {
       lines.push(`      <data key="${key}">${xmlEscape(graphMlData(value))}</data>`);
     }
     lines.push("    </edge>");
+  }
+  for (const hyperedge of [...(graph.hyperedges ?? [])].sort((left, right) => left.id.localeCompare(right.id))) {
+    for (const nodeId of hyperedge.nodeIds) {
+      lines.push(
+        `    <edge id="${xmlEscape(`member:${hyperedge.id}:${nodeId}`)}" source="${xmlEscape(exportHyperedgeNodeId(hyperedge))}" target="${xmlEscape(nodeId)}">`
+      );
+      for (const [key, value] of [
+        ["e_relation", "group_member"],
+        ["e_status", "inferred"],
+        ["e_evidence", hyperedge.evidenceClass],
+        ["e_confidence", hyperedge.confidence],
+        ["e_provenance", hyperedge.sourcePageIds]
+      ] as Array<[string, unknown]>) {
+        lines.push(`      <data key="${key}">${xmlEscape(graphMlData(value))}</data>`);
+      }
+      lines.push("    </edge>");
+    }
   }
   lines.push("  </graph>", "</graphml>", "");
   return lines.join("\n");
@@ -309,13 +350,43 @@ function renderCypher(graph: GraphArtifact): string {
     lines.push(`MERGE (n:SwarmNode {id: '${cypherEscape(node.id)}'}) SET n += { ${props} };`);
   }
   lines.push("");
+  for (const hyperedge of [...(graph.hyperedges ?? [])].sort((left, right) => left.id.localeCompare(right.id))) {
+    const hyperedgeNodeId = exportHyperedgeNodeId(hyperedge);
+    lines.push(
+      `MERGE (h:SwarmNode {id: '${cypherEscape(hyperedgeNodeId)}'}) SET h += { id: '${cypherEscape(hyperedgeNodeId)}', label: '${cypherEscape(
+        hyperedge.label
+      )}', type: 'hyperedge', relation: '${cypherEscape(hyperedge.relation)}', evidenceClass: '${cypherEscape(
+        hyperedge.evidenceClass
+      )}', confidence: ${hyperedge.confidence}, sourcePageIds: '${cypherEscape(JSON.stringify(hyperedge.sourcePageIds))}', why: '${cypherEscape(
+        hyperedge.why
+      )}' };`
+    );
+  }
+  if ((graph.hyperedges ?? []).length) {
+    lines.push("");
+  }
+  for (const hyperedge of [...(graph.hyperedges ?? [])].sort((left, right) => left.id.localeCompare(right.id))) {
+    const hyperedgeNodeId = exportHyperedgeNodeId(hyperedge);
+    for (const nodeId of hyperedge.nodeIds) {
+      lines.push(
+        `MATCH (h:SwarmNode {id: '${cypherEscape(hyperedgeNodeId)}'}), (n:SwarmNode {id: '${cypherEscape(nodeId)}'})`,
+        `MERGE (h)-[r:GROUP_MEMBER {id: '${cypherEscape(`member:${hyperedge.id}:${nodeId}`)}'}]->(n)`,
+        `SET r += { relation: 'group_member', status: 'inferred', evidenceClass: '${cypherEscape(
+          hyperedge.evidenceClass
+        )}', confidence: ${hyperedge.confidence}, provenance: '${cypherEscape(JSON.stringify(hyperedge.sourcePageIds))}' };`
+      );
+    }
+  }
+  lines.push("");
   for (const edge of [...graph.edges].sort((left, right) => left.id.localeCompare(right.id))) {
     lines.push(
       `MATCH (a:SwarmNode {id: '${cypherEscape(edge.source)}'}), (b:SwarmNode {id: '${cypherEscape(edge.target)}'})`,
       `MERGE (a)-[r:${relationType(edge.relation)} {id: '${cypherEscape(edge.id)}'}]->(b)`,
       `SET r += { relation: '${cypherEscape(edge.relation)}', status: '${cypherEscape(edge.status)}', evidenceClass: '${cypherEscape(
         edge.evidenceClass
-      )}', confidence: ${edge.confidence}, provenance: '${cypherEscape(JSON.stringify(edge.provenance))}' };`
+      )}', confidence: ${edge.confidence}, provenance: '${cypherEscape(JSON.stringify(edge.provenance))}'${
+        edge.similarityReasons?.length ? `, similarityReasons: '${cypherEscape(JSON.stringify(edge.similarityReasons))}'` : ""
+      } };`
     );
   }
   lines.push("");

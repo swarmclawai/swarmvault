@@ -11,6 +11,7 @@ import {
   benchmarkVault,
   compileVault,
   createMcpServer,
+  explainGraphVault,
   exportGraphFormat,
   getGitHookStatus,
   getWatchStatus,
@@ -21,12 +22,13 @@ import {
   installAgent,
   installGitHooks,
   lintVault,
+  queryGraphVault,
   queryVault,
   runWatchCycle,
   uninstallGitHooks,
   watchVault
 } from "../src/index.js";
-import type { SourceAnalysis, SourceExtractionArtifact } from "../src/types.js";
+import type { GraphArtifact, SourceAnalysis, SourceExtractionArtifact } from "../src/types.js";
 
 const tempDirs: string[] = [];
 type ToolContent = Array<{ type?: string; text?: string }>;
@@ -772,6 +774,115 @@ describe("swarmvault workflow", () => {
     expect(await fs.readFile(svg.outputPath, "utf8")).toContain("<svg");
     expect(await fs.readFile(graphml.outputPath, "utf8")).toContain("<graphml");
     expect(await fs.readFile(cypher.outputPath, "utf8")).toContain("MERGE (n:SwarmNode");
+  });
+
+  it("enriches the graph with semantic similarity, group patterns, and richer graph-tool metadata", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "graph-provider.mjs"),
+      [
+        "export async function createAdapter(id, config) {",
+        "  function payload(title) {",
+        "    if (title.includes('Alpha')) {",
+        "      return { title, summary: 'Alpha summary.', concepts: [{ name: 'Parser First', description: 'Parser-first workflow.' }, { name: 'Trust Surfaces', description: 'Trust-oriented reporting.' }], entities: [{ name: 'SwarmVault', description: 'SwarmVault project.' }], claims: [{ text: 'Alpha links parser-first analysis to trust surfaces.', confidence: 0.92, status: 'extracted', polarity: 'positive', citation: 'alpha' }], questions: ['How do parser-first trust surfaces improve graph quality?'] };",
+        "    }",
+        "    if (title.includes('Beta')) {",
+        "      return { title, summary: 'Beta summary.', concepts: [{ name: 'Parser First', description: 'Parser-first workflow.' }, { name: 'Graph Reports', description: 'Graph report generation.' }], entities: [{ name: 'SwarmVault', description: 'SwarmVault project.' }], claims: [{ text: 'Beta links parser-first analysis to graph reports.', confidence: 0.9, status: 'extracted', polarity: 'positive', citation: 'beta' }], questions: ['What makes graph reports trustworthy?'] };",
+        "    }",
+        "    return { title, summary: 'Gamma summary.', concepts: [{ name: 'Parser First', description: 'Parser-first workflow.' }, { name: 'Watch Reporting', description: 'Watch-driven reporting.' }], entities: [{ name: 'SwarmVault', description: 'SwarmVault project.' }], claims: [{ text: 'Gamma links parser-first analysis to watch reporting.', confidence: 0.91, status: 'extracted', polarity: 'positive', citation: 'gamma' }], questions: ['Which watch signals are structural?'] };",
+        "  }",
+        "  return {",
+        "    id,",
+        "    type: 'custom',",
+        "    model: config.model,",
+        "    capabilities: new Set(config.capabilities ?? ['chat', 'structured']),",
+        "    async generateText() { return { text: 'ok' }; },",
+        "    async generateStructured(request, schema) {",
+        "      const match = request.prompt.match(/Source title: (.+)/);",
+        "      const title = match ? match[1].trim() : 'Unknown';",
+        "      return schema.parse(payload(title));",
+        "    }",
+        "  };",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const configPath = path.join(rootDir, "swarmvault.config.json");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      providers: Record<string, unknown>;
+      tasks: Record<string, string>;
+    };
+    config.providers.graphTest = {
+      type: "custom",
+      model: "graph-test",
+      module: "./graph-provider.mjs",
+      capabilities: ["chat", "structured"]
+    };
+    config.tasks.compileProvider = "graphTest";
+    await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+    for (const [name, body] of [
+      ["alpha.md", "# Alpha Source\n\nParser-first trust surfaces create durable graph reports."],
+      ["beta.md", "# Beta Source\n\nParser-first graph reports reveal cross-community structure."],
+      ["gamma.md", "# Gamma Source\n\nParser-first watch reporting improves graph trust."]
+    ] as const) {
+      await fs.writeFile(path.join(rootDir, name), body, "utf8");
+      await ingestInput(rootDir, name);
+    }
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    const similarityEdges = graph.edges.filter((edge) => edge.relation === "semantically_similar_to");
+    expect(similarityEdges.length).toBeGreaterThan(0);
+    expect(similarityEdges[0]?.similarityReasons?.length).toBeGreaterThan(0);
+    expect(graph.hyperedges.length).toBeGreaterThan(0);
+    expect(graph.hyperedges.some((hyperedge) => hyperedge.relation === "participate_in")).toBe(true);
+
+    const report = JSON.parse(await fs.readFile(path.join(rootDir, "wiki", "graph", "report.json"), "utf8")) as {
+      groupPatterns: Array<{ why: string; nodeIds: string[] }>;
+      surprisingConnections: Array<{ why: string; pathRelations: string[]; pathEvidenceClasses: string[] }>;
+    };
+    expect(report.groupPatterns.length).toBeGreaterThan(0);
+    expect(report.groupPatterns[0]?.why).toContain("source nodes");
+    expect(report.surprisingConnections.some((connection) => connection.why.length > 0 && connection.pathRelations.length > 0)).toBe(true);
+
+    const queryResult = await queryGraphVault(rootDir, "parser-first graph trust", { budget: 10 });
+    expect(queryResult.hyperedgeIds.length).toBeGreaterThan(0);
+
+    const explainResult = await explainGraphVault(rootDir, similarityEdges[0]?.source ?? "");
+    expect(explainResult.hyperedges.length).toBeGreaterThan(0);
+
+    const exportsDir = path.join(rootDir, "exports");
+    const graphml = await exportGraphFormat(rootDir, "graphml", path.join(exportsDir, "graph.graphml"));
+    const cypher = await exportGraphFormat(rootDir, "cypher", path.join(exportsDir, "graph.cypher"));
+    expect(await fs.readFile(graphml.outputPath, "utf8")).toContain("hyperedge:");
+    expect(await fs.readFile(graphml.outputPath, "utf8")).toContain("group_member");
+    expect(await fs.readFile(cypher.outputPath, "utf8")).toContain("GROUP_MEMBER");
+    expect(await fs.readFile(cypher.outputPath, "utf8")).toContain("similarityReasons");
+
+    const server = await createMcpServer(rootDir);
+    const client = new Client({ name: "swarmvault-graph-test-client", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const tools = await client.listTools();
+    expect(tools.tools.some((tool) => tool.name === "graph_report")).toBe(true);
+    expect(tools.tools.some((tool) => tool.name === "get_hyperedges")).toBe(true);
+
+    const graphReport = await client.callTool({ name: "graph_report", arguments: {} });
+    const graphReportContent = graphReport.content as ToolContent;
+    expect(JSON.parse(graphReportContent[0]?.text ?? "{}").groupPatterns.length).toBeGreaterThan(0);
+
+    const hyperedgeTool = await client.callTool({ name: "get_hyperedges", arguments: { limit: 5 } });
+    const hyperedgeContent = hyperedgeTool.content as ToolContent;
+    expect(JSON.parse(hyperedgeContent[0]?.text ?? "[]").length).toBeGreaterThan(0);
+
+    await client.close();
+    await server.close();
   });
 
   it("threads the schema through compile and query and marks pages stale when the schema changes", async () => {

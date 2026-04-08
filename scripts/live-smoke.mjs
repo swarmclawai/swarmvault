@@ -30,6 +30,7 @@ const artifactDir =
   path.join(repoRoot, ".live-smoke-artifacts", `${lane}-${new Date().toISOString().replaceAll(":", "-")}`);
 const workspaceDir = path.join(artifactDir, "workspace");
 const prefixDir = path.join(artifactDir, "global-prefix");
+const npmCacheDir = path.join(artifactDir, "npm-cache");
 const logsDir = path.join(artifactDir, "logs");
 const summaryPath = path.join(artifactDir, "summary.json");
 const state = {
@@ -49,11 +50,15 @@ let pendingApprovalId = "";
 const MINIMAL_PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
 
 await fs.mkdir(logsDir, { recursive: true });
+await fs.mkdir(npmCacheDir, { recursive: true });
 
 try {
   await runStep("install-published-cli", async () => {
     await runCommand("npm-install", "npm", ["install", "-g", "--prefix", prefixDir, ...installSpecs], {
-      cwd: repoRoot
+      cwd: repoRoot,
+      env: {
+        npm_config_cache: npmCacheDir
+      }
     });
     installedCli = await resolveInstalledCli(prefixDir);
     const cliVersion = (
@@ -1189,7 +1194,7 @@ async function runCommand(label, command, args, options = {}) {
   const metaPath = path.join(logsDir, `${safeLabel}.meta.json`);
   const child = spawn(command, args, {
     cwd: options.cwd ?? repoRoot,
-    env: options.env,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
     stdio: ["ignore", "pipe", "pipe"]
   });
   let timedOut = false;

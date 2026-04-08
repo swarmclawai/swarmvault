@@ -4,6 +4,7 @@ import type {
   GraphEdge,
   GraphExplainNeighbor,
   GraphExplainResult,
+  GraphHyperedge,
   GraphNode,
   GraphPage,
   GraphPathResult,
@@ -23,6 +24,12 @@ function nodeById(graph: GraphArtifact): Map<string, GraphNode> {
 
 function pageById(graph: GraphArtifact): Map<string, GraphPage> {
   return new Map(graph.pages.map((page) => [page.id, page]));
+}
+
+function hyperedgesForNode(graph: GraphArtifact, nodeId: string): GraphHyperedge[] {
+  return (graph.hyperedges ?? [])
+    .filter((hyperedge) => hyperedge.nodeIds.includes(nodeId))
+    .sort((left, right) => right.confidence - left.confidence || left.label.localeCompare(right.label));
 }
 
 function scoreMatch(query: string, candidate: string): number {
@@ -77,6 +84,18 @@ function nodeMatches(graph: GraphArtifact, query: string): GraphQueryMatch[] {
       id: node.id,
       label: node.label,
       score: Math.max(scoreMatch(query, node.label), scoreMatch(query, node.id))
+    }))
+    .filter((match) => match.score > 0)
+    .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label));
+}
+
+function hyperedgeMatches(graph: GraphArtifact, query: string): GraphQueryMatch[] {
+  return (graph.hyperedges ?? [])
+    .map((hyperedge) => ({
+      type: "hyperedge" as const,
+      id: hyperedge.id,
+      label: hyperedge.label,
+      score: Math.max(scoreMatch(query, hyperedge.label), scoreMatch(query, hyperedge.why), scoreMatch(query, hyperedge.relation))
     }))
     .filter((match) => match.score > 0)
     .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label));
@@ -168,7 +187,7 @@ export function queryGraph(
   const traversal = options?.traversal ?? "bfs";
   const budget = Math.max(3, Math.min(options?.budget ?? 12, 50));
   const matches = uniqueBy(
-    [...pageSearchMatches(graph, question, searchResults), ...nodeMatches(graph, question)],
+    [...pageSearchMatches(graph, question, searchResults), ...nodeMatches(graph, question), ...hyperedgeMatches(graph, question)],
     (match) => `${match.type}:${match.id}`
   )
     .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
@@ -177,7 +196,10 @@ export function queryGraph(
   const seeds = uniqueBy(
     [
       ...searchResults.flatMap((result) => pages.get(result.pageId)?.nodeIds ?? []),
-      ...matches.filter((match) => match.type === "node").map((match) => match.id)
+      ...matches.filter((match) => match.type === "node").map((match) => match.id),
+      ...matches
+        .filter((match) => match.type === "hyperedge")
+        .flatMap((match) => graph.hyperedges.find((hyperedge) => hyperedge.id === match.id)?.nodeIds ?? [])
     ],
     (item) => item
   ).filter(Boolean);
@@ -221,6 +243,12 @@ export function queryGraph(
     visitedNodeIds.map((nodeId) => nodes.get(nodeId)?.communityId).filter((communityId): communityId is string => Boolean(communityId)),
     (item) => item
   );
+  const hyperedgeIds = uniqueBy(
+    (graph.hyperedges ?? [])
+      .filter((hyperedge) => hyperedge.nodeIds.some((nodeId) => visitedNodeIds.includes(nodeId)))
+      .map((hyperedge) => hyperedge.id),
+    (item) => item
+  );
 
   return {
     question,
@@ -232,6 +260,7 @@ export function queryGraph(
     ),
     visitedNodeIds,
     visitedEdgeIds: [...visitedEdgeIds],
+    hyperedgeIds,
     pageIds,
     communities,
     matches,
@@ -239,6 +268,7 @@ export function queryGraph(
       `Seeds: ${seeds.join(", ") || "none"}`,
       `Visited nodes: ${visitedNodeIds.length}`,
       `Visited edges: ${visitedEdgeIds.size}`,
+      `Touched group patterns: ${hyperedgeIds.length}`,
       `Communities: ${communities.join(", ") || "none"}`,
       `Pages: ${pageIds.join(", ") || "none"}`
     ].join("\n")
@@ -369,11 +399,13 @@ export function explainGraphTarget(graph: GraphArtifact, target: string): GraphE
     page,
     community: communityLabel(graph, node.communityId),
     neighbors,
+    hyperedges: hyperedgesForNode(graph, node.id),
     summary: [
       `Node: ${node.label}`,
       `Type: ${node.type}`,
       `Community: ${node.communityId ?? "none"}`,
       `Neighbors: ${neighbors.length}`,
+      `Group patterns: ${hyperedgesForNode(graph, node.id).length}`,
       `Page: ${page?.path ?? "none"}`
     ].join("\n")
   };
@@ -383,5 +415,27 @@ export function topGodNodes(graph: GraphArtifact, limit = 10): GraphNode[] {
   return graph.nodes
     .filter((node) => node.isGodNode)
     .sort((left, right) => (right.degree ?? 0) - (left.degree ?? 0))
+    .slice(0, limit);
+}
+
+export function listHyperedges(graph: GraphArtifact, target?: string, limit = 25): GraphHyperedge[] {
+  if (!target) {
+    return [...(graph.hyperedges ?? [])]
+      .sort((left, right) => right.confidence - left.confidence || left.label.localeCompare(right.label))
+      .slice(0, limit);
+  }
+
+  const node = resolveNode(graph, target);
+  if (node) {
+    return hyperedgesForNode(graph, node.id).slice(0, limit);
+  }
+
+  const page = graph.pages.find((candidate) => normalizeTarget(candidate.path) === normalizeTarget(target) || candidate.id === target);
+  if (!page) {
+    return [];
+  }
+  return (graph.hyperedges ?? [])
+    .filter((hyperedge) => hyperedge.sourcePageIds.includes(page.id) || page.nodeIds.some((nodeId) => hyperedge.nodeIds.includes(nodeId)))
+    .sort((left, right) => right.confidence - left.confidence || left.label.localeCompare(right.label))
     .slice(0, limit);
 }

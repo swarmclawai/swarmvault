@@ -1,11 +1,13 @@
 import matter from "gray-matter";
 import { modulePageTitle } from "./code-analysis.js";
+import { describeSimilarityReasons } from "./graph-enrichment.js";
 import { shortestGraphPath } from "./graph-tools.js";
 import type {
   BenchmarkArtifact,
   Freshness,
   GraphArtifact,
   GraphEdge,
+  GraphHyperedge,
   GraphNode,
   GraphPage,
   GraphReportArtifact,
@@ -639,15 +641,151 @@ function nodeSummary(node: GraphNode): string {
   return [node.type, degree, bridge].filter(Boolean).join(", ");
 }
 
-function crossCommunityEdges(graph: GraphArtifact): GraphEdge[] {
+function sourceTypeForNode(node: GraphNode | undefined, pagesById: Map<string, GraphPage>): string | undefined {
+  if (!node?.pageId) {
+    return undefined;
+  }
+  return pagesById.get(node.pageId)?.sourceType;
+}
+
+function supportingPathDetails(
+  graph: GraphArtifact,
+  edge: GraphEdge
+): {
+  pathNodeIds: string[];
+  pathEdgeIds: string[];
+  pathRelations: string[];
+  pathEvidenceClasses: Array<GraphEdge["evidenceClass"]>;
+  pathSummary: string;
+} {
+  const path = shortestGraphPath(graph, edge.source, edge.target);
+  const edgesById = new Map(graph.edges.map((item) => [item.id, item]));
+  const pathEdges = path.edgeIds.map((edgeId) => edgesById.get(edgeId)).filter((item): item is GraphEdge => Boolean(item));
+  return {
+    pathNodeIds: path.nodeIds,
+    pathEdgeIds: path.edgeIds,
+    pathRelations: pathEdges.map((item) => item.relation),
+    pathEvidenceClasses: pathEdges.map((item) => item.evidenceClass),
+    pathSummary: path.summary
+  };
+}
+
+function surpriseScore(
+  edge: GraphEdge,
+  graph: GraphArtifact,
+  pagesById: Map<string, GraphPage>,
+  hyperedgesByNodeId: Map<string, GraphHyperedge[]>
+): { score: number; why: string; explanation: string } {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
-  return graph.edges
-    .filter((edge) => {
-      const source = nodesById.get(edge.source);
-      const target = nodesById.get(edge.target);
-      return source?.communityId && target?.communityId && source.communityId !== target.communityId;
-    })
-    .sort((left, right) => right.confidence - left.confidence || left.relation.localeCompare(right.relation));
+  const source = nodesById.get(edge.source);
+  const target = nodesById.get(edge.target);
+  const reasons: string[] = [];
+  let score = edge.confidence * 0.45;
+
+  if (source?.communityId && target?.communityId && source.communityId !== target.communityId) {
+    score += 0.18;
+    reasons.push(`it crosses communities ${source.communityId} and ${target.communityId}`);
+  }
+  if (source?.pageId && target?.pageId && source.pageId !== target.pageId) {
+    score += 0.12;
+    reasons.push("it spans different canonical pages");
+  }
+  if (source?.type && target?.type && source.type !== target.type) {
+    score += 0.08;
+    reasons.push(`it bridges ${source.type} and ${target.type} nodes`);
+  }
+  const sourceType = sourceTypeForNode(source, pagesById);
+  const targetType = sourceTypeForNode(target, pagesById);
+  if (sourceType && targetType && sourceType !== targetType) {
+    score += 0.07;
+    reasons.push(`it crosses source types (${sourceType} and ${targetType})`);
+  }
+  if ((source?.bridgeScore ?? 0) > 0 || (target?.bridgeScore ?? 0) > 0) {
+    score += 0.08;
+    reasons.push("a bridge node is involved");
+  }
+  if (edge.relation === "semantically_similar_to") {
+    score += 0.12;
+    reasons.push(describeSimilarityReasons(edge.similarityReasons));
+  }
+  if (edge.evidenceClass === "ambiguous") {
+    score += 0.08;
+    reasons.push("the supporting evidence is ambiguous");
+  }
+  const overlappingHyperedges = (hyperedgesByNodeId.get(edge.source) ?? []).filter((hyperedge) => hyperedge.nodeIds.includes(edge.target));
+  if (overlappingHyperedges.length) {
+    score += 0.06;
+    reasons.push(`it also appears in ${overlappingHyperedges.length} group pattern${overlappingHyperedges.length === 1 ? "" : "s"}`);
+  }
+
+  const why = normalizeWhitespace(reasons.join("; ")) || "it links graph regions that are otherwise weakly connected";
+  const explanation = normalizeWhitespace(`${source?.label ?? edge.source} connects to ${target?.label ?? edge.target} because ${why}.`);
+  return { score: Math.min(0.99, score), why, explanation };
+}
+
+function topSurprisingConnections(graph: GraphArtifact, pagesById: Map<string, GraphPage>): GraphReportArtifact["surprisingConnections"] {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const hyperedgesByNodeId = new Map<string, GraphHyperedge[]>();
+  for (const hyperedge of graph.hyperedges ?? []) {
+    for (const nodeId of hyperedge.nodeIds) {
+      if (!hyperedgesByNodeId.has(nodeId)) {
+        hyperedgesByNodeId.set(nodeId, []);
+      }
+      hyperedgesByNodeId.get(nodeId)?.push(hyperedge);
+    }
+  }
+
+  return uniqueBy(
+    graph.edges
+      .filter((edge) => {
+        const source = nodesById.get(edge.source);
+        const target = nodesById.get(edge.target);
+        return Boolean(
+          (source?.communityId && target?.communityId && source.communityId !== target.communityId) ||
+            edge.relation === "semantically_similar_to" ||
+            edge.evidenceClass === "ambiguous" ||
+            (source?.type && target?.type && source.type !== target.type)
+        );
+      })
+      .map((edge) => {
+        const source = nodesById.get(edge.source);
+        const target = nodesById.get(edge.target);
+        const path = supportingPathDetails(graph, edge);
+        const scored = surpriseScore(edge, graph, pagesById, hyperedgesByNodeId);
+        return {
+          id: edge.id,
+          sourceNodeId: edge.source,
+          sourceLabel: source?.label ?? edge.source,
+          targetNodeId: edge.target,
+          targetLabel: target?.label ?? edge.target,
+          relation: edge.relation,
+          evidenceClass: edge.evidenceClass,
+          confidence: edge.confidence,
+          pathNodeIds: path.pathNodeIds,
+          pathEdgeIds: path.pathEdgeIds,
+          pathRelations: path.pathRelations,
+          pathEvidenceClasses: path.pathEvidenceClasses,
+          pathSummary: path.pathSummary,
+          why: scored.why,
+          explanation: scored.explanation,
+          surpriseScore: scored.score
+        };
+      })
+      .sort(
+        (left, right) => right.surpriseScore - left.surpriseScore || right.confidence - left.confidence || left.id.localeCompare(right.id)
+      )
+      .slice(0, 8),
+    (connection) => connection.id
+  ).map(({ surpriseScore: _surpriseScore, ...connection }) => connection);
+}
+
+function topGroupPatterns(graph: GraphArtifact): GraphHyperedge[] {
+  return [...(graph.hyperedges ?? [])]
+    .sort(
+      (left, right) =>
+        right.confidence - left.confidence || right.nodeIds.length - left.nodeIds.length || left.label.localeCompare(right.label)
+    )
+    .slice(0, 8);
 }
 
 function suggestedGraphQuestions(graph: GraphArtifact): string[] {
@@ -672,7 +810,7 @@ export function buildGraphReportArtifact(input: {
   >;
   graphHash: string;
 }): GraphReportArtifact {
-  const nodesById = new Map(input.graph.nodes.map((node) => [node.id, node]));
+  const pagesById = new Map(input.graph.pages.map((page) => [page.id, page]));
   const godNodes = input.graph.nodes
     .filter((node) => node.isGodNode)
     .sort((left, right) => (right.degree ?? 0) - (left.degree ?? 0))
@@ -694,39 +832,8 @@ export function buildGraphReportArtifact(input: {
         title: page?.title
       };
     });
-  const surprisingConnections = crossCommunityEdges(input.graph)
-    .slice(0, 8)
-    .map((edge) => {
-      const source = nodesById.get(edge.source);
-      const target = nodesById.get(edge.target);
-      const path = shortestGraphPath(input.graph, edge.source, edge.target);
-      const sourceCommunity = source?.communityId
-        ? input.graph.communities?.find((community) => community.id === source.communityId)
-        : undefined;
-      const targetCommunity = target?.communityId
-        ? input.graph.communities?.find((community) => community.id === target.communityId)
-        : undefined;
-      return {
-        id: edge.id,
-        sourceNodeId: edge.source,
-        sourceLabel: source?.label ?? edge.source,
-        targetNodeId: edge.target,
-        targetLabel: target?.label ?? edge.target,
-        relation: edge.relation,
-        evidenceClass: edge.evidenceClass,
-        confidence: edge.confidence,
-        pathNodeIds: path.nodeIds,
-        pathEdgeIds: path.edgeIds,
-        pathSummary: path.summary,
-        explanation: normalizeWhitespace(
-          [
-            `${source?.label ?? edge.source} links ${sourceCommunity?.label ? `from ${sourceCommunity.label}` : ""}`.trim(),
-            `to ${target?.label ?? edge.target}${targetCommunity?.label ? ` in ${targetCommunity.label}` : ""}`.trim(),
-            `through ${edge.relation} with ${edge.evidenceClass} evidence at ${edge.confidence.toFixed(2)} confidence.`
-          ].join(" ")
-        )
-      };
-    });
+  const surprisingConnections = topSurprisingConnections(input.graph, pagesById);
+  const groupPatterns = topGroupPatterns(input.graph);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -761,6 +868,7 @@ export function buildGraphReportArtifact(input: {
     })),
     thinCommunities,
     surprisingConnections,
+    groupPatterns,
     suggestedQuestions: suggestedGraphQuestions(input.graph),
     communityPages: input.communityPages.map((page) => ({
       id: page.id,
@@ -789,13 +897,20 @@ export function buildGraphReportPage(input: {
   const nodesById = new Map(input.graph.nodes.map((node) => [node.id, node]));
   const relatedNodeIds = uniqueStrings([
     ...input.report.godNodes.map((node) => node.nodeId),
-    ...input.report.bridgeNodes.map((node) => node.nodeId)
+    ...input.report.bridgeNodes.map((node) => node.nodeId),
+    ...input.report.surprisingConnections.flatMap((connection) => [
+      connection.sourceNodeId,
+      connection.targetNodeId,
+      ...connection.pathNodeIds
+    ]),
+    ...input.report.groupPatterns.flatMap((hyperedge) => hyperedge.nodeIds)
   ]);
   const relatedPageIds = uniqueStrings([
     ...input.report.godNodes.map((node) => node.pageId ?? ""),
     ...input.report.bridgeNodes.map((node) => node.pageId ?? ""),
     ...input.report.communityPages.map((page) => page.id),
-    ...input.report.recentResearchSources.map((page) => page.pageId)
+    ...input.report.recentResearchSources.map((page) => page.pageId),
+    ...input.report.groupPatterns.flatMap((hyperedge) => hyperedge.sourcePageIds)
   ]);
   const relatedSourceIds = uniqueStrings([
     ...relatedNodeIds.flatMap((nodeId) => nodesById.get(nodeId)?.sourceIds ?? []),
@@ -891,9 +1006,22 @@ export function buildGraphReportPage(input: {
           const target = nodesById.get(connection.targetNodeId);
           const sourceLabel = source ? graphNodeLink(source, pagesById) : `\`${connection.sourceNodeId}\``;
           const targetLabel = target ? graphNodeLink(target, pagesById) : `\`${connection.targetNodeId}\``;
-          return `- ${sourceLabel} ${connection.relation} ${targetLabel} (${connection.evidenceClass}, ${connection.confidence.toFixed(2)}). ${connection.explanation} Path: ${connection.pathSummary}.`;
+          return `- ${sourceLabel} ${connection.relation} ${targetLabel} (${connection.evidenceClass}, ${connection.confidence.toFixed(2)}). Why: ${connection.why}. ${connection.explanation} Path: ${connection.pathSummary}.`;
         })
       : ["- No cross-community links detected."]),
+    "",
+    "## Group Patterns",
+    "",
+    ...(input.report.groupPatterns.length
+      ? input.report.groupPatterns.map((hyperedge) => {
+          const linkedNodes = hyperedge.nodeIds
+            .map((nodeId) => nodesById.get(nodeId))
+            .filter((node): node is GraphNode => Boolean(node))
+            .map((node) => graphNodeLink(node, pagesById))
+            .join(", ");
+          return `- ${hyperedge.label} (${hyperedge.relation}, ${hyperedge.evidenceClass}, ${hyperedge.confidence.toFixed(2)}). ${hyperedge.why} Members: ${linkedNodes}.`;
+        })
+      : ["- No multi-node group patterns detected."]),
     "",
     "## New Research Sources",
     "",

@@ -15,15 +15,17 @@ import {
   getWorkspaceInfo,
   lintVault,
   listGodNodes,
+  listGraphHyperedges,
   listPages,
   pathGraphVault,
   queryGraphVault,
   queryVault,
+  readGraphReport,
   readPage,
   searchVault
 } from "./vault.js";
 
-const SERVER_VERSION = "0.1.23";
+const SERVER_VERSION = "0.1.24";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -110,15 +112,39 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
   );
 
   server.registerTool(
+    "graph_report",
+    {
+      description: "Return the machine-readable graph report and trust artifact."
+    },
+    async () => {
+      return asToolText((await readGraphReport(rootDir)) ?? { error: "Graph report not found. Run `swarmvault compile` first." });
+    }
+  );
+
+  server.registerTool(
     "get_node",
     {
-      description: "Explain a graph node, its page, community, and neighbors.",
+      description: "Explain a graph node, its page, community, neighbors, and group patterns.",
       inputSchema: {
         target: z.string().min(1).describe("Node or page label/id")
       }
     },
     async ({ target }) => {
       return asToolText(await explainGraphVault(rootDir, target));
+    }
+  );
+
+  server.registerTool(
+    "get_hyperedges",
+    {
+      description: "List graph hyperedges, optionally filtered to a node or page target.",
+      inputSchema: {
+        target: z.string().optional().describe("Optional node/page label or id to filter by"),
+        limit: z.number().int().min(1).max(50).optional().describe("Maximum hyperedges to return")
+      }
+    },
+    async ({ target, limit }) => {
+      return asToolText(await listGraphHyperedges(rootDir, target, limit ?? 25));
     }
   );
 

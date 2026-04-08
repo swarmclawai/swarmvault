@@ -445,6 +445,20 @@ export interface GraphEdge {
   evidenceClass: EvidenceClass;
   confidence: number;
   provenance: string[];
+  similarityReasons?: Array<
+    "shared_concept" | "shared_entity" | "shared_tag" | "shared_symbol" | "shared_rationale_theme" | "shared_source_type"
+  >;
+}
+
+export interface GraphHyperedge {
+  id: string;
+  label: string;
+  relation: "participate_in" | "implement" | "form";
+  nodeIds: string[];
+  evidenceClass: EvidenceClass;
+  confidence: number;
+  sourcePageIds: string[];
+  why: string;
 }
 
 export interface GraphPage {
@@ -479,6 +493,7 @@ export interface GraphArtifact {
   generatedAt: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  hyperedges: GraphHyperedge[];
   communities?: Array<{
     id: string;
     label: string;
@@ -489,7 +504,7 @@ export interface GraphArtifact {
 }
 
 export interface GraphQueryMatch {
-  type: "node" | "page";
+  type: "node" | "page" | "hyperedge";
   id: string;
   label: string;
   score: number;
@@ -502,6 +517,7 @@ export interface GraphQueryResult {
   seedPageIds: string[];
   visitedNodeIds: string[];
   visitedEdgeIds: string[];
+  hyperedgeIds: string[];
   pageIds: string[];
   communities: string[];
   summary: string;
@@ -540,6 +556,7 @@ export interface GraphExplainResult {
     label: string;
   };
   neighbors: GraphExplainNeighbor[];
+  hyperedges: GraphHyperedge[];
   summary: string;
 }
 
@@ -965,9 +982,13 @@ export interface GraphReportArtifact {
     confidence: number;
     pathNodeIds: string[];
     pathEdgeIds: string[];
+    pathRelations: string[];
+    pathEvidenceClasses: EvidenceClass[];
     pathSummary: string;
+    why: string;
     explanation: string;
   }>;
+  groupPatterns: GraphHyperedge[];
   suggestedQuestions: string[];
   communityPages: Array<{
     id: string;

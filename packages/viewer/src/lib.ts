@@ -33,6 +33,18 @@ export type ViewerGraphEdge = {
   status: string;
   evidenceClass?: string;
   confidence?: number;
+  similarityReasons?: string[];
+};
+
+export type ViewerGraphHyperedge = {
+  id: string;
+  label: string;
+  relation: string;
+  nodeIds: string[];
+  evidenceClass: string;
+  confidence: number;
+  sourcePageIds: string[];
+  why: string;
 };
 
 export type ViewerGraphPage = {
@@ -51,6 +63,7 @@ export type ViewerGraphArtifact = {
   generatedAt: string;
   nodes: ViewerGraphNode[];
   edges: ViewerGraphEdge[];
+  hyperedges: ViewerGraphHyperedge[];
   communities?: Array<{
     id: string;
     label: string;
@@ -97,11 +110,12 @@ export type ViewerGraphQueryResult = {
   seedPageIds: string[];
   visitedNodeIds: string[];
   visitedEdgeIds: string[];
+  hyperedgeIds: string[];
   pageIds: string[];
   communities: string[];
   summary: string;
   matches: Array<{
-    type: "node" | "page";
+    type: "node" | "page" | "hyperedge";
     id: string;
     label: string;
     score: number;
@@ -142,6 +156,7 @@ export type ViewerGraphExplainResult = {
     confidence: number;
     evidenceClass: string;
   }>;
+  hyperedges: ViewerGraphHyperedge[];
   summary: string;
 };
 
@@ -253,9 +268,13 @@ export type ViewerGraphReport = {
     confidence: number;
     pathNodeIds: string[];
     pathEdgeIds: string[];
+    pathRelations: string[];
+    pathEvidenceClasses: string[];
     pathSummary: string;
+    why: string;
     explanation: string;
   }>;
+  groupPatterns: ViewerGraphHyperedge[];
   suggestedQuestions: string[];
   recentResearchSources: Array<{
     pageId: string;
