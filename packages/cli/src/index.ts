@@ -53,7 +53,7 @@ const CLI_VERSION = readCliVersion();
 
 program
   .name("swarmvault")
-  .description("SwarmVault is a local-first LLM wiki compiler with graph outputs and pluggable providers.")
+  .description("SwarmVault is a local-first knowledge compiler with graph outputs and optional provider-backed workflows.")
   .version(CLI_VERSION)
   .option("--json", "Emit structured JSON output", false);
 

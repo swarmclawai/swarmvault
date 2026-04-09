@@ -14,6 +14,8 @@
 
 > 大多数“和文档聊天”的工具只回答一次问题，然后把过程全部丢掉。SwarmVault 把知识库本身当作产品。每一步都会写出可保留、可检查、可 diff、可持续改进的持久化工件。
 
+SwarmVault 的思路受到 Andrej Karpathy 的 [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist 启发。核心模式是一致的：在原始来源与日常使用之间维护一个持久化 wiki。SwarmVault 则把这个模式进一步做成了带有图谱、搜索、审查流、自动化，以及可选模型增强能力的本地工具链。
+
 <!-- readme-section:install -->
 ## 安装
 
@@ -65,9 +67,11 @@ swarmvault graph push neo4j --dry-run
 ```
 
 <!-- readme-section:provider-setup -->
-## 配置真实模型提供方
+## 可选：添加模型提供方
 
-内置的 `heuristic` 提供方适合 smoke 测试和离线默认场景，但不适合正式的高质量知识编译与问答。真正使用时，请把知识库指向一个实际模型提供方：
+开始使用 SwarmVault 并不需要 API key，也不需要外部模型提供方。内置的 `heuristic` 提供方可以支持本地/离线的知识库初始化、ingest、compile、graph/report/search，以及轻量级的 query 和 lint 默认流程。
+
+当你希望获得更强的综合质量，或者需要语义 embeddings、vision、原生图片生成等额外能力时，再接入模型提供方即可：
 
 ```json
 {
@@ -86,7 +90,7 @@ swarmvault graph push neo4j --dry-run
 }
 ```
 
-其他后端和配置方式请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
+其他可选后端、任务路由方式与能力配置请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
 
 ## 直接指向仓库或文档中心
 
@@ -156,7 +160,7 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
-**12+ LLM providers** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及离线默认的 heuristic。
+**可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
 **9 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider 和 GitHub Copilot CLI。可选 graph-first hooks 会先引导代理读取 wiki，再进行大范围搜索。
 
@@ -203,7 +207,7 @@ Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用于 grap
 <!-- readme-section:providers -->
 ## Providers
 
-SwarmVault 按能力而不是按品牌路由。内置 provider 类型：
+模型提供方是可选的。SwarmVault 按能力而不是按品牌路由。内置 provider 类型：
 
 `heuristic` `openai` `anthropic` `gemini` `ollama` `openrouter` `groq` `together` `xai` `cerebras` `openai-compatible` `custom`
 

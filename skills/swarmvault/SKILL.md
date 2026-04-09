@@ -39,7 +39,7 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 - Treat `wiki/` and `state/` as first-class outputs. Inspect them instead of trusting a single chat answer.
 - Prefer `wiki/graph/report.md`, `state/graph.json`, and saved wiki pages over ad hoc broad search when they already exist.
 - Use `source add` for recurring directories, public GitHub repo roots, and docs hubs. Use `ingest` and `add` for deliberate one-off inputs.
-- The default heuristic provider is only for smoke tests or offline defaults. Point real vaults at a stronger provider before serious synthesis.
+- The default heuristic provider is a valid local/offline starting point. Add a model provider only when the user wants richer synthesis quality or optional capabilities such as embeddings, vision, or image generation.
 - If an OpenAI-compatible backend cannot satisfy structured generation, reduce its declared capabilities instead of forcing every task through it.
 - Keep raw sources immutable. Put corrections in schema, new sources, or saved outputs rather than manually rewriting generated provenance.
 

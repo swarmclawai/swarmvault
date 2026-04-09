@@ -14,6 +14,8 @@ Documentation on the website is currently English-first. If wording drifts betwe
 
 > Most "chat with your docs" tools answer a question and throw away the work. SwarmVault treats the vault itself as the product. Every operation writes durable artifacts you can inspect, diff, and keep improving.
 
+SwarmVault is inspired by Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist. The core pattern is the same: keep a durable wiki between you and raw sources. SwarmVault turns that pattern into a local toolchain with graph, search, review, automation, and optional model-backed synthesis.
+
 <!-- readme-section:install -->
 ## Install
 
@@ -65,9 +67,11 @@ swarmvault graph push neo4j --dry-run
 ```
 
 <!-- readme-section:provider-setup -->
-## Configure a Real Provider
+## Optional: Add a Model Provider
 
-The built-in `heuristic` provider is useful for smoke tests and offline defaults, but it is not meant for serious synthesis quality. For real compile and query work, point the vault at a proper model provider:
+You do not need API keys or an external model provider to start using SwarmVault. The built-in `heuristic` provider supports local/offline vault setup, ingest, compile, graph/report/search workflows, and lightweight query or lint defaults.
+
+Add a model provider when you want richer synthesis quality or extra capabilities such as semantic embeddings, vision, or native image generation:
 
 ```json
 {
@@ -86,7 +90,7 @@ The built-in `heuristic` provider is useful for smoke tests and offline defaults
 }
 ```
 
-See the [provider docs](https://www.swarmvault.ai/docs/providers) for other supported backends and configuration examples.
+See the [provider docs](https://www.swarmvault.ai/docs/providers) for optional backends, task routing, and capability-specific configuration examples.
 
 ## Point It At A Repo Or Docs Hub
 
@@ -160,7 +164,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 
-**12+ LLM providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline use.
+**Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
 **9 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, and GitHub Copilot CLI. Optional graph-first hooks bias agents toward the wiki before broad search.
 
@@ -207,7 +211,7 @@ Each folder has real input files and actual output so you can run it yourself an
 <!-- readme-section:providers -->
 ## Providers
 
-SwarmVault routes by capability, not brand. Built-in provider types:
+Providers are optional. SwarmVault routes by capability, not brand. Built-in provider types:
 
 `heuristic` `openai` `anthropic` `gemini` `ollama` `openrouter` `groq` `together` `xai` `cerebras` `openai-compatible` `custom`
 

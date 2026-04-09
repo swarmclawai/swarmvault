@@ -52,6 +52,8 @@ const requiredSubstrings = [
   "swarmvault install --agent gemini --hook",
   "swarmvault mcp",
   "clawhub install swarmvault",
+  "LLM Wiki",
+  "https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f",
   ".js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1",
   "\"type\": \"openai\"",
   "OPENAI_API_KEY",

@@ -2,6 +2,8 @@
 
 Use the SwarmVault skill when you want a local-first knowledge vault that compiles files, URLs, code, and research captures into durable markdown pages, a searchable graph, and reviewable outputs on disk.
 
+SwarmVault is inspired by Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist, then extended into a local toolchain with graph/search artifacts, review flows, automation, and optional provider-backed synthesis.
+
 ## Install
 
 Install the skill from ClawHub:
@@ -50,7 +52,7 @@ swarmvault graph serve
 swarmvault mcp
 ```
 
-The default `heuristic` provider is useful for smoke tests and offline fallback, but not for serious synthesis quality. For real usage, configure a stronger provider in `swarmvault.config.json`.
+The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation.
 
 ## What The Skill Package Includes
 

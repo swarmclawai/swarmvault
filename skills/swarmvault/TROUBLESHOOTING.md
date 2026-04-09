@@ -23,7 +23,7 @@ Upgrade Node before troubleshooting provider or compile behavior.
 
 ## The vault compiles, but quality is weak
 
-Check whether the vault is still using the built-in `heuristic` provider. That is useful for smoke tests and offline fallback, but not for serious synthesis quality. Configure a real provider in `swarmvault.config.json`.
+Check whether the vault is still using the built-in `heuristic` provider. That is a valid local/offline default, but its synthesis is intentionally lighter. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation.
 
 ## `wiki/graph/report.md` or search artifacts are missing
 

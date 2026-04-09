@@ -14,6 +14,8 @@
 
 > 多くの「ドキュメントと会話する」ツールは、質問に答えたあと作業を捨ててしまいます。SwarmVault はボルトそのものをプロダクトとして扱います。すべての操作が、確認・差分比較・継続改善できる永続的な成果物を書き出します。
 
+SwarmVault は Andrej Karpathy の [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist に着想を得ています。核になる発想は同じで、生のソースと日々の利用の間に永続的な wiki を置くことです。SwarmVault はそのパターンを、グラフ、検索、レビュー、オートメーション、そして任意のモデル強化を備えたローカルなツールチェーンとして具体化しています。
+
 <!-- readme-section:install -->
 ## インストール
 
@@ -65,9 +67,11 @@ swarmvault graph push neo4j --dry-run
 ```
 
 <!-- readme-section:provider-setup -->
-## 実運用プロバイダーの設定
+## 任意: モデルプロバイダーを追加
 
-組み込みの `heuristic` プロバイダーは smoke テストやオフライン既定値には便利ですが、本格的な要約や問い合わせ品質には向きません。実運用では、ボルトを実際のモデルプロバイダーに向けてください:
+SwarmVault を始めるのに API キーや外部モデルプロバイダーは必須ではありません。組み込みの `heuristic` プロバイダーで、ローカル/オフラインのボルト初期化、ingest、compile、graph/report/search、軽量な query や lint の既定フローを回せます。
+
+より高品質な統合結果や、semantic embeddings、vision、ネイティブ画像生成のような追加機能が欲しいときに、モデルプロバイダーを追加してください:
 
 ```json
 {
@@ -86,7 +90,7 @@ swarmvault graph push neo4j --dry-run
 }
 ```
 
-他のバックエンドや設定例は [provider docs](https://www.swarmvault.ai/docs/providers) を参照してください。
+他の任意バックエンド、タスクの振り分け、能力ごとの設定例は [provider docs](https://www.swarmvault.ai/docs/providers) を参照してください。
 
 ## リポジトリや docs ハブを直接追加
 
@@ -156,7 +160,7 @@ clawhub install swarmvault
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
-**12+ LLM providers** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン既定の heuristic を使えます。
+**任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 
 **9 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI 用のインストール規則があります。任意の graph-first hooks により、エージェントは広い検索の前に wiki を優先します。
 
@@ -203,7 +207,7 @@ Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応してお
 <!-- readme-section:providers -->
 ## Providers
 
-SwarmVault はブランド名ではなく能力でルーティングします。組み込みの provider type:
+モデルプロバイダーは任意です。SwarmVault はブランド名ではなく能力でルーティングします。組み込みの provider type:
 
 `heuristic` `openai` `anthropic` `gemini` `ollama` `openrouter` `groq` `together` `xai` `cerebras` `openai-compatible` `custom`
 
