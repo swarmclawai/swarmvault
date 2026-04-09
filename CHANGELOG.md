@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.2
+
+- Added parser-backed Bash and Dart code ingestion, including tree-sitter-backed function, import, type, and call extraction wired through the existing module-page, graph, search, and code-index pipeline
+- Added repo-aware Bash include resolution for `source` and `.` plus Dart import resolution for relative imports and same-package `package:` imports using `pubspec.yaml`
+- Added shebang-aware detection for extensionless executable shell scripts during local and repo ingest so shell-heavy repositories are indexed without requiring a `.sh` suffix
+- Expanded the tiny validation matrix, code-ingestion tests, tarball-installed smoke coverage, localized README trio, package READMEs, skill docs, and site docs for the new Bash/shell and Dart support surfaces
+
 ## 0.6.1
 
 - Added a configurable `profile` layer in `swarmvault.config.json` with composable `presets`, `dashboardPack`, `guidedSessionMode`, and `dataviewBlocks`, while keeping `personal-research` as a starter alias and allowing `swarmvault init --profile reader,timeline`-style preset composition

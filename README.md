@@ -184,7 +184,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Images | `.png .jpg .webp` | Vision provider (when configured) |
 | Research | arXiv, DOI, articles, X/Twitter | Normalized markdown via `swarmvault add` |
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
-| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | AST via tree-sitter + module resolution |
+| Code | `.js .jsx .ts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .php .rb .ps1` | AST via tree-sitter + module resolution |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 | Managed sources | local directories, public GitHub repo roots, docs hubs | Registry-backed sync via `swarmvault source add` |
 

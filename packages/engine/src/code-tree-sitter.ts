@@ -98,12 +98,14 @@ type TreeSitterGrammarAsset = {
 };
 
 const grammarAssetByLanguage: Record<Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">, TreeSitterGrammarAsset> = {
+  bash: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-bash.wasm" },
   python: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-python.wasm" },
   go: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-go.wasm" },
   rust: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-rust.wasm" },
   java: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-java.wasm" },
   kotlin: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-kotlin.wasm" },
   scala: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-scala.wasm" },
+  dart: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-dart.wasm" },
   lua: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-lua.wasm" },
   zig: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-zig.wasm" },
   csharp: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-c-sharp.wasm" },
@@ -183,7 +185,10 @@ function normalizeSymbolReference(value: string): string {
 }
 
 function stripCodeExtension(filePath: string): string {
-  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
+  return filePath.replace(
+    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i,
+    ""
+  );
 }
 
 function manifestModuleName(manifest: SourceManifest, language: CodeLanguage): string | undefined {
@@ -767,6 +772,108 @@ function parseScalaImport(text: string): CodeImport[] {
     }));
 }
 
+function bashCommandName(commandNode: TreeNode | null | undefined): string | undefined {
+  if (!commandNode) {
+    return undefined;
+  }
+  const nameNode =
+    commandNode.childForFieldName("name") ?? findNamedChild(commandNode, "command_name") ?? commandNode.namedChildren.at(0) ?? null;
+  if (!nameNode) {
+    return undefined;
+  }
+  return nodeText(findNamedChild(nameNode, "word") ?? nameNode.namedChildren.at(0) ?? nameNode).trim() || undefined;
+}
+
+function bashSpecifierLooksLocal(specifier: string): boolean {
+  return specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes("/") || /\.(?:sh|bash|zsh)$/i.test(specifier);
+}
+
+function parseBashImport(commandNode: TreeNode): CodeImport | undefined {
+  const commandName = bashCommandName(commandNode);
+  if (commandName !== "source" && commandName !== ".") {
+    return undefined;
+  }
+  const argumentNode =
+    commandNode.childForFieldName("argument") ??
+    commandNode.namedChildren.find((child) => child && child !== (commandNode.childForFieldName("name") ?? null)) ??
+    null;
+  const specifier = quotedPath(nodeText(argumentNode));
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    isExternal: !bashSpecifierLooksLocal(specifier),
+    reExport: false
+  };
+}
+
+function parseDartUri(node: TreeNode | null | undefined): string | undefined {
+  const stringNode = node?.descendantsOfType("string_literal").find((item): item is TreeNode => item !== null) ?? null;
+  return stringNode ? quotedPath(stringNode.text) : undefined;
+}
+
+function dartSpecifierLooksLocal(specifier: string): boolean {
+  return (
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier.startsWith("/") ||
+    (!specifier.startsWith("package:") && !specifier.includes(":") && specifier.endsWith(".dart"))
+  );
+}
+
+function parseDartDirective(node: TreeNode): CodeImport | undefined {
+  if (node.type === "import_or_export") {
+    const importNode = findNamedChild(node, "library_import");
+    if (importNode) {
+      const specifier = parseDartUri(
+        findNamedChild(importNode, "configurable_uri") ??
+          findNamedChild(findNamedChild(importNode, "import_specification"), "configurable_uri") ??
+          importNode
+      );
+      if (!specifier) {
+        return undefined;
+      }
+      return {
+        specifier,
+        importedSymbols: [],
+        isExternal: !dartSpecifierLooksLocal(specifier) && !specifier.startsWith("package:"),
+        reExport: false
+      };
+    }
+
+    const exportNode = findNamedChild(node, "library_export");
+    if (exportNode) {
+      const specifier = parseDartUri(findNamedChild(exportNode, "configurable_uri") ?? exportNode);
+      if (!specifier) {
+        return undefined;
+      }
+      return {
+        specifier,
+        importedSymbols: [],
+        isExternal: !dartSpecifierLooksLocal(specifier) && !specifier.startsWith("package:"),
+        reExport: true
+      };
+    }
+    return undefined;
+  }
+
+  if (node.type !== "part_directive") {
+    return undefined;
+  }
+  const specifier = parseDartUri(findNamedChild(node, "uri") ?? node);
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    isExternal: false,
+    reExport: false
+  };
+}
+
 function parseLuaRequire(node: TreeNode): CodeImport | undefined {
   const stringNode = node.descendantsOfType("string").find((item): item is TreeNode => item !== null);
   const identifiers = node
@@ -963,6 +1070,36 @@ function scalaDefinitionKind(node: TreeNode): CodeSymbolKind | undefined {
   return undefined;
 }
 
+function bashCallNamesFromBody(bodyNode: TreeNode | null | undefined, selfName?: string): string[] {
+  if (!bodyNode) {
+    return [];
+  }
+  return uniqueBy(
+    bodyNode
+      .descendantsOfType("command")
+      .filter((item): item is TreeNode => item !== null)
+      .map((item) => bashCommandName(item))
+      .filter((name): name is string => Boolean(name))
+      .filter((name) => name !== "source" && name !== "." && name !== selfName),
+    (name) => name
+  );
+}
+
+function dartCallableName(node: TreeNode | null | undefined): string | undefined {
+  if (!node) {
+    return undefined;
+  }
+  if (node.type === "function_signature") {
+    return extractIdentifier(node.childForFieldName("name") ?? findNamedChild(node, "identifier"));
+  }
+  if (node.type === "constructor_signature") {
+    return extractIdentifier(node.childForFieldName("name") ?? findNamedChild(node, "identifier"));
+  }
+  return extractIdentifier(
+    node.childForFieldName("name") ?? findNamedChild(node, "function_signature") ?? findNamedChild(node, "identifier")
+  );
+}
+
 function luaFunctionName(node: TreeNode | null | undefined): string | undefined {
   if (!node) {
     return undefined;
@@ -989,6 +1126,249 @@ function zigDeclarationKind(node: TreeNode): CodeSymbolKind | undefined {
     return "enum";
   }
   return undefined;
+}
+
+function bashCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "command") {
+      const parsed = parseBashImport(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+    if (child.type !== "function_definition") {
+      continue;
+    }
+    const name = nodeText(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null).trim();
+    if (!name) {
+      continue;
+    }
+    draftSymbols.push({
+      name,
+      kind: "function",
+      signature: singleLineSignature(child.text),
+      exported: true,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: nodeText(child.childForFieldName("body") ?? findNamedChild(child, "compound_statement"))
+    });
+    exportLabels.push(name);
+  }
+
+  for (let index = 0; index < draftSymbols.length; index += 1) {
+    const functionNode = rootNode.namedChildren.find(
+      (child) =>
+        child?.type === "function_definition" &&
+        nodeText(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null).trim() === draftSymbols[index]?.name
+    );
+    draftSymbols[index]!.callNames = bashCallNamesFromBody(
+      functionNode?.childForFieldName("body") ?? findNamedChild(functionNode, "compound_statement"),
+      draftSymbols[index]!.name
+    );
+  }
+
+  return finalizeCodeAnalysis(manifest, "bash", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+function dartCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  let libraryName: string | undefined;
+
+  const pushScopedFunctions = (bodyNode: TreeNode | null | undefined, scopeName: string) => {
+    if (!bodyNode) {
+      return;
+    }
+    const children = bodyNode.namedChildren.filter((item): item is TreeNode => item !== null);
+    for (let index = 0; index < children.length; index += 1) {
+      const child = children[index];
+      if (!child) {
+        continue;
+      }
+
+      if (child.type === "method_signature") {
+        const signatureNode = findNamedChild(child, "function_signature") ?? child;
+        const methodName = dartCallableName(signatureNode);
+        if (!methodName) {
+          continue;
+        }
+        const bodyNode = children[index + 1]?.type === "function_body" ? children[index + 1] : null;
+        const symbolName = `${scopeName}.${methodName}`;
+        const exported = !scopeName.startsWith("_") && !methodName.startsWith("_");
+        draftSymbols.push({
+          name: symbolName,
+          kind: "function",
+          signature: singleLineSignature(`${child.text} ${nodeText(bodyNode)}`),
+          exported,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: nodeText(bodyNode)
+        });
+        if (exported) {
+          exportLabels.push(symbolName);
+        }
+        continue;
+      }
+
+      if (child.type !== "declaration") {
+        continue;
+      }
+      const constructorNode = findNamedChild(child, "constructor_signature");
+      const constructorName = dartCallableName(constructorNode);
+      if (!constructorName) {
+        continue;
+      }
+      const symbolName = `${scopeName}.${constructorName}`;
+      const exported = !scopeName.startsWith("_") && !constructorName.startsWith("_");
+      draftSymbols.push({
+        name: symbolName,
+        kind: "function",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      if (exported) {
+        exportLabels.push(symbolName);
+      }
+    }
+  };
+
+  const topLevelChildren = rootNode.namedChildren.filter((item): item is TreeNode => item !== null);
+  for (let index = 0; index < topLevelChildren.length; index += 1) {
+    const child = topLevelChildren[index];
+    if (!child) {
+      continue;
+    }
+    if (child.type === "library_name") {
+      libraryName = nodeText(findNamedChild(child, "dotted_identifier_list") ?? child.namedChildren.at(-1) ?? null) || libraryName;
+      continue;
+    }
+    if (child.type === "import_or_export" || child.type === "part_directive") {
+      const parsed = parseDartDirective(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+    if (child.type === "function_signature") {
+      const functionName = dartCallableName(child);
+      if (!functionName) {
+        continue;
+      }
+      const bodyNode = topLevelChildren[index + 1]?.type === "function_body" ? topLevelChildren[index + 1] : null;
+      const exported = !functionName.startsWith("_");
+      draftSymbols.push({
+        name: functionName,
+        kind: "function",
+        signature: singleLineSignature(`${child.text} ${nodeText(bodyNode)}`),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(bodyNode)
+      });
+      if (exported) {
+        exportLabels.push(functionName);
+      }
+      continue;
+    }
+    if (child.type === "mixin_declaration") {
+      const mixinName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+      if (!mixinName) {
+        continue;
+      }
+      const bodyNode = child.childForFieldName("body") ?? findNamedChild(child, "class_body");
+      const exported = !mixinName.startsWith("_");
+      draftSymbols.push({
+        name: mixinName,
+        kind: "trait",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(bodyNode) || child.text
+      });
+      if (exported) {
+        exportLabels.push(mixinName);
+      }
+      pushScopedFunctions(bodyNode, mixinName);
+      continue;
+    }
+    if (child.type === "enum_declaration") {
+      const enumName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+      if (!enumName) {
+        continue;
+      }
+      const exported = !enumName.startsWith("_");
+      draftSymbols.push({
+        name: enumName,
+        kind: "enum",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(child.childForFieldName("body") ?? findNamedChild(child, "enum_body")) || child.text
+      });
+      if (exported) {
+        exportLabels.push(enumName);
+      }
+      continue;
+    }
+    if (child.type === "extension_declaration") {
+      const extensionName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+      const targetType = extractIdentifier(child.childForFieldName("type") ?? findNamedChild(child, "type_identifier")) ?? extensionName;
+      const bodyNode = child.childForFieldName("body") ?? findNamedChild(child, "extension_body");
+      if (targetType) {
+        pushScopedFunctions(bodyNode, targetType);
+      }
+      continue;
+    }
+    if (child.type !== "class_definition") {
+      continue;
+    }
+    const className = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+    if (!className) {
+      continue;
+    }
+    const superTypes = descendantTypeNames(child.childForFieldName("superclass"));
+    const interfaceTypes = descendantTypeNames(child.childForFieldName("interfaces"));
+    const bodyNode = child.childForFieldName("body") ?? findNamedChild(child, "class_body");
+    const exported = !className.startsWith("_");
+    draftSymbols.push({
+      name: className,
+      kind: "class",
+      signature: singleLineSignature(child.text),
+      exported,
+      callNames: [],
+      extendsNames: superTypes.slice(0, 1),
+      implementsNames: [...superTypes.slice(1), ...interfaceTypes],
+      bodyText: nodeText(bodyNode) || child.text
+    });
+    if (exported) {
+      exportLabels.push(className);
+    }
+    pushScopedFunctions(bodyNode, className);
+  }
+
+  return finalizeCodeAnalysis(manifest, "dart", imports, draftSymbols, exportLabels, diagnostics, {
+    namespace: libraryName
+  });
 }
 
 function pythonCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
@@ -2110,6 +2490,8 @@ export async function analyzeTreeSitterCode(
     const diagnostics = diagnosticsFromTree(tree.rootNode);
     const rationales = extractTreeSitterRationales(manifest, language, tree.rootNode);
     switch (language) {
+      case "bash":
+        return { code: bashCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "python":
         return { code: pythonCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "go":
@@ -2122,6 +2504,8 @@ export async function analyzeTreeSitterCode(
         return { code: kotlinCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "scala":
         return { code: scalaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "dart":
+        return { code: dartCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "lua":
         return { code: luaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "zig":

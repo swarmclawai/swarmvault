@@ -195,7 +195,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - EPUB inputs split into chapter-level manifests with shared group metadata so books stay navigable instead of becoming one giant source
 - CSV and TSV inputs produce bounded tabular summaries with delimiter-aware previews and compact column hints
 - XLSX inputs extract workbook-level and sheet-level previews, while PPTX inputs extract slide text plus speaker notes when present
-- JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
+- JavaScript, JSX, TypeScript, TSX, Bash/shell script, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
 - `.rst` and `.rest` inputs are treated as first-class text sources with lightweight heading and directive normalization before analysis
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
 - repo-aware manifests, graph nodes, and graph pages can also carry `sourceClass` so first-party, third-party, resource, and generated material can be filtered and reported separately

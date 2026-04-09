@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, dashboard, review, and MCP artifacts to disk from books, notes, transcripts, exports, datasets, slide decks, files, URLs, code, and recurring source workflows."
-version: "0.6.1"
+version: "0.6.2"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -54,7 +54,7 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 - `wiki/outputs/source-reviews/`: staged source-scoped review pages.
 - `wiki/outputs/source-guides/`: staged source-integration guides for one-source-at-a-time workflows.
 - `wiki/dashboards/`: recent sources, reading log, timeline, source sessions, source guides, research map, contradiction, and open-question dashboards.
-- `wiki/code/`: module pages for ingested JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell sources.
+- `wiki/code/`: module pages for ingested JavaScript, JSX, TypeScript, TSX, Bash/shell script, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell sources.
 - `state/extracts/`: extracted markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, transcripts, Slack exports, email, calendar, and image sources.
 - `state/code-index.json`: repo-aware code aliases and local import resolution data.
 - `wiki/projects/`: project rollups over canonical pages.

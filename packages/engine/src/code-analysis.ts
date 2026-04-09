@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
+import YAML from "yaml";
 import { analyzeTreeSitterCode } from "./code-tree-sitter.js";
 import type {
   CodeAnalysis,
@@ -29,6 +30,11 @@ type DraftCodeSymbol = {
   bodyText?: string;
 };
 
+type CodeLanguageDetectionOptions = {
+  content?: string;
+  executable?: boolean;
+};
+
 function scriptKindFor(language: CodeLanguage): ts.ScriptKind {
   switch (language) {
     case "typescript":
@@ -48,6 +54,43 @@ function isRelativeSpecifier(specifier: string): boolean {
 
 function isLocalIncludeSpecifier(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes("/");
+}
+
+function bashSpecifierLooksLocal(specifier: string): boolean {
+  return isLocalIncludeSpecifier(specifier) || /\.(?:sh|bash|zsh)$/i.test(specifier);
+}
+
+function dartSpecifierLooksLocal(specifier: string): boolean {
+  return (
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier.startsWith("/") ||
+    (!specifier.startsWith("package:") && !specifier.includes(":") && specifier.endsWith(".dart"))
+  );
+}
+
+function interpreterFromShebang(content: string | undefined): string | undefined {
+  if (!content?.startsWith("#!")) {
+    return undefined;
+  }
+  const firstLine = content.split(/\r?\n/, 1)[0]?.slice(2).trim() ?? "";
+  if (!firstLine) {
+    return undefined;
+  }
+  const parts = firstLine.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return undefined;
+  }
+  const basename = (value: string) => path.posix.basename(value.trim());
+  if (basename(parts[0] ?? "") === "env") {
+    const interpreter = parts.slice(1).find((part) => !part.startsWith("-"));
+    return interpreter ? basename(interpreter) : undefined;
+  }
+  return basename(parts[0] ?? "");
+}
+
+function isShellInterpreter(value: string | undefined): boolean {
+  return value === "sh" || value === "bash" || value === "zsh";
 }
 
 function formatDiagnosticCategory(category: ts.DiagnosticCategory): CodeDiagnostic["category"] {
@@ -373,7 +416,10 @@ function makeRationale(
 }
 
 function stripCodeExtension(filePath: string): string {
-  return filePath.replace(/\.(?:[cm]?jsx?|tsx?|mts|cts|py|go|rs|java|kt|kts|scala|sc|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i, "");
+  return filePath.replace(
+    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i,
+    ""
+  );
 }
 
 function manifestModuleName(manifest: SourceManifest, language: CodeLanguage): string | undefined {
@@ -1860,7 +1906,7 @@ function analyzeTypeScriptLikeCode(
   };
 }
 
-export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage | undefined {
+export function inferCodeLanguage(filePath: string, mimeType = "", options: CodeLanguageDetectionOptions = {}): CodeLanguage | undefined {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".ts" || extension === ".mts" || extension === ".cts") {
     return "typescript";
@@ -1873,6 +1919,9 @@ export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage
   }
   if (extension === ".js" || extension === ".mjs" || extension === ".cjs" || mimeType.includes("javascript")) {
     return "javascript";
+  }
+  if (extension === ".sh" || extension === ".bash" || extension === ".zsh" || mimeType === "application/x-sh") {
+    return "bash";
   }
   if (extension === ".py") {
     return "python";
@@ -1891,6 +1940,9 @@ export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage
   }
   if (extension === ".scala" || extension === ".sc") {
     return "scala";
+  }
+  if (extension === ".dart") {
+    return "dart";
   }
   if (extension === ".lua") {
     return "lua";
@@ -1915,6 +1967,9 @@ export function inferCodeLanguage(filePath: string, mimeType = ""): CodeLanguage
   }
   if ([".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"].includes(extension)) {
     return "cpp";
+  }
+  if (!extension && options.executable && isShellInterpreter(interpreterFromShebang(options.content))) {
+    return "bash";
   }
   return undefined;
 }
@@ -1953,6 +2008,58 @@ function recordAlias(target: Set<string>, value?: string): void {
 function manifestBasenameWithoutExtension(manifest: SourceManifest): string {
   const target = manifest.repoRelativePath ?? manifest.originalPath ?? manifest.storedPath;
   return path.posix.basename(stripCodeExtension(normalizeAlias(target)));
+}
+
+type DartPackageInfo = {
+  rootDir: string;
+  name: string;
+};
+
+async function readNearestDartPackageInfo(
+  startPath: string,
+  cache: Map<string, DartPackageInfo | null>
+): Promise<DartPackageInfo | undefined> {
+  let current = path.resolve(startPath);
+  try {
+    const stat = await fs.stat(current);
+    if (!stat.isDirectory()) {
+      current = path.dirname(current);
+    }
+  } catch {
+    current = path.dirname(current);
+  }
+
+  while (true) {
+    if (cache.has(current)) {
+      const cached = cache.get(current);
+      return cached === null ? undefined : cached;
+    }
+    const pubspecPath = path.join(current, "pubspec.yaml");
+    if (
+      await fs
+        .access(pubspecPath)
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      try {
+        const content = await fs.readFile(pubspecPath, "utf8");
+        const parsed = YAML.parse(content);
+        const packageName = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+        const info = packageName ? { rootDir: current, name: packageName } : null;
+        cache.set(current, info);
+        return info ?? undefined;
+      } catch {
+        cache.set(current, null);
+        return undefined;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      cache.set(current, null);
+      return undefined;
+    }
+    current = parent;
+  }
 }
 
 async function readNearestGoModulePath(startPath: string, cache: Map<string, string | null>): Promise<string | undefined> {
@@ -2009,6 +2116,8 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
     case "typescript":
     case "tsx":
       return [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
+    case "bash":
+      return [".sh", ".bash", ".zsh"];
     case "python":
       return [".py"];
     case "go":
@@ -2021,6 +2130,8 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       return [".kt", ".kts"];
     case "scala":
       return [".scala", ".sc"];
+    case "dart":
+      return [".dart"];
     case "lua":
       return [".lua"];
     case "zig":
@@ -2043,6 +2154,7 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
 export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[], analyses: SourceAnalysis[]): Promise<CodeIndexArtifact> {
   const analysesBySourceId = new Map(analyses.map((analysis) => [analysis.sourceId, analysis]));
   const goModuleCache = new Map<string, string | null>();
+  const dartPackageCache = new Map<string, DartPackageInfo | null>();
   const entries: CodeIndexEntry[] = [];
 
   for (const manifest of manifests) {
@@ -2071,6 +2183,9 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
       case "python":
         recordAlias(aliases, normalizedModuleName?.replace(/\//g, "."));
         break;
+      case "bash":
+        recordAlias(aliases, basename);
+        break;
       case "rust":
         if (repoRelativePath) {
           recordAlias(aliases, rustModuleAlias(repoRelativePath));
@@ -2092,6 +2207,7 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
       case "java":
       case "kotlin":
       case "scala":
+      case "dart":
       case "csharp":
         if (normalizedNamespace) {
           recordAlias(aliases, `${normalizedNamespace}.${basename}`);
@@ -2099,6 +2215,19 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
         if (normalizedNamespace) {
           for (const symbol of analysis.code.symbols) {
             recordAlias(aliases, `${normalizedNamespace}.${symbol.name}`);
+          }
+        }
+        if (analysis.code.language === "dart" && repoRelativePath) {
+          recordAlias(aliases, basename);
+          const originalPath = manifest.originalPath ? path.resolve(manifest.originalPath) : path.resolve(rootDir, manifest.storedPath);
+          const packageInfo = await readNearestDartPackageInfo(originalPath, dartPackageCache);
+          if (packageInfo) {
+            const packageRelativePath = toPosix(path.relative(packageInfo.rootDir, originalPath));
+            if (packageRelativePath.startsWith("lib/")) {
+              const packagePath = packageRelativePath.slice("lib/".length);
+              recordAlias(aliases, `package:${packageInfo.name}/${packagePath}`);
+              recordAlias(aliases, `package:${packageInfo.name}/${stripCodeExtension(packagePath)}`);
+            }
           }
         }
         break;
@@ -2262,6 +2391,10 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
     case "scala":
     case "csharp":
       return aliasMatches(lookup, codeImport.specifier);
+    case "dart":
+      return repoRelativePath && dartSpecifierLooksLocal(codeImport.specifier)
+        ? repoPathMatches(lookup, ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language)))
+        : aliasMatches(lookup, codeImport.specifier);
     case "lua":
       return luaSpecifierLooksLocal(codeImport.specifier)
         ? repoPathMatches(lookup, ...resolveLuaModuleCandidates(codeImport.specifier))
@@ -2272,8 +2405,12 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
         : aliasMatches(lookup, codeImport.specifier);
     case "php":
     case "ruby":
+    case "bash":
     case "powershell":
-      if (repoRelativePath && isLocalIncludeSpecifier(codeImport.specifier)) {
+      if (
+        repoRelativePath &&
+        (language === "bash" ? bashSpecifierLooksLocal(codeImport.specifier) : isLocalIncludeSpecifier(codeImport.specifier))
+      ) {
         return repoPathMatches(
           lookup,
           ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language))
@@ -2320,6 +2457,10 @@ function importLooksLocal(manifest: SourceManifest, codeImport: CodeImport, cand
     case "kotlin":
     case "scala":
       return !codeImport.isExternal;
+    case "bash":
+      return bashSpecifierLooksLocal(codeImport.specifier);
+    case "dart":
+      return dartSpecifierLooksLocal(codeImport.specifier);
     case "lua":
       return luaSpecifierLooksLocal(codeImport.specifier);
     case "zig":
