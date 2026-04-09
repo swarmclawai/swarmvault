@@ -76,6 +76,24 @@ const STOPWORDS = new Set([
   "your"
 ]);
 
+const MANIFEST_TITLE_SOURCE_KINDS = new Set<SourceManifest["sourceKind"]>([
+  "transcript",
+  "chat_export",
+  "email",
+  "calendar",
+  "epub",
+  "csv",
+  "xlsx",
+  "pptx"
+]);
+
+const HEURISTIC_SECTION_SOURCE_KINDS = new Map<SourceManifest["sourceKind"], string>([
+  ["transcript", "Transcript"],
+  ["chat_export", "Messages"],
+  ["email", "Message"],
+  ["calendar", "Description"]
+]);
+
 function extractTopTerms(text: string, count: number): string[] {
   const frequency = new Map<string, number>();
   for (const token of text.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []) {
@@ -114,14 +132,50 @@ function deriveTitle(manifest: SourceManifest, text: string): string {
   return heading || manifest.title;
 }
 
+function extractMarkdownSection(text: string, heading: string): string {
+  const marker = `## ${heading}`;
+  const start = text.indexOf(marker);
+  if (start === -1) {
+    return text;
+  }
+  const after = text.slice(start + marker.length).trim();
+  const nextSection = after.match(/\n##\s+/);
+  return (nextSection?.index !== undefined ? after.slice(0, nextSection.index) : after).trim() || text;
+}
+
+function textForHeuristicAnalysis(manifest: SourceManifest, text: string): string {
+  const section = HEURISTIC_SECTION_SOURCE_KINDS.get(manifest.sourceKind);
+  return section ? extractMarkdownSection(text, section) : text;
+}
+
+function normalizeAnalysisTitle(manifest: SourceManifest, candidate: string): string {
+  const normalized = normalizeWhitespace(candidate.replace(/^#+\s+/, ""));
+  if (!normalized) {
+    return manifest.title;
+  }
+  if (MANIFEST_TITLE_SOURCE_KINDS.has(manifest.sourceKind)) {
+    return manifest.title;
+  }
+  if (normalized.length > 140 || normalized.includes(" ## ")) {
+    return manifest.title;
+  }
+  return normalized;
+}
+
+function normalizeSourceAnalysis(manifest: SourceManifest, analysis: SourceAnalysis): SourceAnalysis {
+  const title = normalizeAnalysisTitle(manifest, analysis.title);
+  return title === analysis.title ? analysis : { ...analysis, title };
+}
+
 function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: string): SourceAnalysis {
-  const normalized = normalizeWhitespace(text);
+  const analysisText = textForHeuristicAnalysis(manifest, text);
+  const normalized = normalizeWhitespace(analysisText);
   const concepts = extractTopTerms(normalized, 6).map((term) => ({
     id: `concept:${slugify(term)}`,
     name: term,
     description: `Frequently referenced concept in ${manifest.title}.`
   }));
-  const entities = extractEntities(text, 6).map((term) => ({
+  const entities = extractEntities(analysisText, 6).map((term) => ({
     id: `entity:${slugify(term)}`,
     name: term,
     description: `Named entity mentioned in ${manifest.title}.`
@@ -283,7 +337,11 @@ export async function analyzeSource(
     cached.extractionHash === manifest.extractionHash &&
     cached.schemaHash === schema.hash
   ) {
-    return cached;
+    const normalizedCached = normalizeSourceAnalysis(manifest, cached);
+    if (normalizedCached !== cached) {
+      await writeJsonFile(cachePath, normalizedCached);
+    }
+    return normalizedCached;
   }
 
   const extraction = await readExtractionArtifact(paths.rootDir, manifest);
@@ -351,8 +409,9 @@ export async function analyzeSource(
     }
   }
 
-  await writeJsonFile(cachePath, analysis);
-  return analysis;
+  const normalized = normalizeSourceAnalysis(manifest, analysis);
+  await writeJsonFile(cachePath, normalized);
+  return normalized;
 }
 
 export function analysisSignature(analysis: SourceAnalysis): string {

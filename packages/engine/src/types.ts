@@ -428,6 +428,7 @@ export interface ManagedSourceRecord {
   lastSyncStatus?: "success" | "error";
   lastSyncCounts?: ManagedSourceSyncCounts;
   lastError?: string;
+  changed?: boolean;
 }
 
 export interface ManagedSourcesArtifact {
