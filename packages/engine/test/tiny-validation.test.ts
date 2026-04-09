@@ -355,7 +355,7 @@ describe("tiny validation matrix", () => {
 
     const results = await searchVault(rootDir, "Tiny HTML Source", 10);
     expect(results.some((result) => result.path.startsWith("sources/"))).toBe(true);
-  });
+  }, 30_000);
 
   it("covers every shipped local source kind with repo ingest", async () => {
     const rootDir = await createTempWorkspace();

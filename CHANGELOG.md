@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+- Fixed clean-checkout test runs by emitting the bundled engine hook scripts before `pnpm test`, and raised the tiny validation code-matrix timeout to stay stable on slower CI runners where repo ingest can legitimately exceed Vitest's default 5 second test limit
+
 ## 0.7.0
 
 - Expanded non-code ingest coverage with the full Word family (`.docx`/`.docm`/`.dotx`/`.dotm`), Excel family (`.xlsx`/`.xlsm`/`.xlsb`/`.xls`/`.xltx`/`.xltm` including legacy biff8), and PowerPoint family (`.pptx`/`.pptm`/`.potx`/`.potm`), plus first-class Rich Text (`.rtf`), BibTeX (`.bib`), Org-mode (`.org`), AsciiDoc (`.adoc`/`.asciidoc`), OpenDocument (`.odt`/`.odp`/`.ods`), and Jupyter (`.ipynb`) extractors; broadened the image pipeline to explicitly route `.heic`/`.heif`/`.avif`/`.jxl`/`.bmp`/`.tif`/`.tiff`/`.svg`/`.ico` alongside `.png`/`.jpg`/`.webp`; and extended the structured-data preview to `.xml`/`.ini`/`.env`/`.properties`/`.cfg`/`.conf` so config/data files match what the README advertises
