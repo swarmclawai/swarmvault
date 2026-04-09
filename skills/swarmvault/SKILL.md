@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, dashboard, review, and MCP artifacts to disk from books, notes, transcripts, exports, datasets, slide decks, files, URLs, code, and recurring source workflows."
-version: "0.6.0"
+version: "0.6.1"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -24,7 +24,7 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 2. Update `swarmvault.schema.md` before a serious compile. Use it for naming rules, categories, grounding, freshness expectations, and exclusions.
 3. Use `swarmvault source add <input>` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Ingest one-off inputs with `swarmvault ingest <path-or-url>`, or ingest a whole repo tree with `swarmvault ingest <directory>`.
-5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when the human should integrate one source at a time before canonical pages change. Use `--review` only for the lighter review-only path.
+5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when the human should integrate one source at a time before canonical pages change. Profiles using `guidedSessionMode: "canonical_review"` stage approval-queued canonical edits; `insights_only` profiles keep exploratory synthesis in `wiki/insights/`. Use `--review` only for the lighter review-only path.
 6. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint --repo` when the workflow should stay automated. Install `swarmvault hook install` when git checkouts and commits should trigger repo-aware refreshes automatically.
 7. Compile with `swarmvault compile`, or use `swarmvault compile --approve` when changes should go through the local review queue first.
 8. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
@@ -79,3 +79,4 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 - Save useful answers unless the user explicitly wants ephemeral output.
 - Prefer reviewable flows such as `compile --approve`, `review`, and `candidate` when a change should not activate silently.
 - Treat provider setup as part of serious vault operation. If only `heuristic` is configured, say so clearly.
+- When a vault uses the `profile` block in `swarmvault.config.json`, respect it as the deterministic behavior layer. `swarmvault.schema.md` still defines the human intent layer.

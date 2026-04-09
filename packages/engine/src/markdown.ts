@@ -46,6 +46,46 @@ function uniqueStrings(values: string[]): string[] {
   return uniqueBy(values.filter(Boolean), (value) => value);
 }
 
+const GUIDED_SOURCE_MARKER_PREFIX = "<!-- swarmvault-guided-source:";
+const GUIDED_SOURCE_START_SUFFIX = ":start -->";
+const GUIDED_SOURCE_END_SUFFIX = ":end -->";
+
+function extractGuidedSourceBlocks(content: string | null | undefined): string[] {
+  if (!content) {
+    return [];
+  }
+  const blocks: string[] = [];
+  let cursor = 0;
+  while (cursor < content.length) {
+    const startIndex = content.indexOf(GUIDED_SOURCE_MARKER_PREFIX, cursor);
+    if (startIndex === -1) {
+      break;
+    }
+    const scopeEndIndex = content.indexOf(GUIDED_SOURCE_START_SUFFIX, startIndex);
+    if (scopeEndIndex === -1) {
+      break;
+    }
+    const scopeId = content.slice(startIndex + GUIDED_SOURCE_MARKER_PREFIX.length, scopeEndIndex);
+    const endMarker = `${GUIDED_SOURCE_MARKER_PREFIX}${scopeId}${GUIDED_SOURCE_END_SUFFIX}`;
+    const endIndex = content.indexOf(endMarker, scopeEndIndex);
+    if (endIndex === -1) {
+      break;
+    }
+    const blockEnd = endIndex + endMarker.length;
+    blocks.push(content.slice(startIndex, blockEnd).trim());
+    cursor = blockEnd;
+  }
+  return uniqueStrings(blocks);
+}
+
+function appendGuidedSourceBlocks(body: string, existingContent?: string | null): string {
+  const blocks = extractGuidedSourceBlocks(existingContent);
+  if (!blocks.length) {
+    return body;
+  }
+  return [body.trimEnd(), "", "## Guided Session Notes", "", ...blocks, ""].join("\n");
+}
+
 function safeFrontmatter<T extends Record<string, unknown>>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -163,7 +203,8 @@ export function buildSourcePage(
   metadata: ManagedGraphPageMetadata,
   relatedOutputs: GraphPage[] = [],
   modulePage?: GraphPage,
-  decorations?: GeneratedPageDecorations
+  decorations?: GeneratedPageDecorations,
+  existingContent?: string | null
 ): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
@@ -208,69 +249,74 @@ export function buildSourcePage(
     ...sourceHashFrontmatter(sourceHashes, sourceSemanticHashes)
   };
 
-  const body = [
-    `# ${analysis.title}`,
-    "",
-    `Source ID: \`${manifest.sourceId}\``,
-    `Source Kind: \`${manifest.sourceKind}\``,
-    manifest.url ? `Source URL: ${manifest.url}` : `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
-    ...(manifest.sourceType ? [`Source Type: \`${manifest.sourceType}\``, ""] : [""]),
-    ...(manifest.sourceClass ? [`Source Class: \`${manifest.sourceClass}\``, ""] : []),
-    ...(manifest.sourceGroupTitle ? [`Source Group: ${manifest.sourceGroupTitle}`] : []),
-    ...(manifest.partTitle ? [`Part: ${manifest.partIndex ?? "?"}/${manifest.partCount ?? "?"} - ${manifest.partTitle}`] : []),
-    ...(manifest.details && Object.keys(manifest.details).length
-      ? [
-          "",
-          "## Source Details",
-          "",
-          ...Object.entries(manifest.details).map(([key, value]) => `- ${key.replace(/_/g, " ")}: ${value}`),
-          ""
-        ]
-      : []),
-    "",
-    "## Summary",
-    "",
-    analysis.summary,
-    "",
-    ...(analysis.code
-      ? [
-          "## Code Module",
-          "",
-          `- Language: \`${analysis.code.language}\``,
-          modulePage ? `- Module Page: [[${modulePage.path.replace(/\.md$/, "")}|${modulePage.title}]]` : "- Module Page: Not generated.",
-          `- Exports: ${analysis.code.exports.length ? analysis.code.exports.join(", ") : "None detected."}`,
-          `- Symbols: ${analysis.code.symbols.length ? analysis.code.symbols.map((symbol) => symbol.name).join(", ") : "None detected."}`,
-          analysis.code.diagnostics.length ? `- Diagnostics: ${analysis.code.diagnostics.length}` : "- Diagnostics: None.",
-          ""
-        ]
-      : []),
-    "## Concepts",
-    "",
-    ...(analysis.concepts.length
-      ? analysis.concepts.map(
-          (item) => `- [[${pagePathFor("concept", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
-        )
-      : ["- None detected."]),
-    "",
-    "## Entities",
-    "",
-    ...(analysis.entities.length
-      ? analysis.entities.map(
-          (item) => `- [[${pagePathFor("entity", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
-        )
-      : ["- None detected."]),
-    "",
-    "## Claims",
-    "",
-    ...(analysis.claims.length ? analysis.claims.map((claim) => `- ${claim.text} [source:${claim.citation}]`) : ["- No claims extracted."]),
-    "",
-    "## Questions",
-    "",
-    ...(analysis.questions.length ? analysis.questions.map((question) => `- ${question}`) : ["- No follow-up questions yet."]),
-    "",
-    ...relatedOutputsSection(relatedOutputs),
-    ""
-  ].join("\n");
+  const body = appendGuidedSourceBlocks(
+    [
+      `# ${analysis.title}`,
+      "",
+      `Source ID: \`${manifest.sourceId}\``,
+      `Source Kind: \`${manifest.sourceKind}\``,
+      manifest.url ? `Source URL: ${manifest.url}` : `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
+      ...(manifest.sourceType ? [`Source Type: \`${manifest.sourceType}\``, ""] : [""]),
+      ...(manifest.sourceClass ? [`Source Class: \`${manifest.sourceClass}\``, ""] : []),
+      ...(manifest.sourceGroupTitle ? [`Source Group: ${manifest.sourceGroupTitle}`] : []),
+      ...(manifest.partTitle ? [`Part: ${manifest.partIndex ?? "?"}/${manifest.partCount ?? "?"} - ${manifest.partTitle}`] : []),
+      ...(manifest.details && Object.keys(manifest.details).length
+        ? [
+            "",
+            "## Source Details",
+            "",
+            ...Object.entries(manifest.details).map(([key, value]) => `- ${key.replace(/_/g, " ")}: ${value}`),
+            ""
+          ]
+        : []),
+      "",
+      "## Summary",
+      "",
+      analysis.summary,
+      "",
+      ...(analysis.code
+        ? [
+            "## Code Module",
+            "",
+            `- Language: \`${analysis.code.language}\``,
+            modulePage ? `- Module Page: [[${modulePage.path.replace(/\.md$/, "")}|${modulePage.title}]]` : "- Module Page: Not generated.",
+            `- Exports: ${analysis.code.exports.length ? analysis.code.exports.join(", ") : "None detected."}`,
+            `- Symbols: ${analysis.code.symbols.length ? analysis.code.symbols.map((symbol) => symbol.name).join(", ") : "None detected."}`,
+            analysis.code.diagnostics.length ? `- Diagnostics: ${analysis.code.diagnostics.length}` : "- Diagnostics: None.",
+            ""
+          ]
+        : []),
+      "## Concepts",
+      "",
+      ...(analysis.concepts.length
+        ? analysis.concepts.map(
+            (item) => `- [[${pagePathFor("concept", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
+          )
+        : ["- None detected."]),
+      "",
+      "## Entities",
+      "",
+      ...(analysis.entities.length
+        ? analysis.entities.map(
+            (item) => `- [[${pagePathFor("entity", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
+          )
+        : ["- None detected."]),
+      "",
+      "## Claims",
+      "",
+      ...(analysis.claims.length
+        ? analysis.claims.map((claim) => `- ${claim.text} [source:${claim.citation}]`)
+        : ["- No claims extracted."]),
+      "",
+      "## Questions",
+      "",
+      ...(analysis.questions.length ? analysis.questions.map((question) => `- ${question}`) : ["- No follow-up questions yet."]),
+      "",
+      ...relatedOutputsSection(relatedOutputs),
+      ""
+    ].join("\n"),
+    existingContent
+  );
 
   return {
     page: {
@@ -494,7 +540,8 @@ export function buildAggregatePage(
   metadata: ManagedGraphPageMetadata,
   relativePath: string,
   relatedOutputs: GraphPage[] = [],
-  decorations?: GeneratedPageDecorations
+  decorations?: GeneratedPageDecorations,
+  existingContent?: string | null
 ): { page: GraphPage; content: string } {
   const slug = slugify(name);
   const pageId = `${kind}:${slug}`;
@@ -522,28 +569,31 @@ export function buildAggregatePage(
     ...sourceHashFrontmatter(sourceHashes, sourceSemanticHashes)
   };
 
-  const body = [
-    `# ${name}`,
-    "",
-    "## Summary",
-    "",
-    summary,
-    "",
-    "## Seen In",
-    "",
-    ...sourceAnalyses.map((item) => `- [[${pagePathFor("source", item.sourceId).replace(/\.md$/, "")}|${item.title}]]`),
-    "",
-    "## Source Claims",
-    "",
-    ...sourceAnalyses.flatMap((item) =>
-      item.claims
-        .filter((claim) => claim.text.toLowerCase().includes(name.toLowerCase()))
-        .map((claim) => `- ${claim.text} [source:${claim.citation}]`)
-    ),
-    "",
-    ...relatedOutputsSection(relatedOutputs),
-    ""
-  ].join("\n");
+  const body = appendGuidedSourceBlocks(
+    [
+      `# ${name}`,
+      "",
+      "## Summary",
+      "",
+      summary,
+      "",
+      "## Seen In",
+      "",
+      ...sourceAnalyses.map((item) => `- [[${pagePathFor("source", item.sourceId).replace(/\.md$/, "")}|${item.title}]]`),
+      "",
+      "## Source Claims",
+      "",
+      ...sourceAnalyses.flatMap((item) =>
+        item.claims
+          .filter((claim) => claim.text.toLowerCase().includes(name.toLowerCase()))
+          .map((claim) => `- ${claim.text} [source:${claim.citation}]`)
+      ),
+      "",
+      ...relatedOutputsSection(relatedOutputs),
+      ""
+    ].join("\n"),
+    existingContent
+  );
 
   return {
     page: {
@@ -1450,6 +1500,7 @@ export function buildOutputPage(input: {
   origin: OutputOrigin;
   slug?: string;
   metadata: ManagedGraphPageMetadata;
+  frontmatter?: Record<string, unknown>;
 }): { page: GraphPage; content: string } {
   const slug = input.slug ?? slugify(input.question);
   const pageId = `output:${slug}`;
@@ -1485,7 +1536,8 @@ export function buildOutputPage(input: {
     question: input.question,
     output_format: input.outputFormat,
     output_assets: outputAssets,
-    ...(input.outputFormat === "slides" ? { marp: true } : {})
+    ...(input.outputFormat === "slides" ? { marp: true } : {}),
+    ...(input.frontmatter ?? {})
   };
 
   return {
@@ -1583,7 +1635,7 @@ export function buildOutputPage(input: {
                 ""
               ]
       ).join("\n"),
-      frontmatter
+      safeFrontmatter(frontmatter)
     )
   };
 }

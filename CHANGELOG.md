@@ -1,9 +1,16 @@
 # Changelog
 
+## 0.6.1
+
+- Added a configurable `profile` layer in `swarmvault.config.json` with composable `presets`, `dashboardPack`, `guidedSessionMode`, and `dataviewBlocks`, while keeping `personal-research` as a starter alias and allowing `swarmvault init --profile reader,timeline`-style preset composition
+- Upgraded guided sessions so `canonical_review` profiles stage approval-queued edits for canonical `wiki/sources/`, `wiki/concepts/`, and `wiki/entities/` pages when confidence is high enough, with explicit fallback to `wiki/insights/` for exploratory or low-confidence updates
+- Expanded dashboard and guided-artifact frontmatter with Dataview-friendly fields such as `profile_presets`, `session_status`, `question_state`, `canonical_targets`, and `evidence_state`, while keeping every dashboard readable as plain markdown when Dataview blocks are disabled
+- Updated the CLI docs, ClawHub skill bundle, localized README trio, and site docs so the installed product describes configurable profiles, composable recipes, guided-session routing, and Obsidian-first dashboard behavior consistently
+
 ## 0.6.0
 
 - Turned guided ingest into durable guided source sessions, so `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, and the new `swarmvault source session <id>` now create resumable session state under `state/source-sessions/` and markdown anchors under `wiki/outputs/source-sessions/`
-- Kept guided work inside the existing approval queue while upgrading it to stage real durable `wiki/insights/` updates by default, with clear labeling for source-review, source-guide, and guided-update entries plus accept/reject status flowing back into the saved session state
+- Kept guided work inside the existing approval queue while upgrading it to stage real durable integration artifacts, with clear labeling for source-review, source-guide, and guided-update entries plus accept/reject status flowing back into the saved session state
 - Expanded the personal-research profile and dashboards so research-oriented vaults surface active source sessions, pending guided bundles, accepted guided updates, and reading/thesis activity directly in `wiki/dashboards/`
 - Updated packaged smoke coverage, skill docs, localized README parity, and site docs so the installed CLI proves the full guided-session path instead of the older one-shot guide wording
 

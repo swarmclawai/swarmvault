@@ -70,6 +70,8 @@ swarmvault graph push neo4j --dry-run
 
 とても大きなグラフでは、`swarmvault graph serve` と `swarmvault graph export --html` は自動で overview mode で始まります。全面表示したい場合は `--full` を付けてください。
 
+`swarmvault init --profile` は `default`、`personal-research`、そして `reader,timeline` のようなカンマ区切り preset list を受け付けます。独自のボルト挙動にしたい場合は `swarmvault.config.json` の `profile` ブロックを編集し、`swarmvault.schema.md` は人間が書く意図レイヤーとして使い続けてください。
+
 <!-- readme-section:provider-setup -->
 ## 任意: モデルプロバイダーを追加
 
@@ -132,7 +134,7 @@ swarmvault source session file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
-`source add` はソースを登録し、ボルトへ同期し、1 回 compile し、`wiki/outputs/source-briefs/` にソース別ブリーフを書きます。`--guide` を付けると、`wiki/outputs/source-sessions/` に再開可能なガイド付き session を作成し、approval queue を通して source review、source guide、`wiki/insights/` 向け更新提案も段階化します。ディレクトリや公開リポジトリ、docs ハブだけでなく、継続的に同期したいローカルファイルにも使えます。単発のファイルや URL には `ingest`、研究 URL の正規化には `add` を使ってください。
+`source add` はソースを登録し、ボルトへ同期し、1 回 compile し、`wiki/outputs/source-briefs/` にソース別ブリーフを書きます。`--guide` を付けると、`wiki/outputs/source-sessions/` に再開可能なガイド付き session を作成し、`profile.guidedSessionMode` が `canonical_review` のときは canonical な source/concept/entity page への更新を approval queue に段階化し、`insights_only` のときはガイド付き統合結果を `wiki/insights/` 側へ留めます。ディレクトリや公開リポジトリ、docs ハブだけでなく、継続的に同期したいローカルファイルにも使えます。単発のファイルや URL には `ingest`、研究 URL の正規化には `add` を使ってください。
 
 <!-- readme-section:agent-setup -->
 ## エージェントと MCP の設定
@@ -197,9 +199,11 @@ clawhub install swarmvault
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
-**ガイド付き session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>`、`source session <id>` は再開可能な source session を作成し、`wiki/outputs/source-sessions/` に残しながら、source review、source guide、`wiki/insights/` 向け更新提案を受け入れ前に段階化します。
+**設定可能な profile** - `swarmvault.config.json` の `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.dataviewBlocks` を組み合わせて、自分向けの vault mode を作れます。`personal-research` はあくまで starter alias です。
 
-**知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source sessions、source guides、research map、contradictions、open questions が出力されます。通常の Markdown として読めて、Obsidian + Dataview ではさらに便利になります。
+**ガイド付き session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>`、`source session <id>` は再開可能な source session を作成し、`wiki/outputs/source-sessions/` に残しながら、source review、source guide、そして profile 設定に応じて canonical page あるいは `wiki/insights/` へ向かう更新案を受け入れ前に段階化します。
+
+**知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source sessions、source guides、research map、contradictions、open questions が出力されます。まず plain markdown として読めることを優先し、`profile.dataviewBlocks` を有効にすると Obsidian Dataview 向けのクエリも追加されます。
 
 **任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 

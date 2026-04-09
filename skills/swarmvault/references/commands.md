@@ -5,6 +5,7 @@
 ```bash
 swarmvault init
 swarmvault init --obsidian --profile personal-research
+swarmvault init --obsidian --profile reader,timeline
 swarmvault --version
 ```
 

@@ -46,6 +46,7 @@ npm install -g @swarmvaultai/cli@latest
 
 ```bash
 swarmvault init --obsidian --profile personal-research
+swarmvault init --obsidian --profile reader,timeline
 swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source session file-customer-call-srt-12345678
 swarmvault source add https://github.com/karpathy/micrograd
@@ -60,6 +61,8 @@ swarmvault mcp
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered.
 
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation.
+
+`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For a custom vault style, edit the `profile` block in `swarmvault.config.json` directly; `swarmvault.schema.md` stays the human-written intent layer.
 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
 
@@ -84,7 +87,7 @@ The published ClawHub package is intentionally text-only in this release.
 2. Treat `swarmvault.schema.md` as the vault contract before serious compile or query work.
 3. Use `swarmvault source add` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Add one-off material with `swarmvault ingest`, `swarmvault add`, or `swarmvault inbox import`.
-5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when you want the stronger guided-session workflow before changing canonical pages.
+5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when you want the stronger guided-session workflow. Profiles using `guidedSessionMode: "canonical_review"` stage approval-queued canonical page edits; `insights_only` profiles keep exploratory synthesis under `wiki/insights/`.
 6. Compile with `swarmvault compile` or `swarmvault compile --approve`.
 7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search.
 8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable.
@@ -105,6 +108,8 @@ The published ClawHub package is intentionally text-only in this release.
 - `state/sources.json` plus `state/sources/<id>/` for managed-source registry state and working sync data
 - `state/approvals/` for compile approval bundles
 - `state/sessions/` and `state/jobs.ndjson` for saved run history
+
+Generated guided artifacts and dashboards also carry Dataview-friendly fields such as `profile_presets`, `session_status`, `question_state`, `canonical_targets`, and `evidence_state` when you enable `profile.dataviewBlocks`.
 
 ## Agent And MCP Integration
 

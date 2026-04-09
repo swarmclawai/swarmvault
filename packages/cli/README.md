@@ -23,6 +23,7 @@ Installed commands:
 mkdir my-vault
 cd my-vault
 swarmvault init --obsidian --profile personal-research
+swarmvault init --obsidian --profile reader,timeline
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source add ./exports/customer-call.srt --guide
@@ -52,7 +53,7 @@ swarmvault graph push neo4j --dry-run
 
 ## Commands
 
-### `swarmvault init [--obsidian] [--profile personal-research]`
+### `swarmvault init [--obsidian] [--profile <alias-or-presets>]`
 
 Create a workspace with:
 
@@ -69,13 +70,15 @@ Create a workspace with:
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
+`--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`.
+
 ### `swarmvault source add|list|reload|review|guide|session|delete`
 
 Manage recurring source roots through a registry-backed workflow.
 
 - `source add <input>` supports local files, local directories, public GitHub repo root URLs such as `https://github.com/karpathy/micrograd`, and docs/wiki/help/reference/tutorial hubs
 - by default `source add` registers the source, syncs it into the vault, runs one compile, and writes a source brief to `wiki/outputs/source-briefs/<source-id>.md`
-- add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled `wiki/insights/` updates for one-source-at-a-time integration
+- add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
 - `source list` shows every managed source with its kind, status, and current brief path
 - `source reload [id]` re-syncs one source, or use `--all` to refresh everything in the registry and compile once
 - `source review <id>` stages a lighter source-scoped review artifact
@@ -105,7 +108,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - use `source add` instead when the same local directory, public GitHub repo root, or docs hub should stay registered and reloadable
 - URL ingest still localizes remote image references by default
 - local file ingest supports markdown, text, reStructuredText, HTML, PDF, DOCX, images, and code
-- add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled `wiki/insights/` updates after ingest
+- add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
 - code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell
 
 Useful flags:

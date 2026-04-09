@@ -804,6 +804,8 @@ type SourceScope = {
   briefPath?: string;
 };
 
+type GuidedEvidenceState = "new" | "reinforcing" | "conflicting" | "needs_judgment";
+
 const GUIDED_SESSION_QUESTIONS: Array<{ id: string; prompt: string }> = [
   {
     id: "importance",
@@ -829,6 +831,15 @@ const GUIDED_SESSION_QUESTIONS: Array<{ id: string; prompt: string }> = [
 
 function defaultGuidedSessionQuestions(): GuidedSourceSessionQuestion[] {
   return GUIDED_SESSION_QUESTIONS.map((question) => ({ ...question }));
+}
+
+function splitDelimitedDetail(value: string | undefined): string[] {
+  return value
+    ? value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
 }
 
 function normalizeGuidedAnswerValue(value: unknown): string | undefined {
@@ -866,6 +877,55 @@ function mergeGuidedSessionQuestions(
 
 function answeredGuidedSessionQuestions(questions: GuidedSourceSessionQuestion[]): GuidedSourceSessionQuestion[] {
   return questions.filter((question) => typeof question.answer === "string" && question.answer.trim().length > 0);
+}
+
+function questionStateForSession(session: GuidedSourceSessionRecord): "awaiting_input" | "answered" {
+  return answeredGuidedSessionQuestions(session.questions).length === session.questions.length ? "answered" : "awaiting_input";
+}
+
+function manifestsForScope(graph: GraphArtifact | null | undefined, scope: SourceScope): SourceManifest[] {
+  if (!graph) {
+    return [];
+  }
+  const scopeSet = new Set(scope.sourceIds);
+  return graph.sources.filter((manifest) => scopeSet.has(manifest.sourceId));
+}
+
+function scopeSourceType(scope: SourceScope, manifests: SourceManifest[]): string | undefined {
+  return scope.kind ?? manifests[0]?.sourceKind ?? manifests[0]?.sourceType;
+}
+
+function scopeOccurredAt(manifests: SourceManifest[]): string | undefined {
+  return manifests
+    .map((manifest) => manifest.details?.occurred_at)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .sort((left, right) => right.localeCompare(left))[0];
+}
+
+function scopeParticipants(manifests: SourceManifest[]): string[] {
+  return uniqueStrings(manifests.flatMap((manifest) => splitDelimitedDetail(manifest.details?.participants)));
+}
+
+function scopeContainerTitle(manifests: SourceManifest[]): string | undefined {
+  return manifests.find((manifest) => manifest.details?.container_title)?.details?.container_title ?? manifests[0]?.sourceGroupTitle;
+}
+
+function scopeConversationId(manifests: SourceManifest[]): string | undefined {
+  return manifests.find((manifest) => manifest.details?.conversation_id)?.details?.conversation_id;
+}
+
+function classifyGuidedEvidenceState(
+  scope: SourceScope,
+  targetPage: GraphArtifact["pages"][number] | null,
+  contradictions: ReturnType<typeof findContradictionsForScope>
+): GuidedEvidenceState {
+  if (contradictions.length) {
+    return "conflicting";
+  }
+  if (!targetPage) {
+    return "needs_judgment";
+  }
+  return targetPage.sourceIds.some((sourceId) => !scope.sourceIds.includes(sourceId)) ? "reinforcing" : "new";
 }
 
 function renderDeterministicSourceReview(input: {
@@ -999,12 +1059,13 @@ async function buildSourceReviewStagedPage(
   rootDir: string,
   scope: SourceScope
 ): Promise<{ page: GraphArtifact["pages"][number]; content: string }> {
-  const { paths } = await loadVaultConfig(rootDir);
+  const { config, paths } = await loadVaultConfig(rootDir);
   const markdown = await generateSourceReviewMarkdown(rootDir, scope);
   if (!markdown) {
     throw new Error(`Could not generate a source review for ${scope.id}.`);
   }
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const scopeManifests = manifestsForScope(graph, scope);
   const relatedPages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
   const relatedPageIds = relatedPages.slice(0, 16).map((page) => page.id);
   const relatedNodeIds = graph ? scopedNodeIds(graph, scope.sourceIds).slice(0, 24) : [];
@@ -1031,6 +1092,20 @@ async function buildSourceReviewStagedPage(
       compiledFrom: scope.sourceIds,
       managedBy: "system",
       confidence: 0.79
+    },
+    frontmatter: {
+      profile_presets: config.profile.presets,
+      source_type: scopeSourceType(scope, scopeManifests),
+      occurred_at: scopeOccurredAt(scopeManifests),
+      participants: scopeParticipants(scopeManifests),
+      container_title: scopeContainerTitle(scopeManifests),
+      conversation_id: scopeConversationId(scopeManifests),
+      question_state: "answered",
+      canonical_targets: relatedPages
+        .filter((page) => page.kind === "source" || page.kind === "concept" || page.kind === "entity")
+        .slice(0, 8)
+        .map((page) => page.path),
+      evidence_state: findContradictionsForScope(scope, await readGraphReport(rootDir)).length ? "conflicting" : "needs_judgment"
     }
   });
   return { page: output.page, content: output.content };
@@ -1039,7 +1114,11 @@ async function buildSourceReviewStagedPage(
 function classifySourceGuidePageBuckets(sourcePages: GraphArtifact["pages"], scopeSourceIds: string[]) {
   const scopeSet = new Set(scopeSourceIds);
   const canonicalPages = sourcePages
-    .filter((page) => page.kind === "source" || page.kind === "concept" || page.kind === "entity")
+    .filter(
+      (page) =>
+        (page.kind === "source" || page.kind === "concept" || page.kind === "entity") &&
+        (page.kind === "source" || page.status !== "candidate")
+    )
     .slice(0, 12);
   const newPages = canonicalPages.filter((page) => page.sourceIds.every((sourceId) => scopeSet.has(sourceId))).slice(0, 6);
   const reinforcingPages = canonicalPages.filter((page) => page.sourceIds.some((sourceId) => !scopeSet.has(sourceId))).slice(0, 6);
@@ -1282,13 +1361,16 @@ async function buildSourceGuideStagedPage(
   rootDir: string,
   scope: SourceScope
 ): Promise<{ page: GraphArtifact["pages"][number]; content: string }> {
-  const { paths } = await loadVaultConfig(rootDir);
+  const { config, paths } = await loadVaultConfig(rootDir);
   const markdown = await generateSourceGuideMarkdown(rootDir, scope);
   if (!markdown) {
     throw new Error(`Could not generate a source guide for ${scope.id}.`);
   }
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const scopeManifests = manifestsForScope(graph, scope);
   const relatedPages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
+  const contradictions = findContradictionsForScope(scope, await readGraphReport(rootDir));
+  const selectedTargets = selectGuidedTargetPages(scope, relatedPages, defaultGuidedSessionQuestions());
   const relatedPageIds = relatedPages.slice(0, 18).map((page) => page.id);
   const relatedNodeIds = graph ? scopedNodeIds(graph, scope.sourceIds).slice(0, 28) : [];
   const projectIds = uniqueStrings(relatedPages.flatMap((page) => page.projectIds));
@@ -1314,6 +1396,23 @@ async function buildSourceGuideStagedPage(
       compiledFrom: scope.sourceIds,
       managedBy: "system",
       confidence: 0.8
+    },
+    frontmatter: {
+      profile_presets: config.profile.presets,
+      source_type: scopeSourceType(scope, scopeManifests),
+      occurred_at: scopeOccurredAt(scopeManifests),
+      participants: scopeParticipants(scopeManifests),
+      container_title: scopeContainerTitle(scopeManifests),
+      conversation_id: scopeConversationId(scopeManifests),
+      question_state: "answered",
+      canonical_targets: selectedTargets.map((page) => page.path),
+      evidence_state: contradictions.length
+        ? "conflicting"
+        : selectedTargets.some((page) => page.sourceIds.some((sourceId) => !scope.sourceIds.includes(sourceId)))
+          ? "reinforcing"
+          : selectedTargets.length
+            ? "new"
+            : "needs_judgment"
     }
   });
   return { page: output.page, content: output.content };
@@ -1388,12 +1487,13 @@ async function buildSourceSessionSavedPage(
   scope: SourceScope,
   session: GuidedSourceSessionRecord
 ): Promise<{ page: GraphArtifact["pages"][number]; content: string }> {
-  const { paths } = await loadVaultConfig(rootDir);
+  const { config, paths } = await loadVaultConfig(rootDir);
   let graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   if (!graph) {
     await compileVault(rootDir, {});
     graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   }
+  const scopeManifests = manifestsForScope(graph, scope);
   const sourcePages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
   const analyses = await loadSourceAnalyses(rootDir, scope.sourceIds);
   const report = await readGraphReport(rootDir);
@@ -1407,6 +1507,16 @@ async function buildSourceSessionSavedPage(
   ]);
   const relatedNodeIds = graph ? scopedNodeIds(graph, scope.sourceIds).slice(0, 28) : [];
   const projectIds = uniqueStrings(sourcePages.flatMap((page) => page.projectIds));
+  const evidenceState =
+    contradictions.length > 0
+      ? "conflicting"
+      : session.targetedPagePaths.some((targetPath) =>
+            sourcePages.some((page) => page.path === targetPath && page.sourceIds.some((sourceId) => !scope.sourceIds.includes(sourceId)))
+          )
+        ? "reinforcing"
+        : session.targetedPagePaths.length
+          ? "new"
+          : "needs_judgment";
   const relativeBriefPath =
     session.briefPath && path.isAbsolute(session.briefPath) ? path.relative(paths.wikiDir, session.briefPath) : session.briefPath;
   const sessionMarkdown = [
@@ -1482,6 +1592,18 @@ async function buildSourceSessionSavedPage(
       compiledFrom: scope.sourceIds,
       managedBy: "system",
       confidence: 0.81
+    },
+    frontmatter: {
+      profile_presets: config.profile.presets,
+      source_type: scopeSourceType(scope, scopeManifests),
+      occurred_at: scopeOccurredAt(scopeManifests),
+      participants: scopeParticipants(scopeManifests),
+      container_title: scopeContainerTitle(scopeManifests),
+      conversation_id: scopeConversationId(scopeManifests),
+      session_status: session.status,
+      question_state: questionStateForSession(session),
+      canonical_targets: session.targetedPagePaths,
+      evidence_state: evidenceState
     }
   });
   return { page: output.page, content: output.content };
@@ -1500,12 +1622,12 @@ async function persistSourceSessionPage(
   return { pageId: output.page.id, sessionPath: absolutePath };
 }
 
-async function buildGuidedInsightUpdatePages(
+async function buildGuidedUpdatePages(
   rootDir: string,
   scope: SourceScope,
   session: GuidedSourceSessionRecord
 ): Promise<Array<{ page: GraphArtifact["pages"][number]; content: string; label: "guided-update" }>> {
-  const { paths } = await loadVaultConfig(rootDir);
+  const { config, paths } = await loadVaultConfig(rootDir);
   let graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   if (!graph) {
     await compileVault(rootDir, {});
@@ -1515,15 +1637,30 @@ async function buildGuidedInsightUpdatePages(
     return [];
   }
   const sourcePages = scopedSourcePages(graph, scope.sourceIds);
+  const scopeManifests = manifestsForScope(graph, scope);
   const analyses = await loadSourceAnalyses(rootDir, scope.sourceIds);
   const report = await readGraphReport(rootDir);
   const contradictions = findContradictionsForScope(scope, report);
   const selectedTargets = selectGuidedTargetPages(scope, sourcePages, session.questions);
-  const targetPages = selectedTargets.length ? selectedTargets : [null];
+  const useCanonicalTargets = config.profile.guidedSessionMode === "canonical_review" && selectedTargets.length > 0;
+  const targetPages = useCanonicalTargets ? selectedTargets : [selectedTargets[0] ?? null];
+  session.targetedPagePaths = uniqueStrings(
+    useCanonicalTargets
+      ? selectedTargets.map((page) => page.path)
+      : selectedTargets.length
+        ? selectedTargets.map((page) => page.path)
+        : session.targetedPagePaths
+  );
 
   return await Promise.all(
-    targetPages.map(async (targetPage, index) => {
-      const relativePath = targetPage ? insightRelativePathForTarget(targetPage, scope) : `insights/topics/${slugify(scope.title)}.md`;
+    targetPages.map(async (targetPage) => {
+      const evidenceState = classifyGuidedEvidenceState(scope, targetPage, contradictions);
+      const relativePath =
+        useCanonicalTargets && targetPage
+          ? targetPage.path
+          : targetPage
+            ? insightRelativePathForTarget(targetPage, scope)
+            : `insights/topics/${slugify(scope.title)}.md`;
       const absolutePath = path.join(paths.wikiDir, relativePath);
       const existingContent = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : "";
       const parsed = existingContent ? matter(existingContent) : { data: {}, content: "" };
@@ -1544,10 +1681,21 @@ async function buildGuidedInsightUpdatePages(
         typeof existingData.created_at === "string" && existingData.created_at.trim() ? existingData.created_at : new Date().toISOString();
       const title =
         (typeof existingData.title === "string" && existingData.title.trim()) ||
-        (targetPage ? insightTitleForTarget(targetPage, scope) : `${scope.title} Notes`);
+        (useCanonicalTargets && targetPage
+          ? targetPage.title
+          : targetPage
+            ? insightTitleForTarget(targetPage, scope)
+            : `${scope.title} Notes`);
       const baseBody = parsed.content.trim()
         ? parsed.content.trim()
-        : [`# ${title}`, "", "Human-curated insight page. Guided sessions stage replaceable update blocks here.", ""].join("\n");
+        : [
+            `# ${title}`,
+            "",
+            useCanonicalTargets
+              ? "Canonical page maintained by SwarmVault. Guided sessions stage replaceable update blocks here for approval."
+              : "Human-curated insight page. Guided sessions stage replaceable update blocks here.",
+            ""
+          ].join("\n");
       const importance = questionAnswer(
         session.questions,
         "importance",
@@ -1569,6 +1717,7 @@ async function buildGuidedInsightUpdatePages(
       const updateBlock = [
         `## Guided Session Update: ${scope.title}`,
         "",
+        `Evidence State: \`${evidenceState}\``,
         `Session: [[outputs/source-sessions/${scope.id}|Guided Session]]`,
         `Source Guide: [[outputs/source-guides/${scope.id}|Source Guide]]`,
         "",
@@ -1600,54 +1749,71 @@ async function buildGuidedInsightUpdatePages(
         ""
       ].join("\n");
       const nextBody = replaceMarkedSection(baseBody, scope.id, updateBlock);
-      const content = matter.stringify(`${nextBody.trimEnd()}\n`, {
-        ...existingData,
-        page_id:
-          (typeof existingData.page_id === "string" && existingData.page_id.trim()) ||
-          `insight:${slugify(relativePath.replace(/\.md$/, ""))}`,
-        kind: "insight",
-        title,
-        tags: uniqueStrings([
-          ...(Array.isArray(existingData.tags) ? existingData.tags.filter((value): value is string => typeof value === "string") : []),
-          ...insightTagsForTarget(targetPage)
-        ]),
-        source_ids: uniqueStrings([...existingSourceIds, ...scope.sourceIds]),
-        project_ids: uniqueStrings([...existingProjectIds, ...(targetPage?.projectIds ?? [])]),
-        node_ids: uniqueStrings([...existingNodeIds, ...(targetPage?.nodeIds ?? [])]),
-        freshness: "fresh",
-        status: existingData.status === "archived" ? "archived" : "active",
-        confidence: 0.83,
-        created_at: createdAt,
-        updated_at: new Date().toISOString(),
-        compiled_from: uniqueStrings([
-          ...(Array.isArray(existingData.compiled_from)
-            ? existingData.compiled_from.filter((value): value is string => typeof value === "string")
-            : []),
-          ...scope.sourceIds
-        ]),
-        managed_by: "human",
-        backlinks: uniqueStrings([
-          ...existingBacklinks,
-          ...(targetPage ? [targetPage.id] : []),
-          `output:source-sessions/${scope.id}`,
-          `output:source-guides/${scope.id}`
-        ]),
-        schema_hash: typeof existingData.schema_hash === "string" ? existingData.schema_hash : "",
-        source_hashes: existingData.source_hashes && typeof existingData.source_hashes === "object" ? existingData.source_hashes : {},
-        source_semantic_hashes:
-          existingData.source_semantic_hashes && typeof existingData.source_semantic_hashes === "object"
-            ? existingData.source_semantic_hashes
-            : {}
-      });
+      const content = matter.stringify(
+        `${nextBody.trimEnd()}\n`,
+        JSON.parse(
+          JSON.stringify({
+            ...existingData,
+            page_id:
+              (typeof existingData.page_id === "string" && existingData.page_id.trim()) ||
+              (useCanonicalTargets && targetPage ? targetPage.id : `insight:${slugify(relativePath.replace(/\.md$/, ""))}`),
+            kind: useCanonicalTargets && targetPage ? targetPage.kind : "insight",
+            title,
+            tags: uniqueStrings([
+              ...(Array.isArray(existingData.tags) ? existingData.tags.filter((value): value is string => typeof value === "string") : []),
+              ...(useCanonicalTargets ? ["guided-session", `guided/${targetPage?.kind ?? "page"}`] : insightTagsForTarget(targetPage))
+            ]),
+            source_ids: uniqueStrings([...existingSourceIds, ...scope.sourceIds]),
+            project_ids: uniqueStrings([...existingProjectIds, ...(targetPage?.projectIds ?? [])]),
+            node_ids: uniqueStrings([...existingNodeIds, ...(targetPage?.nodeIds ?? [])]),
+            freshness: "fresh",
+            status: existingData.status === "archived" ? "archived" : "active",
+            confidence: 0.83,
+            created_at: createdAt,
+            updated_at: new Date().toISOString(),
+            compiled_from: uniqueStrings([
+              ...(Array.isArray(existingData.compiled_from)
+                ? existingData.compiled_from.filter((value): value is string => typeof value === "string")
+                : []),
+              ...scope.sourceIds
+            ]),
+            managed_by:
+              typeof existingData.managed_by === "string" && (existingData.managed_by === "human" || existingData.managed_by === "system")
+                ? existingData.managed_by
+                : useCanonicalTargets
+                  ? "system"
+                  : "human",
+            backlinks: uniqueStrings([
+              ...existingBacklinks,
+              ...(targetPage ? [targetPage.id] : []),
+              `output:source-sessions/${scope.id}`,
+              `output:source-guides/${scope.id}`
+            ]),
+            schema_hash: typeof existingData.schema_hash === "string" ? existingData.schema_hash : "",
+            source_hashes: existingData.source_hashes && typeof existingData.source_hashes === "object" ? existingData.source_hashes : {},
+            source_semantic_hashes:
+              existingData.source_semantic_hashes && typeof existingData.source_semantic_hashes === "object"
+                ? existingData.source_semantic_hashes
+                : {},
+            profile_presets: config.profile.presets,
+            source_type: scopeSourceType(scope, scopeManifests),
+            occurred_at: scopeOccurredAt(scopeManifests),
+            participants: scopeParticipants(scopeManifests),
+            container_title: scopeContainerTitle(scopeManifests),
+            conversation_id: scopeConversationId(scopeManifests),
+            session_status: session.status,
+            question_state: questionStateForSession(session),
+            canonical_targets: useCanonicalTargets ? selectedTargets.map((page) => page.path) : [],
+            evidence_state: evidenceState
+          })
+        ) as Record<string, unknown>
+      );
       const page = parseStoredPage(relativePath, content, {
         createdAt,
         updatedAt: new Date().toISOString()
       });
-      if (index === 0) {
-        session.targetedPagePaths = uniqueStrings([
-          ...session.targetedPagePaths,
-          ...(selectedTargets.length ? selectedTargets.map((page) => page.path) : [relativePath])
-        ]);
+      if (!useCanonicalTargets && !selectedTargets.length) {
+        session.targetedPagePaths = uniqueStrings([...session.targetedPagePaths, relativePath]);
       }
       return { page, content, label: "guided-update" as const };
     })
@@ -1696,7 +1862,7 @@ async function stageSourceGuideForScope(
     ...scope,
     briefPath
   });
-  const guidedUpdates = await buildGuidedInsightUpdatePages(rootDir, scope, session);
+  const guidedUpdates = await buildGuidedUpdatePages(rootDir, scope, session);
   session.stagedUpdatePaths = guidedUpdates.map((item) => item.page.path);
   const approval = await stageGeneratedOutputPages(
     rootDir,

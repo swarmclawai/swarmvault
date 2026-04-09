@@ -861,9 +861,10 @@ async function buildManagedGraphPage(
     compiledFrom: string[];
     statePathCandidates?: string[];
   },
-  build: (metadata: ManagedGraphPageMetadata) => { page: GraphPage; content: string }
+  build: (metadata: ManagedGraphPageMetadata, existingContent?: string | null) => { page: GraphPage; content: string }
 ): Promise<{ page: GraphPage; content: string }> {
   const existingContent = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : null;
+  let carriedContent = existingContent;
   let existing = await loadExistingManagedPageState(absolutePath, {
     status: defaults.status ?? "active",
     managedBy: defaults.managedBy
@@ -878,6 +879,7 @@ async function buildManagedGraphPage(
         status: defaults.status ?? "active",
         managedBy: defaults.managedBy
       });
+      carriedContent = await fs.readFile(candidatePath, "utf8");
       usedFallbackState = true;
       break;
     }
@@ -891,14 +893,14 @@ async function buildManagedGraphPage(
     managedBy: defaults.managedBy,
     confidence: defaults.confidence
   };
-  let built = build(metadata);
+  let built = build(metadata, carriedContent);
 
-  if (existingContent && existingContent !== built.content) {
+  if (carriedContent && carriedContent !== built.content) {
     metadata = {
       ...metadata,
       updatedAt: new Date().toISOString()
     };
-    built = build(metadata);
+    built = build(metadata, carriedContent);
   }
 
   return built;
@@ -970,11 +972,15 @@ async function loadAnalysesBySourceIds(
 }
 
 async function buildDashboardRecords(
+  config: VaultConfig,
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
   graph: GraphArtifact,
   schemaHash: string,
   report: GraphReportArtifact | null
 ): Promise<ManagedPageRecord[]> {
+  const dataviewEnabled = config.profile.dataviewBlocks;
+  const profilePresets = config.profile.presets;
+  const dashboardPack = config.profile.dashboardPack;
   const sourcePages = graph.pages.filter((page) => page.kind === "source");
   const reviewPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-reviews/"));
   const briefPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-briefs/"));
@@ -1007,6 +1013,10 @@ async function buildDashboardRecords(
     .filter((manifest) => manifest.bundleType === "guided_source" || manifest.bundleType === "guided_session")
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .slice(0, 12);
+  const readerFocusPages = uniqueBy([...guidePages, ...briefPages, ...conceptPages, ...entityPages], (page) => page.id).slice(0, 8);
+  const diligenceSessions = sourceSessions
+    .filter((session) => session.status === "staged" || session.status === "awaiting_input")
+    .slice(0, 8);
 
   const dashboards: Array<{ relativePath: string; title: string; content: (metadata: ManagedPageMetadata) => string }> = [
     {
@@ -1026,12 +1036,19 @@ async function buildDashboardRecords(
             "- [[dashboards/contradictions|Contradictions]]",
             "- [[dashboards/open-questions|Open Questions]]",
             "",
-            "```dataview",
-            "TABLE file.mtime AS updated",
-            'FROM "dashboards"',
-            'WHERE file.name != "index"',
-            "SORT file.mtime desc",
-            "```",
+            `Profile Presets: ${profilePresets.length ? profilePresets.map((preset) => `\`${preset}\``).join(", ") : "_default_"}`,
+            `Dashboard Pack: \`${dashboardPack}\``,
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  "TABLE file.mtime AS updated",
+                  'FROM "dashboards"',
+                  'WHERE file.name != "index"',
+                  "SORT file.mtime desc",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1052,7 +1069,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1067,13 +1085,20 @@ async function buildDashboardRecords(
             ...(recentSourcePages.length
               ? recentSourcePages.map((page) => `- ${page.updatedAt}: [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
               : ["- No source pages yet."]),
-            "",
-            "```dataview",
-            "TABLE source_type, occurred_at, participants",
-            'FROM "sources"',
-            "SORT updated_at desc",
-            "LIMIT 25",
-            "```",
+            ...(dashboardPack === "reader" && readerFocusPages.length
+              ? ["", "## Reader Focus", "", ...readerFocusPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)]
+              : []),
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  "TABLE source_type, occurred_at, participants",
+                  'FROM "sources"',
+                  "SORT updated_at desc",
+                  "LIMIT 25",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1094,7 +1119,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1126,13 +1152,25 @@ async function buildDashboardRecords(
                     )
                 ]
               : []),
-            "",
-            "```dataview",
-            "TABLE occurred_at, source_type, participants, container_title",
-            'FROM "sources"',
-            "SORT occurred_at desc",
-            "LIMIT 25",
-            "```",
+            ...(dashboardPack === "reader" && conceptPages.length
+              ? [
+                  "",
+                  "## Thesis And Hub Pages",
+                  "",
+                  ...conceptPages.slice(0, 6).map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+                ]
+              : []),
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  "TABLE occurred_at, source_type, participants, container_title",
+                  'FROM "sources"',
+                  "SORT occurred_at desc",
+                  "LIMIT 25",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1153,7 +1191,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1172,13 +1211,17 @@ async function buildDashboardRecords(
                   return `- ${occurredAt}: ${sourcePage ? `[[${sourcePage.path.replace(/\.md$/, "")}|${sourcePage.title}]]` : manifest.title}`;
                 })
               : ["- No timeline-aware sources yet."]),
-            "",
-            "```dataview",
-            "TABLE occurred_at, participants, container_title",
-            'FROM "sources"',
-            "WHERE occurred_at",
-            "SORT occurred_at desc",
-            "```",
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  "TABLE occurred_at, participants, container_title",
+                  'FROM "sources"',
+                  "WHERE occurred_at",
+                  "SORT occurred_at desc",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1199,7 +1242,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1230,11 +1274,16 @@ async function buildDashboardRecords(
                     `- ${bundle.createdAt}: \`${bundle.approvalId}\`${bundle.title ? ` ${bundle.title}` : ""} (${bundle.entries.length} staged entr${bundle.entries.length === 1 ? "y" : "ies"})`
                 )
               : ["- No staged guided bundles right now."]),
-            "",
-            "```dataview",
-            'LIST FROM "outputs/source-sessions"',
-            "SORT file.mtime desc",
-            "```",
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  "TABLE session_status, evidence_state, canonical_targets",
+                  'FROM "outputs/source-sessions"',
+                  "SORT file.mtime desc",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1261,7 +1310,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1285,11 +1335,16 @@ async function buildDashboardRecords(
                     `- ${bundle.createdAt}: \`${bundle.approvalId}\`${bundle.title ? ` ${bundle.title}` : ""} (${bundle.entries.length} staged entr${bundle.entries.length === 1 ? "y" : "ies"})`
                 )
               : ["- No staged guided bundles right now."]),
-            "",
-            "```dataview",
-            'LIST FROM "outputs/source-guides"',
-            "SORT file.mtime desc",
-            "```",
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  "TABLE evidence_state, canonical_targets, file.mtime AS updated",
+                  'FROM "outputs/source-guides"',
+                  "SORT file.mtime desc",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1316,7 +1371,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1356,12 +1412,16 @@ async function buildDashboardRecords(
             ...(report?.suggestedQuestions?.length
               ? ["", "## Suggested Questions", "", ...report.suggestedQuestions.slice(0, 8).map((question) => `- ${question}`)]
               : []),
-            "",
-            "```dataview",
-            'TABLE file.folder, file.mtime FROM "concepts" OR "entities"',
-            "SORT file.mtime desc",
-            "LIMIT 30",
-            "```",
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  'TABLE file.folder, file.mtime FROM "concepts" OR "entities"',
+                  "SORT file.mtime desc",
+                  "LIMIT 30",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1390,7 +1450,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1420,10 +1481,25 @@ async function buildDashboardRecords(
                   ""
                 ]
               : []),
-            "```dataview",
-            'LIST FROM "outputs/source-reviews" OR "outputs/source-guides"',
-            "SORT file.mtime desc",
-            "```",
+            ...(dashboardPack === "diligence" && diligenceSessions.length
+              ? [
+                  "## Active Evidence Review Sessions",
+                  "",
+                  ...diligenceSessions.map(
+                    (session) => `- \`${session.status}\` [[outputs/source-sessions/${session.scopeId}|${session.scopeTitle}]]`
+                  ),
+                  ""
+                ]
+              : []),
+            ...(dataviewEnabled
+              ? [
+                  "```dataview",
+                  'TABLE evidence_state, session_status, canonical_targets FROM "outputs/source-reviews" OR "outputs/source-guides" OR "outputs/source-sessions"',
+                  'WHERE evidence_state = "conflicting"',
+                  "SORT file.mtime desc",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1444,7 +1520,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     },
@@ -1468,11 +1545,15 @@ async function buildDashboardRecords(
                     .map((session) => `- \`${session.status}\` [[outputs/source-sessions/${session.scopeId}|${session.scopeTitle}]]`)
                 ]
               : []),
-            "",
-            "```dataview",
-            'LIST FROM "outputs/source-briefs" OR "outputs/source-reviews" OR "outputs/source-guides" OR "outputs/source-sessions"',
-            "SORT file.mtime desc",
-            "```",
+            ...(dataviewEnabled
+              ? [
+                  "",
+                  "```dataview",
+                  'TABLE question_state, session_status, evidence_state FROM "outputs/source-briefs" OR "outputs/source-reviews" OR "outputs/source-guides" OR "outputs/source-sessions"',
+                  "SORT file.mtime desc",
+                  "```"
+                ]
+              : []),
             ""
           ].join("\n"),
           {
@@ -1493,7 +1574,8 @@ async function buildDashboardRecords(
             backlinks: [],
             schema_hash: schemaHash,
             source_hashes: {},
-            source_semantic_hashes: {}
+            source_semantic_hashes: {},
+            profile_presets: profilePresets
           }
         )
     }
@@ -2629,7 +2711,7 @@ async function syncVaultArtifacts(
         confidence: 1,
         compiledFrom: [manifest.sourceId]
       },
-      (metadata) =>
+      (metadata, existingContent) =>
         buildSourcePage(
           manifest,
           analysis,
@@ -2641,7 +2723,8 @@ async function syncVaultArtifacts(
             projectIds: sourceProjectIds,
             extraTags: [...sourceCategoryTags, ...(analysis.tags ?? [])],
             sourceClass: manifest.sourceClass
-          }
+          },
+          existingContent
         )
     );
     records.push(sourceRecord);
@@ -2738,7 +2821,7 @@ async function syncVaultArtifacts(
           compiledFrom: sourceIds,
           statePathCandidates: fallbackPaths
         },
-        (metadata) =>
+        (metadata, existingContent) =>
           buildAggregatePage(
             itemKind,
             aggregate.name,
@@ -2758,7 +2841,8 @@ async function syncVaultArtifacts(
                 ...aggregate.sourceAnalyses.map((item) => item.summary)
               ]),
               sourceClass: aggregateSourceClass
-            }
+            },
+            existingContent
           )
       );
       if (promoted && previousEntry?.status === "candidate") {
@@ -2816,6 +2900,7 @@ async function syncVaultArtifacts(
   );
   const preliminaryPages = [...basePages, ...graphOrientation.records.map((record) => record.page)];
   const dashboardRecords = await buildDashboardRecords(
+    config,
     paths,
     {
       ...baseGraph,
@@ -3081,6 +3166,7 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
     : { records: [], report: null };
   const dashboardRecords = currentGraph
     ? await buildDashboardRecords(
+        config,
         paths,
         {
           ...currentGraph,
@@ -4091,22 +4177,30 @@ async function ensureObsidianWorkspace(rootDir: string): Promise<void> {
 }
 
 export async function initVault(rootDir: string, options: InitOptions = {}): Promise<void> {
-  const profile = options.profile ?? "default";
-  const { paths } = await initWorkspace(rootDir, { profile });
+  const requestedProfile = options.profile ?? "default";
+  const { config, paths } = await initWorkspace(rootDir, { profile: requestedProfile });
+  const profile = config.profile;
+  const isResearchProfile = profile.presets.length > 0 || profile.guidedSessionMode === "canonical_review" || profile.dataviewBlocks;
   await installConfiguredAgents(rootDir);
   const insightsIndexPath = path.join(paths.wikiDir, "insights", "index.md");
   const now = new Date().toISOString();
   await writeFileIfChanged(
     insightsIndexPath,
     matter.stringify(
-      (profile === "personal-research"
+      (isResearchProfile
         ? [
             "# Insights",
             "",
             "Human-authored research notes live here.",
             "",
             "- Use this folder for thesis notes, reading reflections, synthesis drafts, and decisions you want to keep explicitly human-authored.",
-            "- Guided sessions can stage `wiki/insights/` updates through the approval queue, but SwarmVault never applies them without review.",
+            ...(profile.guidedSessionMode === "canonical_review"
+              ? [
+                  "- Guided sessions can stage approval-queued updates for canonical pages and fall back to `wiki/insights/` when a claim still needs judgment."
+                ]
+              : [
+                  "- Guided sessions fall back to `wiki/insights/` for exploratory synthesis until you decide what should become canonical."
+                ]),
             "- Treat these pages as the human judgment layer for your vault.",
             ""
           ]
@@ -4192,16 +4286,25 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
     await ensureObsidianWorkspace(rootDir);
   }
 
-  if (profile === "personal-research") {
+  if (isResearchProfile) {
     await writeFileIfChanged(
       path.join(paths.wikiDir, "insights", "research-playbook.md"),
       matter.stringify(
         [
-          "# Personal Research Playbook",
+          `# ${requestedProfile === "personal-research" ? "Personal Research Playbook" : "Research Playbook"}`,
           "",
           "- Add one source at a time with `swarmvault ingest <input> --guide` or `swarmvault source add <input> --guide`.",
           "- Resume a guided session with `swarmvault source session <source-id-or-session-id>` whenever you want to answer the session prompts directly.",
           "- Review `wiki/outputs/source-briefs/`, `wiki/outputs/source-reviews/`, `wiki/outputs/source-guides/`, and `wiki/outputs/source-sessions/` before accepting staged updates.",
+          ...(profile.guidedSessionMode === "canonical_review"
+            ? ["- Use `swarmvault review show --diff` to inspect staged canonical page edits before accepting them."]
+            : ["- Keep exploratory synthesis in `wiki/insights/` until you are ready to promote it into canonical pages."]),
+          ...(profile.dataviewBlocks
+            ? [
+                "- Dataview-friendly fields are enabled in the dashboards, but every generated page should still read cleanly as plain markdown."
+              ]
+            : []),
+          ...(profile.presets.length ? [`- Active profile presets: ${profile.presets.map((preset) => `\`${preset}\``).join(", ")}.`] : []),
           "- Keep unresolved questions visible in `wiki/dashboards/open-questions.md`.",
           "- Use `swarmvault review list` and `swarmvault review show --diff` to decide what becomes canonical.",
           ""
@@ -4209,7 +4312,7 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
         {
           page_id: "insights:research-playbook",
           kind: "insight",
-          title: "Personal Research Playbook",
+          title: requestedProfile === "personal-research" ? "Personal Research Playbook" : "Research Playbook",
           tags: ["insight", "research", "playbook"],
           source_ids: [],
           project_ids: [],

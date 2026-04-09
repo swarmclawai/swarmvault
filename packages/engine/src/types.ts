@@ -49,6 +49,9 @@ export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
 export type ApprovalBundleType = "compile" | "generated_output" | "source_review" | "guided_source" | "guided_session";
 export type ApprovalEntryLabel = "source-brief" | "source-review" | "source-guide" | "guided-update";
 export type GuidedSourceSessionStatus = "awaiting_input" | "ready_to_stage" | "staged" | "accepted" | "rejected";
+export type VaultProfilePreset = "reader" | "timeline" | "diligence" | "thesis";
+export type VaultDashboardPack = "default" | "reader" | "diligence";
+export type GuidedSessionMode = "insights_only" | "canonical_review";
 export type SourceKind =
   | "markdown"
   | "text"
@@ -183,6 +186,13 @@ export interface WebSearchAdapter {
   search(query: string, limit?: number): Promise<WebSearchResult[]>;
 }
 
+export interface VaultProfileConfig {
+  presets: VaultProfilePreset[];
+  dashboardPack: VaultDashboardPack;
+  guidedSessionMode: GuidedSessionMode;
+  dataviewBlocks: boolean;
+}
+
 export interface VaultConfig {
   workspace: {
     rawDir: string;
@@ -203,6 +213,7 @@ export interface VaultConfig {
   viewer: {
     port: number;
   };
+  profile: VaultProfileConfig;
   projects?: Record<
     string,
     {
@@ -735,7 +746,7 @@ export interface CompileOptions {
 
 export interface InitOptions {
   obsidian?: boolean;
-  profile?: "default" | "personal-research";
+  profile?: string;
 }
 
 export interface CompileResult {

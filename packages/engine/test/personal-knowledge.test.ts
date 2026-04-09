@@ -135,17 +135,51 @@ describe("personal knowledge workflows", () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir, { profile: "personal-research" });
 
+    const config = JSON.parse(await fs.readFile(path.join(rootDir, "swarmvault.config.json"), "utf8")) as {
+      profile?: { presets?: string[]; dashboardPack?: string; guidedSessionMode?: string; dataviewBlocks?: boolean };
+    };
+    expect(config.profile?.presets).toEqual(["reader", "timeline", "thesis"]);
+    expect(config.profile?.dashboardPack).toBe("reader");
+    expect(config.profile?.guidedSessionMode).toBe("canonical_review");
+    expect(config.profile?.dataviewBlocks).toBe(true);
+
     const schema = await fs.readFile(path.join(rootDir, "swarmvault.schema.md"), "utf8");
     expect(schema).toContain("one-source-at-a-time guided ingest");
     expect(schema).toContain("thesis");
+    expect(schema).toContain("Profile Emphasis");
 
     const insightsIndex = await fs.readFile(path.join(rootDir, "wiki", "insights", "index.md"), "utf8");
     expect(insightsIndex).toContain("research notes");
     expect(insightsIndex).toContain("human judgment layer");
+    expect(insightsIndex).toContain("canonical pages");
 
     const playbook = await fs.readFile(path.join(rootDir, "wiki", "insights", "research-playbook.md"), "utf8");
     expect(playbook).toContain("swarmvault ingest <input> --guide");
     expect(playbook).toContain("wiki/outputs/source-sessions/");
+    expect(playbook).toContain("Active profile presets");
+  });
+
+  it("supports composed profile presets and dataview-friendly dashboards", async () => {
+    const rootDir = await createTempWorkspace();
+    const researchDir = path.join(rootDir, "research");
+    await fs.mkdir(researchDir, { recursive: true });
+    await fs.writeFile(path.join(researchDir, "notes.srt"), ["1", "00:00:01,000 --> 00:00:03,000", "Profile preset test.", ""].join("\n"));
+
+    await initVault(rootDir, { profile: "reader,timeline" });
+    const config = JSON.parse(await fs.readFile(path.join(rootDir, "swarmvault.config.json"), "utf8")) as {
+      profile?: { presets?: string[]; dashboardPack?: string; guidedSessionMode?: string; dataviewBlocks?: boolean };
+    };
+    expect(config.profile?.presets).toEqual(["reader", "timeline"]);
+    expect(config.profile?.dashboardPack).toBe("reader");
+    expect(config.profile?.guidedSessionMode).toBe("canonical_review");
+    expect(config.profile?.dataviewBlocks).toBe(true);
+
+    await ingestDirectory(rootDir, researchDir, { repoRoot: researchDir });
+    await compileVault(rootDir);
+
+    const dashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "index.md"), "utf8");
+    expect(dashboard).toContain("```dataview");
+    expect(dashboard).toContain("profile_presets:");
   });
 
   it("extracts human export sources and generates dashboards", async () => {
@@ -204,6 +238,7 @@ describe("personal knowledge workflows", () => {
     expect(timelineDashboard).toContain("Research Sync");
     const recentSourcesDashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "recent-sources.md"), "utf8");
     expect(recentSourcesDashboard).toContain("Research direction");
+    expect(recentSourcesDashboard).not.toContain("```dataview");
     const readingLogDashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "reading-log.md"), "utf8");
     expect(readingLogDashboard).toContain("Research Sync");
     const sourceGuidesDashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "source-guides.md"), "utf8");
@@ -236,7 +271,7 @@ describe("personal knowledge workflows", () => {
     expect(rawDetail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${added.source.sourceIds[0]}.md`)).toBe(true);
   });
 
-  it("creates resumable guided sessions that stage insight updates through approvals", async () => {
+  it("creates resumable guided sessions that stage canonical updates through approvals", async () => {
     const rootDir = await createTempWorkspace();
     const transcriptPath = path.join(rootDir, "call.srt");
     await fs.writeFile(
@@ -268,6 +303,14 @@ describe("personal knowledge workflows", () => {
     expect(detail.entries.some((entry) => entry.label === "guided-update")).toBe(true);
     expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-guides/${awaiting.source.id}.md`)).toBe(true);
     expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${awaiting.source.id}.md`)).toBe(true);
+    expect(
+      detail.entries.some(
+        (entry) =>
+          entry.label === "guided-update" &&
+          Boolean(entry.nextPath?.match(/^(sources|concepts|entities)\//)) &&
+          !entry.nextPath?.startsWith("insights/")
+      )
+    ).toBe(true);
 
     const sourceSessionsDashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "source-sessions.md"), "utf8");
     expect(sourceSessionsDashboard).toContain("Pending Guided Bundles");
@@ -277,8 +320,12 @@ describe("personal knowledge workflows", () => {
     expect(sourceGuidesDashboard).toContain(added.approvalId ?? "");
 
     await acceptApproval(rootDir, added.approvalId ?? "");
+    await compileVault(rootDir);
     const sessionState = JSON.parse(await fs.readFile(added.sessionStatePath, "utf8")) as { status: string };
     expect(sessionState.status).toBe("accepted");
+    const sourcePage = await fs.readFile(path.join(rootDir, "wiki", "sources", `${awaiting.source.sourceIds[0]}.md`), "utf8");
+    expect(sourcePage).toContain("## Guided Session Notes");
+    expect(sourcePage).toContain("Guided Session Update");
 
     const guidedAgain = await guideManagedSource(rootDir, awaiting.source.sourceIds[0]!);
     expect(guidedAgain.awaitingInput).toBe(true);

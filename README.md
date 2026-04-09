@@ -72,6 +72,8 @@ swarmvault graph push neo4j --dry-run
 
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you want the entire canvas rendered anyway.
 
+`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For custom vault behavior, edit the `profile` block in `swarmvault.config.json` and keep `swarmvault.schema.md` as the human-written intent layer.
+
 <!-- readme-section:provider-setup -->
 ## Optional: Add a Model Provider
 
@@ -134,7 +136,7 @@ swarmvault source session file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
-`source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. Add `--guide` when you want a resumable guided session under `wiki/outputs/source-sessions/`, a staged source review and source guide, plus approval-bundled `wiki/insights/` updates. It now works for recurring local files as well as directories, public repos, and docs hubs. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
+`source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. Add `--guide` when you want a resumable guided session under `wiki/outputs/source-sessions/`, a staged source review and source guide, plus approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`. Profiles using `insights_only` keep the guided synthesis in `wiki/insights/` instead. It now works for recurring local files as well as directories, public repos, and docs hubs. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
 
 <!-- readme-section:agent-setup -->
 ## Agent and MCP Setup
@@ -203,9 +205,11 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 
-**Guided sessions** - `ingest --guide`, `source add --guide`, `source reload --guide`, `source guide <id>`, and `source session <id>` create resumable source sessions under `wiki/outputs/source-sessions/`, stage source reviews and source guides, and propose durable `wiki/insights/` updates through the approval queue before anything canonical changes.
+**Configurable profiles** - compose vault behavior with `profile.presets`, `profile.dashboardPack`, `profile.guidedSessionMode`, and `profile.dataviewBlocks` in `swarmvault.config.json` instead of waiting for hardcoded product modes. `personal-research` is just a starter alias.
 
-**Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source sessions, source guides, a research map, contradictions, and open questions. The pages work as plain markdown and get better when opened in Obsidian with Dataview.
+**Guided sessions** - `ingest --guide`, `source add --guide`, `source reload --guide`, `source guide <id>`, and `source session <id>` create resumable source sessions under `wiki/outputs/source-sessions/`, stage source reviews and source guides, and route approval-bundled updates either to canonical source/concept/entity pages or to `wiki/insights/`, depending on the configured guided-session mode.
+
+**Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source sessions, source guides, a research map, contradictions, and open questions. The pages work as plain markdown first, and `profile.dataviewBlocks` can append Dataview blocks when you want a more Obsidian-native view.
 
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 

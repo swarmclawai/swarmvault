@@ -8,6 +8,8 @@ import {
   providerTypeSchema,
   type ResolvedPaths,
   type VaultConfig,
+  type VaultProfileConfig,
+  type VaultProfilePreset,
   webSearchProviderTypeSchema
 } from "./types.js";
 import { ensureDir, fileExists, readJsonFile, writeJsonFile } from "./utils.js";
@@ -29,6 +31,9 @@ const providerConfigSchema = z.object({
 });
 
 const sourceClassSchema = z.enum(["first_party", "third_party", "resource", "generated"]);
+const vaultProfilePresetSchema = z.enum(["reader", "timeline", "diligence", "thesis"]);
+const vaultDashboardPackSchema = z.enum(["default", "reader", "diligence"]);
+const guidedSessionModeSchema = z.enum(["insights_only", "canonical_review"]);
 
 const neo4jGraphSinkConfigSchema = z.object({
   uri: z.string().min(1),
@@ -104,6 +109,13 @@ const webSearchProviderConfigSchema = z.object({
   module: z.string().min(1).optional()
 });
 
+const vaultProfileConfigSchema = z.object({
+  presets: z.array(vaultProfilePresetSchema).default([]),
+  dashboardPack: vaultDashboardPackSchema.default("default"),
+  guidedSessionMode: guidedSessionModeSchema.default("insights_only"),
+  dataviewBlocks: z.boolean().default(false)
+});
+
 const vaultConfigSchema = z.object({
   workspace: z.object({
     rawDir: z.string().min(1),
@@ -123,6 +135,12 @@ const vaultConfigSchema = z.object({
   }),
   viewer: z.object({
     port: z.number().int().positive()
+  }),
+  profile: vaultProfileConfigSchema.default({
+    presets: [],
+    dashboardPack: "default",
+    guidedSessionMode: "insights_only",
+    dataviewBlocks: false
   }),
   projects: z
     .record(
@@ -179,7 +197,90 @@ const vaultConfigSchema = z.object({
     .optional()
 });
 
-export function defaultVaultConfig(): VaultConfig {
+function normalizeProfilePresets(presets: VaultProfilePreset[]): VaultProfilePreset[] {
+  return [...new Set(presets)];
+}
+
+function inferDashboardPackFromPresets(presets: VaultProfilePreset[]): VaultProfileConfig["dashboardPack"] {
+  if (presets.includes("diligence") && !presets.includes("reader")) {
+    return "diligence";
+  }
+  return presets.length ? "reader" : "default";
+}
+
+function inferGuidedSessionModeFromPresets(presets: VaultProfilePreset[]): VaultProfileConfig["guidedSessionMode"] {
+  return presets.length ? "canonical_review" : "insights_only";
+}
+
+export function defaultVaultProfileConfig(): VaultProfileConfig {
+  return {
+    presets: [],
+    dashboardPack: "default",
+    guidedSessionMode: "insights_only",
+    dataviewBlocks: false
+  };
+}
+
+export function personalResearchProfileConfig(): VaultProfileConfig {
+  return {
+    presets: ["reader", "timeline", "thesis"],
+    dashboardPack: "reader",
+    guidedSessionMode: "canonical_review",
+    dataviewBlocks: true
+  };
+}
+
+export function normalizeVaultProfileConfig(profile?: Partial<VaultProfileConfig> | null): VaultProfileConfig {
+  const defaults = defaultVaultProfileConfig();
+  const presets = normalizeProfilePresets(profile?.presets ?? defaults.presets);
+  return {
+    presets,
+    dashboardPack: profile?.dashboardPack ?? inferDashboardPackFromPresets(presets),
+    guidedSessionMode: profile?.guidedSessionMode ?? inferGuidedSessionModeFromPresets(presets),
+    dataviewBlocks: profile?.dataviewBlocks ?? presets.length > 0
+  };
+}
+
+export function resolveInitProfile(profile?: string): { alias: string; profile: VaultProfileConfig } {
+  const value = profile?.trim();
+  if (!value || value === "default") {
+    return {
+      alias: "default",
+      profile: defaultVaultProfileConfig()
+    };
+  }
+  if (value === "personal-research") {
+    return {
+      alias: "personal-research",
+      profile: personalResearchProfileConfig()
+    };
+  }
+
+  const presets = normalizeProfilePresets(
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const parsed = vaultProfilePresetSchema.safeParse(item);
+        if (!parsed.success) {
+          throw new Error(
+            `Unknown init profile or preset: ${item}. Use \`default\`, \`personal-research\`, or a comma-separated list of presets: reader,timeline,diligence,thesis.`
+          );
+        }
+        return parsed.data;
+      })
+  );
+
+  return {
+    alias: presets.join(","),
+    profile: normalizeVaultProfileConfig({
+      presets
+    })
+  };
+}
+
+export function defaultVaultConfig(profile: VaultProfileConfig = defaultVaultProfileConfig()): VaultConfig {
   return {
     workspace: {
       rawDir: "raw",
@@ -205,6 +306,7 @@ export function defaultVaultConfig(): VaultConfig {
     viewer: {
       port: 4123
     },
+    profile,
     projects: {},
     agents: ["codex", "claude", "cursor"],
     schedules: {},
@@ -226,8 +328,24 @@ export function defaultVaultConfig(): VaultConfig {
   };
 }
 
-export function defaultVaultSchema(profile: "default" | "personal-research" = "default"): string {
-  if (profile === "personal-research") {
+export function defaultVaultSchema(profile: string | VaultProfileConfig = "default"): string {
+  const resolvedProfile = typeof profile === "string" ? resolveInitProfile(profile).profile : normalizeVaultProfileConfig(profile);
+  const isResearchProfile =
+    resolvedProfile.presets.length > 0 || resolvedProfile.guidedSessionMode === "canonical_review" || resolvedProfile.dataviewBlocks;
+  if (isResearchProfile) {
+    const presetLines: string[] = [];
+    if (resolvedProfile.presets.includes("reader")) {
+      presetLines.push("- Keep source pages and source guides optimized for rereading, synthesis, and durable summaries.");
+    }
+    if (resolvedProfile.presets.includes("timeline")) {
+      presetLines.push("- Preserve chronology, dates, and source progression so timeline dashboards stay meaningful.");
+    }
+    if (resolvedProfile.presets.includes("diligence")) {
+      presetLines.push("- Track evidence quality, explicit contradictions, and unresolved judgment calls instead of smoothing them away.");
+    }
+    if (resolvedProfile.presets.includes("thesis")) {
+      presetLines.push("- Maintain explicit thesis, hub, or recurring-question pages that evolve as new evidence arrives.");
+    }
     return [
       "# SwarmVault Schema",
       "",
@@ -243,6 +361,10 @@ export function defaultVaultSchema(profile: "default" | "personal-research" = "d
       "- Favor one-source-at-a-time guided ingest and explicit review before treating a claim as canonical.",
       "- Preserve uncertainty, contradictions, and open questions instead of forcing synthesis too early.",
       "- Save useful summaries, briefs, and source guides back into the wiki so they become durable context.",
+      ...(resolvedProfile.guidedSessionMode === "canonical_review"
+        ? ["- Stage approval-queued updates to canonical source, concept, and entity pages when the evidence is strong enough."]
+        : ["- Prefer insight pages for exploratory integration until you are ready to promote changes into canonical pages."]),
+      ...(presetLines.length ? ["", "## Profile Emphasis", "", ...presetLines] : []),
       "",
       "## Naming Conventions",
       "",
@@ -275,6 +397,9 @@ export function defaultVaultSchema(profile: "default" | "personal-research" = "d
       "- Recent source guides should surface active reading and ingestion progress.",
       "- Open questions should stay visible until resolved or explicitly archived.",
       "- Contradictions and follow-up sources should be easy to scan from dashboards.",
+      ...(resolvedProfile.dataviewBlocks
+        ? ["- Keep frontmatter and page titles friendly to Dataview queries, but make every dashboard usable as plain markdown first."]
+        : []),
       ""
     ].join("\n");
   }
@@ -400,19 +525,24 @@ export async function loadVaultConfig(rootDir: string): Promise<{ config: VaultC
   const schemaPath = await findSchemaPath(rootDir);
   const raw = await readJsonFile<unknown>(configPath);
   const parsed = vaultConfigSchema.parse(raw ?? defaultVaultConfig());
+  const config: VaultConfig = {
+    ...parsed,
+    profile: normalizeVaultProfileConfig(parsed.profile)
+  };
   return {
-    config: parsed,
-    paths: resolvePaths(rootDir, parsed, configPath, schemaPath)
+    config,
+    paths: resolvePaths(rootDir, config, configPath, schemaPath)
   };
 }
 
 export async function initWorkspace(
   rootDir: string,
-  options: { profile?: "default" | "personal-research" } = {}
+  options: { profile?: string } = {}
 ): Promise<{ config: VaultConfig; paths: ResolvedPaths }> {
   const configPath = await findConfigPath(rootDir);
   const schemaPath = await findSchemaPath(rootDir);
-  const config = (await fileExists(configPath)) ? (await loadVaultConfig(rootDir)).config : defaultVaultConfig();
+  const initProfile = resolveInitProfile(options.profile);
+  const config = (await fileExists(configPath)) ? (await loadVaultConfig(rootDir)).config : defaultVaultConfig(initProfile.profile);
   const paths = resolvePaths(rootDir, config, configPath, schemaPath);
   const primarySchemaPath = path.join(rootDir, PRIMARY_SCHEMA_FILENAME);
 
@@ -446,7 +576,7 @@ export async function initWorkspace(
 
   if (!(await fileExists(primarySchemaPath))) {
     await ensureDir(path.dirname(primarySchemaPath));
-    await fs.writeFile(primarySchemaPath, defaultVaultSchema(options.profile ?? "default"), "utf8");
+    await fs.writeFile(primarySchemaPath, defaultVaultSchema(config.profile), "utf8");
   }
 
   return { config, paths };

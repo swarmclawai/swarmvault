@@ -67,9 +67,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.6.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.6.1";
   } catch {
-    return "0.6.0";
+    return "0.6.1";
   }
 }
 
@@ -216,8 +216,11 @@ program
   .command("init")
   .description("Initialize a SwarmVault workspace in the current directory.")
   .option("--obsidian", "Generate a minimal .obsidian workspace alongside the vault", false)
-  .addOption(new Option("--profile <profile>", "Starter workspace profile").choices(["default", "personal-research"]))
-  .action(async (options: { obsidian?: boolean; profile?: "default" | "personal-research" }) => {
+  .option(
+    "--profile <profile>",
+    "Starter workspace profile or comma-separated preset list (for example: personal-research or reader,timeline)"
+  )
+  .action(async (options: { obsidian?: boolean; profile?: string }) => {
     await initVault(process.cwd(), { obsidian: options.obsidian ?? false, profile: options.profile });
     if (isJson()) {
       emitJson({

@@ -70,6 +70,8 @@ swarmvault graph push neo4j --dry-run
 
 对于非常大的图，`swarmvault graph serve` 和 `swarmvault graph export --html` 会自动进入 overview mode。若你仍想强制渲染完整画布，请添加 `--full`。
 
+`swarmvault init --profile` 支持 `default`、`personal-research`，也支持 `reader,timeline` 这种逗号分隔的 preset 组合。若要自定义知识库行为，请直接编辑 `swarmvault.config.json` 里的 `profile` 配置块，并把 `swarmvault.schema.md` 继续当作人工维护的意图层。
+
 <!-- readme-section:provider-setup -->
 ## 可选：添加模型提供方
 
@@ -132,7 +134,7 @@ swarmvault source session file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
-`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。加入 `--guide` 后，会额外创建一个可恢复的引导式 session，写入 `wiki/outputs/source-sessions/`，并通过 approval queue 阶段化 source review、source guide 以及面向 `wiki/insights/` 的更新提案。它现在同样适用于可重复同步的本地文件，而不仅是目录、公开仓库或文档站点。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
+`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。加入 `--guide` 后，会额外创建一个可恢复的引导式 session，写入 `wiki/outputs/source-sessions/`，并在 `profile.guidedSessionMode` 为 `canonical_review` 时通过 approval queue 阶段化对 canonical 页面（source/concept/entity）的更新；如果配置为 `insights_only`，则会把引导式整合内容保留在 `wiki/insights/` 中。它现在同样适用于可重复同步的本地文件，而不仅是目录、公开仓库或文档站点。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
 
 <!-- readme-section:agent-setup -->
 ## Agent 与 MCP 设置
@@ -197,9 +199,11 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
-**引导式 session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` 和 `source session <id>` 会创建可恢复的 source session，写入 `wiki/outputs/source-sessions/`，并在你接受之前阶段化 source review、source guide 与面向 `wiki/insights/` 的更新提案。
+**可配置 profile** - 通过 `swarmvault.config.json` 中的 `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode` 和 `profile.dataviewBlocks` 组合出自己的知识库模式，而不是等待新的硬编码产品模式。`personal-research` 只是一个起步别名。
 
-**知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。即使只是普通 Markdown 也可直接使用，在 Obsidian + Dataview 中会更强。
+**引导式 session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` 和 `source session <id>` 会创建可恢复的 source session，写入 `wiki/outputs/source-sessions/`，并在你接受之前阶段化 source review、source guide，以及基于 profile 配置流向 canonical 页面或 `wiki/insights/` 的更新提案。
+
+**知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。默认先保证普通 Markdown 可读；当 `profile.dataviewBlocks` 打开时，会额外附加适合 Obsidian Dataview 的查询块。
 
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
