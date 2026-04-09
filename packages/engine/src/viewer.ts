@@ -10,7 +10,7 @@ import { buildViewerGraphArtifact } from "./graph-presentation.js";
 import { normalizeOutputAssets } from "./pages.js";
 import { searchPages } from "./search.js";
 import type { GraphArtifact, GraphReportArtifact } from "./types.js";
-import { fileExists, readJsonFile } from "./utils.js";
+import { fileExists, isPathWithin, readJsonFile } from "./utils.js";
 import {
   acceptApproval,
   archiveCandidate,
@@ -27,6 +27,15 @@ import { getWatchStatus } from "./watch.js";
 
 const execFileAsync = promisify(execFile);
 
+async function isReadableFile(absolutePath: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(absolutePath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function readViewerPage(
   rootDir: string,
   relativePath: string
@@ -37,9 +46,12 @@ async function readViewerPage(
   content: string;
   assets: ReturnType<typeof normalizeOutputAssets>;
 } | null> {
+  if (!relativePath) {
+    return null;
+  }
   const { paths } = await loadVaultConfig(rootDir);
   const absolutePath = path.resolve(paths.wikiDir, relativePath);
-  if (!absolutePath.startsWith(paths.wikiDir) || !(await fileExists(absolutePath))) {
+  if (!isPathWithin(paths.wikiDir, absolutePath) || !(await isReadableFile(absolutePath))) {
     return null;
   }
 
@@ -55,9 +67,12 @@ async function readViewerPage(
 }
 
 async function readViewerAsset(rootDir: string, relativePath: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  if (!relativePath) {
+    return null;
+  }
   const { paths } = await loadVaultConfig(rootDir);
   const absolutePath = path.resolve(paths.wikiDir, relativePath);
-  if (!absolutePath.startsWith(paths.wikiDir) || !(await fileExists(absolutePath))) {
+  if (!isPathWithin(paths.wikiDir, absolutePath) || !(await isReadableFile(absolutePath))) {
     return null;
   }
   return {
@@ -109,194 +124,220 @@ export async function startGraphServer(
 
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `localhost:${effectivePort}`}`);
-    if (url.pathname === "/api/graph") {
-      if (!(await fileExists(paths.graphPath))) {
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Graph artifact not found. Run `swarmvault compile` first." }));
+    try {
+      if (url.pathname === "/api/graph") {
+        if (!(await fileExists(paths.graphPath))) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Graph artifact not found. Run `swarmvault compile` first." }));
+          return;
+        }
+        const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+        if (!graph) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Graph artifact not found. Run `swarmvault compile` first." }));
+          return;
+        }
+        const reportPath = path.join(paths.wikiDir, "graph", "report.json");
+        const report = (await readJsonFile<GraphReportArtifact>(reportPath)) ?? null;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(buildViewerGraphArtifact(graph, { report, full: options.full ?? false })));
         return;
       }
-      const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
-      if (!graph) {
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Graph artifact not found. Run `swarmvault compile` first." }));
+
+      if (url.pathname === "/api/graph/query") {
+        const question = url.searchParams.get("q") ?? "";
+        const traversal = url.searchParams.get("traversal");
+        const budget = Number.parseInt(url.searchParams.get("budget") ?? "12", 10);
+        const result = await queryGraphVault(rootDir, question, {
+          traversal: traversal === "dfs" ? "dfs" : "bfs",
+          budget: Number.isFinite(budget) ? budget : 12
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(result));
         return;
       }
-      const reportPath = path.join(paths.wikiDir, "graph", "report.json");
-      const report = (await readJsonFile<GraphReportArtifact>(reportPath)) ?? null;
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(buildViewerGraphArtifact(graph, { report, full: options.full ?? false })));
-      return;
-    }
 
-    if (url.pathname === "/api/graph/query") {
-      const question = url.searchParams.get("q") ?? "";
-      const traversal = url.searchParams.get("traversal");
-      const budget = Number.parseInt(url.searchParams.get("budget") ?? "12", 10);
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify(
-          await queryGraphVault(rootDir, question, {
-            traversal: traversal === "dfs" ? "dfs" : "bfs",
-            budget: Number.isFinite(budget) ? budget : 12
-          })
-        )
-      );
-      return;
-    }
-
-    if (url.pathname === "/api/graph/path") {
-      const from = url.searchParams.get("from") ?? "";
-      const to = url.searchParams.get("to") ?? "";
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(await pathGraphVault(rootDir, from, to)));
-      return;
-    }
-
-    if (url.pathname === "/api/graph/explain") {
-      const target = url.searchParams.get("target") ?? "";
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(await explainGraphVault(rootDir, target)));
-      return;
-    }
-
-    if (url.pathname === "/api/search") {
-      if (!(await fileExists(paths.searchDbPath))) {
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Search index not found. Run `swarmvault compile` first." }));
+      if (url.pathname === "/api/graph/path") {
+        const from = url.searchParams.get("from") ?? "";
+        const to = url.searchParams.get("to") ?? "";
+        const result = await pathGraphVault(rootDir, from, to);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(result));
         return;
       }
-      const query = url.searchParams.get("q") ?? "";
-      const limit = Number.parseInt(url.searchParams.get("limit") ?? "10", 10);
-      const kind = url.searchParams.get("kind") ?? "all";
-      const status = url.searchParams.get("status") ?? "all";
-      const project = url.searchParams.get("project") ?? "all";
-      const sourceType = url.searchParams.get("sourceType") ?? "all";
-      const sourceClass = url.searchParams.get("sourceClass") ?? "all";
-      const results = searchPages(paths.searchDbPath, query, {
-        limit: Number.isFinite(limit) ? limit : 10,
-        kind,
-        status,
-        project,
-        sourceType,
-        sourceClass
-      });
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(results));
-      return;
-    }
 
-    if (url.pathname === "/api/graph-report") {
-      const reportPath = path.join(paths.wikiDir, "graph", "report.json");
-      if (!(await fileExists(reportPath))) {
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Graph report artifact not found. Run `swarmvault compile` first." }));
+      if (url.pathname === "/api/graph/explain") {
+        const target = url.searchParams.get("target") ?? "";
+        if (!target) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Missing explain target." }));
+          return;
+        }
+        try {
+          const result = await explainGraphVault(rootDir, target);
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify(result));
+        } catch (error) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: error instanceof Error ? error.message : `Could not resolve graph target: ${target}` }));
+        }
         return;
       }
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(await fs.readFile(reportPath, "utf8"));
-      return;
-    }
 
-    if (url.pathname === "/api/watch-status") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(await getWatchStatus(rootDir)));
-      return;
-    }
-
-    if (url.pathname === "/api/page") {
-      const relativePath = url.searchParams.get("path") ?? "";
-      const page = await readViewerPage(rootDir, relativePath);
-      if (!page) {
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: `Page not found: ${relativePath}` }));
+      if (url.pathname === "/api/search") {
+        if (!(await fileExists(paths.searchDbPath))) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Search index not found. Run `swarmvault compile` first." }));
+          return;
+        }
+        const query = url.searchParams.get("q") ?? "";
+        const limit = Number.parseInt(url.searchParams.get("limit") ?? "10", 10);
+        const kind = url.searchParams.get("kind") ?? "all";
+        const status = url.searchParams.get("status") ?? "all";
+        const project = url.searchParams.get("project") ?? "all";
+        const sourceType = url.searchParams.get("sourceType") ?? "all";
+        const sourceClass = url.searchParams.get("sourceClass") ?? "all";
+        const results = searchPages(paths.searchDbPath, query, {
+          limit: Number.isFinite(limit) ? limit : 10,
+          kind,
+          status,
+          project,
+          sourceType,
+          sourceClass
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(results));
         return;
       }
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(page));
-      return;
-    }
 
-    if (url.pathname === "/api/asset") {
-      const relativePath = url.searchParams.get("path") ?? "";
-      const asset = await readViewerAsset(rootDir, relativePath);
-      if (!asset) {
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: `Asset not found: ${relativePath}` }));
+      if (url.pathname === "/api/graph-report") {
+        const reportPath = path.join(paths.wikiDir, "graph", "report.json");
+        if (!(await fileExists(reportPath))) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Graph report artifact not found. Run `swarmvault compile` first." }));
+          return;
+        }
+        const body = await fs.readFile(reportPath, "utf8");
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(body);
         return;
       }
-      response.writeHead(200, { "content-type": asset.mimeType });
-      response.end(asset.buffer);
-      return;
-    }
 
-    if (url.pathname === "/api/reviews" && request.method === "GET") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(await listApprovals(rootDir)));
-      return;
-    }
-
-    if (url.pathname === "/api/review" && request.method === "GET") {
-      const approvalId = url.searchParams.get("id") ?? "";
-      if (!approvalId) {
-        response.writeHead(400, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Missing approval id." }));
+      if (url.pathname === "/api/watch-status") {
+        const watchStatus = await getWatchStatus(rootDir);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(watchStatus));
         return;
       }
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(await readApproval(rootDir, approvalId)));
-      return;
-    }
 
-    if (url.pathname === "/api/review" && request.method === "POST") {
-      const body = await readJsonBody(request);
-      const approvalId = typeof body.approvalId === "string" ? body.approvalId : "";
-      const targets = Array.isArray(body.targets) ? body.targets.filter((item): item is string => typeof item === "string") : [];
-      const action = url.searchParams.get("action") ?? "";
-      if (!approvalId || (action !== "accept" && action !== "reject")) {
-        response.writeHead(400, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Missing approval id or invalid review action." }));
+      if (url.pathname === "/api/page") {
+        const relativePath = url.searchParams.get("path") ?? "";
+        const page = await readViewerPage(rootDir, relativePath);
+        if (!page) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: `Page not found: ${relativePath}` }));
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(page));
         return;
       }
-      const result =
-        action === "accept" ? await acceptApproval(rootDir, approvalId, targets) : await rejectApproval(rootDir, approvalId, targets);
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(result));
-      return;
-    }
 
-    if (url.pathname === "/api/candidates" && request.method === "GET") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(await listCandidates(rootDir)));
-      return;
-    }
-
-    if (url.pathname === "/api/candidate" && request.method === "POST") {
-      const body = await readJsonBody(request);
-      const target = typeof body.target === "string" ? body.target : "";
-      const action = url.searchParams.get("action") ?? "";
-      if (!target || (action !== "promote" && action !== "archive")) {
-        response.writeHead(400, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Missing candidate target or invalid candidate action." }));
+      if (url.pathname === "/api/asset") {
+        const relativePath = url.searchParams.get("path") ?? "";
+        const asset = await readViewerAsset(rootDir, relativePath);
+        if (!asset) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: `Asset not found: ${relativePath}` }));
+          return;
+        }
+        response.writeHead(200, { "content-type": asset.mimeType });
+        response.end(asset.buffer);
         return;
       }
-      const result = action === "promote" ? await promoteCandidate(rootDir, target) : await archiveCandidate(rootDir, target);
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(result));
-      return;
-    }
 
-    const relativePath = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-    const target = path.join(paths.viewerDistDir, relativePath);
-    const fallback = path.join(paths.viewerDistDir, "index.html");
-    const filePath = (await fileExists(target)) ? target : fallback;
-    if (!(await fileExists(filePath))) {
-      response.writeHead(503, { "content-type": "text/plain" });
-      response.end("Viewer build not found. Run `pnpm build` first.");
-      return;
-    }
+      if (url.pathname === "/api/reviews" && request.method === "GET") {
+        const approvals = await listApprovals(rootDir);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(approvals));
+        return;
+      }
 
-    response.writeHead(200, { "content-type": mime.lookup(filePath) || "text/plain" });
-    response.end(await fs.readFile(filePath));
+      if (url.pathname === "/api/review" && request.method === "GET") {
+        const approvalId = url.searchParams.get("id") ?? "";
+        if (!approvalId) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Missing approval id." }));
+          return;
+        }
+        const approval = await readApproval(rootDir, approvalId);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(approval));
+        return;
+      }
+
+      if (url.pathname === "/api/review" && request.method === "POST") {
+        const body = await readJsonBody(request);
+        const approvalId = typeof body.approvalId === "string" ? body.approvalId : "";
+        const targets = Array.isArray(body.targets) ? body.targets.filter((item): item is string => typeof item === "string") : [];
+        const action = url.searchParams.get("action") ?? "";
+        if (!approvalId || (action !== "accept" && action !== "reject")) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Missing approval id or invalid review action." }));
+          return;
+        }
+        const result =
+          action === "accept" ? await acceptApproval(rootDir, approvalId, targets) : await rejectApproval(rootDir, approvalId, targets);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(result));
+        return;
+      }
+
+      if (url.pathname === "/api/candidates" && request.method === "GET") {
+        const candidates = await listCandidates(rootDir);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(candidates));
+        return;
+      }
+
+      if (url.pathname === "/api/candidate" && request.method === "POST") {
+        const body = await readJsonBody(request);
+        const target = typeof body.target === "string" ? body.target : "";
+        const action = url.searchParams.get("action") ?? "";
+        if (!target || (action !== "promote" && action !== "archive")) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Missing candidate target or invalid candidate action." }));
+          return;
+        }
+        const result = action === "promote" ? await promoteCandidate(rootDir, target) : await archiveCandidate(rootDir, target);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(result));
+        return;
+      }
+
+      const relativePath = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+      const target = path.join(paths.viewerDistDir, relativePath);
+      const fallback = path.join(paths.viewerDistDir, "index.html");
+      const filePath = (await fileExists(target)) ? target : fallback;
+      if (!(await fileExists(filePath))) {
+        response.writeHead(503, { "content-type": "text/plain" });
+        response.end("Viewer build not found. Run `pnpm build` first.");
+        return;
+      }
+
+      const staticBody = await fs.readFile(filePath);
+      response.writeHead(200, { "content-type": mime.lookup(filePath) || "text/plain" });
+      response.end(staticBody);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[viewer] ${request.method ?? "GET"} ${url.pathname} failed: ${message}`);
+      if (!response.headersSent) {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: message }));
+      } else {
+        response.end();
+      }
+    }
   });
 
   await new Promise<void>((resolve) => {

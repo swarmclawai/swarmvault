@@ -8,7 +8,7 @@ import { ingestDirectory, ingestInputDetailed, listManifests, removeManifestBySo
 import { buildOutputPage } from "./markdown.js";
 import { parseStoredPage } from "./pages.js";
 import { getProviderForTask } from "./providers/registry.js";
-import { buildSchemaPrompt, loadVaultSchemas } from "./schema.js";
+import { buildSchemaPrompt, composeVaultSchema, type LoadedVaultSchemas, loadVaultSchemas } from "./schema.js";
 import { ensureManagedSourcesArtifact, loadManagedSources, managedSourceWorkingDir, saveManagedSources } from "./source-registry.js";
 import {
   findLatestGuidedSourceSessionByScope,
@@ -77,6 +77,18 @@ type DocsCrawlResult = {
 
 function uniqueStrings(values: string[]): string[] {
   return uniqueBy(values.filter(Boolean), (value) => value);
+}
+
+function sourceOutputSchemaHash(schemas: LoadedVaultSchemas, projectIds: string[]): string {
+  if (!projectIds.length) {
+    return schemas.effective.global.hash;
+  }
+  return composeVaultSchema(
+    schemas.root,
+    uniqueStrings([...projectIds].sort((left, right) => left.localeCompare(right)))
+      .map((projectId) => schemas.projects[projectId])
+      .filter((schema): schema is NonNullable<typeof schema> => Boolean(schema?.hash))
+  ).hash;
 }
 
 function normalizeManagedStatus(value: ManagedSourceStatus | undefined): ManagedSourceStatus {
@@ -757,6 +769,7 @@ async function writeSourceBriefForScope(rootDir: string, source: SourceScope): P
     return null;
   }
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const schemas = await loadVaultSchemas(rootDir);
   const relatedPages = graph ? scopedSourcePages(graph, source.sourceIds) : [];
   const relatedPageIds = relatedPages.slice(0, 12).map((page) => page.id);
   const relatedNodeIds = graph ? scopedNodeIds(graph, source.sourceIds).slice(0, 20) : [];
@@ -767,7 +780,7 @@ async function writeSourceBriefForScope(rootDir: string, source: SourceScope): P
     question: `Brief ${source.title}`,
     answer: markdown,
     citations: source.sourceIds,
-    schemaHash: graph?.generatedAt ?? "",
+    schemaHash: sourceOutputSchemaHash(schemas, projectIds),
     outputFormat: "report",
     relatedPageIds,
     relatedNodeIds,
@@ -1078,6 +1091,7 @@ async function buildSourceReviewStagedPage(
     throw new Error(`Could not generate a source review for ${scope.id}.`);
   }
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const schemas = await loadVaultSchemas(rootDir);
   const scopeManifests = manifestsForScope(graph, scope);
   const relatedPages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
   const relatedPageIds = relatedPages.slice(0, 16).map((page) => page.id);
@@ -1089,7 +1103,7 @@ async function buildSourceReviewStagedPage(
     question: `Review ${scope.title}`,
     answer: markdown,
     citations: scope.sourceIds,
-    schemaHash: graph?.generatedAt ?? "",
+    schemaHash: sourceOutputSchemaHash(schemas, projectIds),
     outputFormat: "report",
     relatedPageIds,
     relatedNodeIds,
@@ -1380,6 +1394,7 @@ async function buildSourceGuideStagedPage(
     throw new Error(`Could not generate a source guide for ${scope.id}.`);
   }
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const schemas = await loadVaultSchemas(rootDir);
   const scopeManifests = manifestsForScope(graph, scope);
   const relatedPages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
   const contradictions = findContradictionsForScope(scope, await readGraphReport(rootDir));
@@ -1393,7 +1408,7 @@ async function buildSourceGuideStagedPage(
     question: `Guide ${scope.title}`,
     answer: markdown,
     citations: scope.sourceIds,
-    schemaHash: graph?.generatedAt ?? "",
+    schemaHash: sourceOutputSchemaHash(schemas, projectIds),
     outputFormat: "report",
     relatedPageIds,
     relatedNodeIds,
@@ -1506,6 +1521,7 @@ async function buildSourceSessionSavedPage(
     await compileVault(rootDir, {});
     graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   }
+  const schemas = await loadVaultSchemas(rootDir);
   const scopeManifests = manifestsForScope(graph, scope);
   const sourcePages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
   const analyses = await loadSourceAnalyses(rootDir, scope.sourceIds);
@@ -1589,7 +1605,7 @@ async function buildSourceSessionSavedPage(
     question: `Guided Session ${scope.title}`,
     answer: sessionMarkdown,
     citations: scope.sourceIds,
-    schemaHash: graph?.generatedAt ?? "",
+    schemaHash: sourceOutputSchemaHash(schemas, projectIds),
     outputFormat: "report",
     relatedPageIds,
     relatedNodeIds,

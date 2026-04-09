@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.6
+
+- Fixed installed-CLI handling for common real-world text files and scripts so extensionless executable `node`, `python`, and `ruby` shebang scripts are classified as code, TypeScript family files use a correct `text/typescript` mime, and common config, manifest, lock, license, and dotfiles no longer fall through as unsupported binary sources
+- Fixed multiple path-boundary checks to use a real directory fence instead of naive string prefix checks, closing sibling-prefix traversal bugs in page reads, viewer asset/page serving, inbox attachment resolution, and MCP session resource loading
+- Fixed source brief, source review, source guide, and source session artifacts so their `schemaHash` tracks the effective vault schema instead of the graph timestamp, avoiding false freshness churn and misattributed artifact invalidation after compile-only changes
+- Fixed `uncited_claims` linting so it only inspects the actual `## Claims` section instead of unrelated bullets or embedded source text elsewhere in the page, and hardened the viewer server to return structured 500 responses instead of dropping the request on handler errors
+
 ## 0.6.5
 
 - Fixed source-page, source-brief, source-review, and query context shaping so non-code sources keep their stable manifest titles instead of leaking body snippets and extracted metadata into headings, summaries, and review artifacts

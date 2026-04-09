@@ -713,6 +713,88 @@ describe("code-aware ingestion", () => {
     expect(manifest?.language).toBe("bash");
   });
 
+  it("detects executable node, python, and ruby scripts by shebang without an extension", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    const cases: Array<{ name: string; body: string; language: string }> = [
+      { name: "runnode", body: '#!/usr/bin/env node\nconsole.log("ok");\n', language: "javascript" },
+      { name: "runpy", body: "#!/usr/bin/env python3\nprint('ok')\n", language: "python" },
+      { name: "runruby", body: '#!/usr/bin/env ruby\nputs "ok"\n', language: "ruby" }
+    ];
+    for (const { name, body } of cases) {
+      const scriptPath = path.join(repoDir, name);
+      await fs.writeFile(scriptPath, body, "utf8");
+      await fs.chmod(scriptPath, 0o755);
+    }
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    for (const { name, language } of cases) {
+      const manifest = result.imported.find((entry) => entry.originalPath?.endsWith(name));
+      expect(manifest?.sourceKind, `script ${name}`).toBe("code");
+      expect(manifest?.language, `script ${name}`).toBe(language);
+    }
+  });
+
+  it("treats TypeScript files as text/typescript instead of video/mp2t", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    for (const [filename, body] of [
+      ["api.ts", "export const token = 1;\n"],
+      ["types.d.ts", "export interface Shape { area: number }\n"],
+      ["loader.mts", "export const mode = 'esm';\n"],
+      ["legacy.cts", "export const mode = 'cjs';\n"]
+    ] as const) {
+      await fs.writeFile(path.join(repoDir, filename), body, "utf8");
+    }
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    const manifests = result.imported.filter((entry) => /\.(d\.)?[mc]?ts$/.test(entry.originalPath ?? ""));
+    expect(manifests).toHaveLength(4);
+    for (const manifest of manifests) {
+      expect(manifest.mimeType, manifest.originalPath).toBe("text/typescript");
+      expect(manifest.sourceKind, manifest.originalPath).toBe("code");
+    }
+  });
+
+  it("ingests common text manifest, config, and license files instead of dropping them as binary", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    const textFiles: Array<[string, string]> = [
+      ["package.json", '{"name": "demo", "version": "0.0.1"}\n'],
+      ["tsconfig.json", '{"compilerOptions": {"strict": true}}\n'],
+      ["pyproject.toml", '[project]\nname = "demo"\n'],
+      ["Cargo.toml", '[package]\nname = "demo"\n'],
+      ["go.mod", "module example.com/demo\n\ngo 1.22\n"],
+      ["go.sum", "example.com/demo v1.0.0 h1:abc\n"],
+      ["LICENSE", "MIT License\nCopyright (c) 2026\n"],
+      ["LICENSE-MIT", "MIT License\n"],
+      ["Makefile", "build:\n\techo hi\n"],
+      ["Dockerfile", 'FROM node:24\nCMD ["node"]\n'],
+      [".gitignore", "node_modules/\n"],
+      [".editorconfig", "root = true\n"]
+    ];
+    for (const [filename, body] of textFiles) {
+      await fs.writeFile(path.join(repoDir, filename), body, "utf8");
+    }
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    for (const [filename] of textFiles) {
+      const manifest = result.imported.find((entry) => entry.originalPath?.endsWith(filename));
+      expect(manifest, `expected ${filename} to be ingested`).toBeDefined();
+      expect(manifest?.sourceKind, filename).toBe("text");
+    }
+    expect(result.skipped.filter((entry) => entry.reason.startsWith("unsupported_kind"))).toHaveLength(0);
+  });
+
   it("records a clear diagnostic when a tree-sitter grammar asset is missing without failing unrelated sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -780,7 +862,10 @@ describe("code-aware ingestion", () => {
     );
 
     const initial = await ingestDirectory(rootDir, "repo");
-    expect(initial.imported).toHaveLength(2);
+    // Two Python code files plus the repo's .gitignore (now recognized as a
+    // known text file rather than silently dropped as an unsupported binary).
+    expect(initial.imported).toHaveLength(3);
+    expect(initial.imported.some((manifest) => manifest.originalPath?.endsWith(".gitignore"))).toBe(true);
     expect(initial.updated).toHaveLength(0);
     expect(initial.skipped.some((entry) => entry.reason === "gitignore")).toBe(true);
     expect(initial.skipped.some((entry) => entry.reason.startsWith("built_in_ignore"))).toBe(true);
