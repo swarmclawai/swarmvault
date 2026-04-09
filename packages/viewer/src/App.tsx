@@ -124,6 +124,8 @@ export function App() {
         .filter((page): page is NonNullable<typeof page> => Boolean(page))
     : [];
   const graphPageLinks = graph?.pages?.filter((page) => page.kind === "graph_report" || page.kind === "community_summary") ?? [];
+  const graphPresentation = graph?.presentation;
+  const overviewMode = graphPresentation?.mode === "overview";
 
   // --- Data fetching ---
   const refreshWorkspace = useCallback(async () => {
@@ -409,14 +411,20 @@ export function App() {
       <div className="center-area">
         <StatsBar
           generatedAt={graph?.generatedAt ?? null}
-          nodeCount={graph?.nodes.length ?? 0}
-          edgeCount={graph?.edges.length ?? 0}
-          communityCount={graph?.communities?.length ?? 0}
+          nodeCount={graphPresentation?.totalNodes ?? graph?.nodes.length ?? 0}
+          edgeCount={graphPresentation?.totalEdges ?? graph?.edges.length ?? 0}
+          communityCount={graphPresentation?.totalCommunities ?? graph?.communities?.length ?? 0}
           approvalCount={approvals.reduce((total, approval) => total + approval.pendingCount, 0)}
           candidateCount={candidates.length}
           pendingRefreshCount={watchStatus?.pendingSemanticRefresh.length ?? 0}
           benchmarkRatio={graphReport?.benchmark?.summary.reductionRatio ?? null}
         />
+        {overviewMode ? (
+          <div className="overview-banner" data-testid="graph-overview-banner">
+            Overview mode: showing {graphPresentation?.displayedNodes.toLocaleString()} of {graphPresentation?.totalNodes.toLocaleString()}{" "}
+            nodes. Use <code>--full</code> to render the entire graph.
+          </div>
+        ) : null}
         {loading && !graph ? (
           <div className="canvas canvas-loading">
             <span className="loading-text">Loading graph data\u2026</span>

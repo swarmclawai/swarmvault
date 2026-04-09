@@ -7,6 +7,7 @@ import {
   normalizePageStatus,
   normalizeProjectIds,
   normalizeSourceHashes,
+  normalizeSourceSemanticHashes,
   normalizeStringArray,
   type StoredPage
 } from "./pages.js";
@@ -116,6 +117,7 @@ export async function loadSavedOutputPages(wikiDir: string): Promise<StoredPage[
           backlinks,
           schemaHash: typeof parsed.data.schema_hash === "string" ? parsed.data.schema_hash : "",
           sourceHashes: normalizeSourceHashes(parsed.data.source_hashes),
+          sourceSemanticHashes: normalizeSourceSemanticHashes(parsed.data.source_semantic_hashes),
           relatedPageIds,
           relatedNodeIds,
           relatedSourceIds,

@@ -54,6 +54,17 @@ const HARD_REPO_IGNORES = new Set([".git", ".venv"]);
 const PROGRESS_FILE_THRESHOLD = 150;
 const PROGRESS_UPDATE_INTERVAL = 100;
 const RST_HEADING_MARKERS = new Set(["=", "-", "~", "^", '"', "#", "*", "+"]);
+const MARKDOWN_SEMANTIC_FRONTMATTER_KEYS = [
+  "title",
+  "summary",
+  "description",
+  "aliases",
+  "tags",
+  "authors",
+  "published_at",
+  "canonical_url",
+  "source_type"
+] as const;
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -84,6 +95,7 @@ type PreparedInput = {
   extractionHash?: string;
   attachments?: PreparedAttachment[];
   contentHash?: string;
+  semanticHash?: string;
   logDetails?: string[];
 };
 
@@ -267,6 +279,75 @@ function extractedTextForPlainSource(filePath: string, sourceKind: SourceManifes
     return normalizeRstExtractedText(content);
   }
   return content;
+}
+
+function normalizeSemanticMarkdownScalar(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = normalizeWhitespace(value.trim());
+  return normalized || undefined;
+}
+
+function normalizeSemanticMarkdownList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = uniqueStrings(
+    value.flatMap((item) => (typeof item === "string" ? [normalizeWhitespace(item.trim())] : [])).filter(Boolean)
+  );
+  return items.length ? items : undefined;
+}
+
+function semanticMarkdownTitle(fallback: string, content: string, filePath?: string): string {
+  const parsed = matter(content);
+  const frontmatterTitle = normalizeSemanticMarkdownScalar(parsed.data.title);
+  if (frontmatterTitle) {
+    return frontmatterTitle;
+  }
+  return titleFromText(fallback, parsed.content, filePath);
+}
+
+function semanticMarkdownContent(content: string): { extractedText: string; semanticHash: string } {
+  const parsed = matter(content);
+  const body = parsed.content.replace(/\r\n?/g, "\n").trim();
+  const semanticFrontmatter = Object.fromEntries(
+    MARKDOWN_SEMANTIC_FRONTMATTER_KEYS.flatMap((key) => {
+      const value =
+        key === "aliases" || key === "tags" || key === "authors"
+          ? normalizeSemanticMarkdownList(parsed.data[key])
+          : normalizeSemanticMarkdownScalar(parsed.data[key]);
+      return value === undefined ? [] : [[key, value]];
+    })
+  );
+  const semanticLines = Object.entries(semanticFrontmatter).map(
+    ([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`
+  );
+  const extractedText = [...semanticLines, ...(semanticLines.length && body ? [""] : []), body].filter(Boolean).join("\n").trim();
+
+  return {
+    extractedText,
+    semanticHash: sha256(
+      JSON.stringify({
+        body,
+        frontmatter: semanticFrontmatter
+      })
+    )
+  };
+}
+
+function finalizePreparedInput(prepared: PreparedInput): PreparedInput {
+  if (prepared.sourceKind !== "markdown") {
+    return prepared;
+  }
+
+  const semantic = semanticMarkdownContent(prepared.payloadBytes.toString("utf8"));
+  return {
+    ...prepared,
+    extractedText: semantic.extractedText,
+    extractionHash: buildExtractionHash(semantic.extractedText, prepared.extractionArtifact),
+    semanticHash: semantic.semanticHash
+  };
 }
 
 function shouldEmitProgress(totalItems: number): boolean {
@@ -461,7 +542,7 @@ function prepareCapturedMarkdownInput(input: {
   attachments?: PreparedAttachment[];
   logDetails?: string[];
 }): PreparedInput {
-  return {
+  return finalizePreparedInput({
     title: input.title,
     originType: "url",
     sourceKind: "markdown",
@@ -473,7 +554,7 @@ function prepareCapturedMarkdownInput(input: {
     extractedText: input.markdown,
     attachments: input.attachments,
     logDetails: input.logDetails
-  };
+  });
 }
 
 function isPrivateIp(ip: string): boolean {
@@ -934,7 +1015,10 @@ async function readManifestByHash(manifestsDir: string, contentHash: string): Pr
     }
     const manifest = await readJsonFile<SourceManifest>(path.join(manifestsDir, entry.name));
     if (manifest?.contentHash === contentHash) {
-      return manifest;
+      return {
+        ...manifest,
+        semanticHash: manifest.semanticHash ?? manifest.contentHash
+      };
     }
   }
   return null;
@@ -948,7 +1032,10 @@ async function readManifestByOrigin(manifestsDir: string, prepared: PreparedInpu
     }
     const manifest = await readJsonFile<SourceManifest>(path.join(manifestsDir, entry.name));
     if (manifest && manifestMatchesOrigin(manifest, prepared)) {
-      return manifest;
+      return {
+        ...manifest,
+        semanticHash: manifest.semanticHash ?? manifest.contentHash
+      };
     }
   }
   return null;
@@ -1248,12 +1335,14 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
 
   const attachments = prepared.attachments ?? [];
   const contentHash = prepared.contentHash ?? buildCompositeHash(prepared.payloadBytes, attachments);
+  const semanticHash = prepared.semanticHash ?? contentHash;
   const extractionHash = prepared.extractionHash ?? buildExtractionHash(prepared.extractedText, prepared.extractionArtifact);
   const existingByOrigin = await readManifestByOrigin(paths.manifestsDir, prepared);
   const existingByHash = existingByOrigin ? null : await readManifestByHash(paths.manifestsDir, contentHash);
   if (
     existingByOrigin &&
     existingByOrigin.contentHash === contentHash &&
+    existingByOrigin.semanticHash === semanticHash &&
     existingByOrigin.extractionHash === extractionHash &&
     existingByOrigin.title === prepared.title &&
     existingByOrigin.sourceKind === prepared.sourceKind &&
@@ -1325,6 +1414,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     extractionHash,
     mimeType: prepared.mimeType,
     contentHash,
+    semanticHash,
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
     attachments: manifestAttachments.length ? manifestAttachments : undefined
@@ -1708,14 +1798,21 @@ async function prepareFileInput(
   let extractedText: string | undefined;
   let extractionArtifact: SourceExtractionArtifact | undefined;
   if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
-    extractedText = extractedTextForPlainSource(absoluteInput, sourceKind, payloadBytes.toString("utf8"));
-    title = titleFromText(path.basename(absoluteInput, path.extname(absoluteInput)), extractedText, absoluteInput);
+    const rawText = payloadBytes.toString("utf8");
+    extractedText =
+      sourceKind === "markdown"
+        ? semanticMarkdownContent(rawText).extractedText
+        : extractedTextForPlainSource(absoluteInput, sourceKind, rawText);
+    title =
+      sourceKind === "markdown"
+        ? semanticMarkdownTitle(path.basename(absoluteInput, path.extname(absoluteInput)), rawText, absoluteInput)
+        : titleFromText(path.basename(absoluteInput, path.extname(absoluteInput)), extractedText, absoluteInput);
     extractionArtifact = createPlainTextExtractionArtifact(sourceKind, mimeType);
   } else if (sourceKind === "html") {
     const html = payloadBytes.toString("utf8");
     const converted = await convertHtmlToMarkdown(html, pathToFileURL(absoluteInput).toString());
     title = converted.title;
-    extractedText = converted.markdown;
+    extractedText = semanticMarkdownContent(converted.markdown).extractedText;
     extractionArtifact = createHtmlReadabilityExtractionArtifact(sourceKind, mimeType);
   } else if (sourceKind === "pdf") {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
@@ -1742,7 +1839,7 @@ async function prepareFileInput(
     title = path.basename(absoluteInput, path.extname(absoluteInput));
   }
 
-  return {
+  return finalizePreparedInput({
     title,
     originType: "file",
     sourceKind,
@@ -1756,7 +1853,7 @@ async function prepareFileInput(
     extractedText,
     extractionArtifact,
     extractionHash: buildExtractionHash(extractedText, extractionArtifact)
-  };
+  });
 }
 
 async function prepareUrlInput(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput> {
@@ -1826,8 +1923,15 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     const extension = path.extname(inputUrl.pathname);
     storedExtension = extension || `.${mime.extension(mimeType) || "bin"}`;
     if (sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code") {
-      extractedText = extractedTextForPlainSource(inputUrl.pathname, sourceKind, payloadBytes.toString("utf8"));
-      title = titleFromText(title || inputUrl.hostname, extractedText, inputUrl.pathname);
+      const rawText = payloadBytes.toString("utf8");
+      extractedText =
+        sourceKind === "markdown"
+          ? semanticMarkdownContent(rawText).extractedText
+          : extractedTextForPlainSource(inputUrl.pathname, sourceKind, rawText);
+      title =
+        sourceKind === "markdown"
+          ? semanticMarkdownTitle(title || inputUrl.hostname, rawText, inputUrl.pathname)
+          : titleFromText(title || inputUrl.hostname, extractedText, inputUrl.pathname);
       extractionArtifact = createPlainTextExtractionArtifact(sourceKind, mimeType);
 
       if (sourceKind === "markdown" && options.includeAssets) {
@@ -1871,7 +1975,7 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     }
   }
 
-  return {
+  return finalizePreparedInput({
     title,
     originType: "url",
     sourceKind,
@@ -1886,7 +1990,7 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     attachments,
     contentHash,
     logDetails
-  };
+  });
 }
 
 async function collectInboxAttachmentRefs(inputDir: string, files: string[]): Promise<Map<string, InboxAttachmentRef[]>> {
@@ -1980,7 +2084,7 @@ async function prepareInboxMarkdownInput(absolutePath: string, attachmentRefs: I
 
   const extractionArtifact = createPlainTextExtractionArtifact("markdown", "text/markdown");
 
-  return {
+  return finalizePreparedInput({
     title,
     originType: "file",
     sourceKind: "markdown",
@@ -1993,7 +2097,7 @@ async function prepareInboxMarkdownInput(absolutePath: string, attachmentRefs: I
     extractionHash: buildExtractionHash(rewrittenText, extractionArtifact),
     attachments,
     contentHash
-  };
+  });
 }
 
 async function prepareInboxHtmlInput(absolutePath: string, attachmentRefs: InboxAttachmentRef[]): Promise<PreparedInput> {
@@ -2286,7 +2390,12 @@ export async function listManifests(rootDir: string): Promise<SourceManifest[]> 
     entries.filter((entry) => entry.endsWith(".json")).map((entry) => readJsonFile<SourceManifest>(path.join(paths.manifestsDir, entry)))
   );
 
-  return manifests.filter((manifest): manifest is SourceManifest => Boolean(manifest));
+  return manifests
+    .filter((manifest): manifest is SourceManifest => Boolean(manifest))
+    .map((manifest) => ({
+      ...manifest,
+      semanticHash: manifest.semanticHash ?? manifest.contentHash
+    }));
 }
 
 export async function removeManifestBySourceId(rootDir: string, sourceId: string): Promise<SourceManifest | null> {
@@ -2295,8 +2404,12 @@ export async function removeManifestBySourceId(rootDir: string, sourceId: string
   if (!manifest) {
     return null;
   }
-  await removeManifestArtifacts(rootDir, manifest, paths);
-  return manifest;
+  const normalizedManifest = {
+    ...manifest,
+    semanticHash: manifest.semanticHash ?? manifest.contentHash
+  };
+  await removeManifestArtifacts(rootDir, normalizedManifest, paths);
+  return normalizedManifest;
 }
 
 export async function readExtractedText(rootDir: string, manifest: SourceManifest): Promise<string | undefined> {

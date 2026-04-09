@@ -66,6 +66,8 @@ swarmvault graph serve
 swarmvault graph push neo4j --dry-run
 ```
 
+对于非常大的图，`swarmvault graph serve` 和 `swarmvault graph export --html` 会自动进入 overview mode。若你仍想强制渲染完整画布，请添加 `--full`。
+
 <!-- readme-section:provider-setup -->
 ## 可选：添加模型提供方
 
@@ -91,6 +93,29 @@ swarmvault graph push neo4j --dry-run
 ```
 
 其他可选后端、任务路由方式与能力配置请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
+
+如果你想在不使用 API key 的情况下启用本地语义图查询，请使用具备 embeddings 能力的本地后端，例如 Ollama，而不是 `heuristic`：
+
+```json
+{
+  "providers": {
+    "local": {
+      "type": "heuristic",
+      "model": "heuristic-v1"
+    },
+    "ollama-embeddings": {
+      "type": "ollama",
+      "model": "nomic-embed-text",
+      "baseUrl": "http://localhost:11434/v1"
+    }
+  },
+  "tasks": {
+    "compileProvider": "local",
+    "queryProvider": "local",
+    "embeddingProvider": "ollama-embeddings"
+  }
+}
+```
 
 ## 直接指向仓库或文档中心
 

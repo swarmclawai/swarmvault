@@ -50,6 +50,23 @@ function safeFrontmatter<T extends Record<string, unknown>>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function sourceHashesForManifest(manifest: SourceManifest): {
+  sourceHashes: Record<string, string>;
+  sourceSemanticHashes: Record<string, string>;
+} {
+  return {
+    sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+    sourceSemanticHashes: { [manifest.sourceId]: manifest.semanticHash }
+  };
+}
+
+function sourceHashFrontmatter(sourceHashes: Record<string, string>, sourceSemanticHashes: Record<string, string>) {
+  return {
+    source_hashes: sourceHashes,
+    source_semantic_hashes: sourceSemanticHashes
+  };
+}
+
 function decoratedTags(baseTags: string[], decorations?: GeneratedPageDecorations): string[] {
   return uniqueStrings([
     ...baseTags,
@@ -132,6 +149,7 @@ export function buildSourcePage(
 ): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
+  const { sourceHashes, sourceSemanticHashes } = sourceHashesForManifest(manifest);
   const moduleNodeIds = analysis.code ? [analysis.code.moduleId, ...analysis.code.symbols.map((symbol) => symbol.id)] : [];
   const nodeIds = [
     `source:${manifest.sourceId}`,
@@ -165,9 +183,7 @@ export function buildSourcePage(
     managed_by: metadata.managedBy,
     backlinks,
     schema_hash: schemaHash,
-    source_hashes: {
-      [manifest.sourceId]: manifest.contentHash
-    }
+    ...sourceHashFrontmatter(sourceHashes, sourceSemanticHashes)
   };
 
   const body = [
@@ -238,7 +254,8 @@ export function buildSourcePage(
       confidence: metadata.confidence,
       backlinks,
       schemaHash,
-      sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+      sourceHashes,
+      sourceSemanticHashes,
       relatedPageIds: [...(modulePage ? [modulePage.id] : []), ...relatedOutputs.map((page) => page.id)],
       relatedNodeIds: moduleNodeIds,
       relatedSourceIds: [],
@@ -275,6 +292,7 @@ export function buildModulePage(input: {
   const localModuleBacklinks = input.localModules.map((moduleRef) => moduleRef.page.id);
   const relatedOutputs = input.relatedOutputs ?? [];
   const backlinks = uniqueStrings([sourcePage.id, ...localModuleBacklinks, ...relatedOutputs.map((page) => page.id)]);
+  const { sourceHashes, sourceSemanticHashes } = sourceHashesForManifest(manifest);
 
   const importsSection = code.imports.length
     ? code.imports.map((item) => {
@@ -335,9 +353,7 @@ export function buildModulePage(input: {
     managed_by: metadata.managedBy,
     backlinks,
     schema_hash: schemaHash,
-    source_hashes: {
-      [manifest.sourceId]: manifest.contentHash
-    },
+    ...sourceHashFrontmatter(sourceHashes, sourceSemanticHashes),
     related_page_ids: uniqueStrings([sourcePage.id, ...localModuleBacklinks, ...relatedOutputs.map((page) => page.id)]),
     related_node_ids: [],
     related_source_ids: uniqueStrings([
@@ -415,7 +431,8 @@ export function buildModulePage(input: {
       confidence: metadata.confidence,
       backlinks,
       schemaHash,
-      sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+      sourceHashes,
+      sourceSemanticHashes,
       relatedPageIds: uniqueStrings([sourcePage.id, ...localModuleBacklinks, ...relatedOutputs.map((page) => page.id)]),
       relatedNodeIds: [],
       relatedSourceIds: uniqueStrings([
@@ -438,6 +455,7 @@ export function buildAggregatePage(
   descriptions: string[],
   sourceAnalyses: SourceAnalysis[],
   sourceHashes: Record<string, string>,
+  sourceSemanticHashes: Record<string, string>,
   schemaHash: string,
   metadata: ManagedGraphPageMetadata,
   relativePath: string,
@@ -467,7 +485,7 @@ export function buildAggregatePage(
     managed_by: metadata.managedBy,
     backlinks: otherPages,
     schema_hash: schemaHash,
-    source_hashes: sourceHashes
+    ...sourceHashFrontmatter(sourceHashes, sourceSemanticHashes)
   };
 
   const body = [
@@ -509,6 +527,7 @@ export function buildAggregatePage(
       backlinks: otherPages,
       schemaHash,
       sourceHashes,
+      sourceSemanticHashes,
       relatedPageIds: relatedOutputs.map((page) => page.id),
       relatedNodeIds: [],
       relatedSourceIds: [],
@@ -556,6 +575,7 @@ export function buildIndexPage(
     "backlinks: []",
     `schema_hash: ${schemaHash}`,
     "source_hashes: {}",
+    "source_semantic_hashes: {}",
     "---",
     "",
     "# SwarmVault Index",
@@ -632,7 +652,8 @@ export function buildSectionIndex(
       managed_by: metadata.managedBy,
       backlinks: [],
       schema_hash: schemaHash,
-      source_hashes: {}
+      source_hashes: {},
+      source_semantic_hashes: {}
     }
   );
 }
@@ -1013,6 +1034,7 @@ export function buildGraphReportPage(input: {
     backlinks: [],
     schema_hash: input.schemaHash,
     source_hashes: {},
+    source_semantic_hashes: {},
     related_page_ids: relatedPageIds,
     related_node_ids: relatedNodeIds,
     related_source_ids: relatedSourceIds
@@ -1157,6 +1179,7 @@ export function buildGraphReportPage(input: {
       backlinks: [],
       schemaHash: input.schemaHash,
       sourceHashes: {},
+      sourceSemanticHashes: {},
       relatedPageIds,
       relatedNodeIds,
       relatedSourceIds,
@@ -1209,6 +1232,7 @@ export function buildCommunitySummaryPage(input: {
     backlinks: ["graph:report"],
     schema_hash: input.schemaHash,
     source_hashes: {},
+    source_semantic_hashes: {},
     related_page_ids: uniqueStrings(["graph:report", ...communityPageIds]),
     related_node_ids: input.community.nodeIds,
     related_source_ids: relatedSourceIds
@@ -1252,6 +1276,7 @@ export function buildCommunitySummaryPage(input: {
       backlinks: ["graph:report"],
       schemaHash: input.schemaHash,
       sourceHashes: {},
+      sourceSemanticHashes: {},
       relatedPageIds: uniqueStrings(["graph:report", ...communityPageIds]),
       relatedNodeIds: input.community.nodeIds,
       relatedSourceIds,
@@ -1291,7 +1316,8 @@ export function buildProjectsIndex(projectPages: GraphPage[], schemaHash: string
       managed_by: metadata.managedBy,
       backlinks: [],
       schema_hash: schemaHash,
-      source_hashes: {}
+      source_hashes: {},
+      source_semantic_hashes: {}
     }
   );
 }
@@ -1361,7 +1387,8 @@ export function buildProjectIndex(input: {
       managed_by: input.metadata.managedBy,
       backlinks: [],
       schema_hash: input.schemaHash,
-      source_hashes: {}
+      source_hashes: {},
+      source_semantic_hashes: {}
     }
   );
 }
@@ -1409,6 +1436,7 @@ export function buildOutputPage(input: {
     backlinks,
     schema_hash: input.schemaHash,
     source_hashes: {},
+    source_semantic_hashes: {},
     related_page_ids: relatedPageIds,
     related_node_ids: relatedNodeIds,
     related_source_ids: relatedSourceIds,
@@ -1434,6 +1462,7 @@ export function buildOutputPage(input: {
       backlinks,
       schemaHash: input.schemaHash,
       sourceHashes: {},
+      sourceSemanticHashes: {},
       relatedPageIds,
       relatedNodeIds,
       relatedSourceIds,
@@ -1559,6 +1588,7 @@ export function buildExploreHubPage(input: {
     backlinks,
     schema_hash: input.schemaHash,
     source_hashes: {},
+    source_semantic_hashes: {},
     related_page_ids: relatedPageIds,
     related_node_ids: relatedNodeIds,
     related_source_ids: relatedSourceIds,
@@ -1584,6 +1614,7 @@ export function buildExploreHubPage(input: {
       backlinks,
       schemaHash: input.schemaHash,
       sourceHashes: {},
+      sourceSemanticHashes: {},
       relatedPageIds,
       relatedNodeIds,
       relatedSourceIds,

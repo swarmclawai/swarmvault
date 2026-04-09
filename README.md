@@ -66,6 +66,8 @@ swarmvault graph serve
 swarmvault graph push neo4j --dry-run
 ```
 
+For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you want the entire canvas rendered anyway.
+
 <!-- readme-section:provider-setup -->
 ## Optional: Add a Model Provider
 
@@ -91,6 +93,29 @@ Add a model provider when you want richer synthesis quality or extra capabilitie
 ```
 
 See the [provider docs](https://www.swarmvault.ai/docs/providers) for optional backends, task routing, and capability-specific configuration examples.
+
+For local semantic graph query without API keys, use an embedding-capable local backend such as Ollama instead of `heuristic`:
+
+```json
+{
+  "providers": {
+    "local": {
+      "type": "heuristic",
+      "model": "heuristic-v1"
+    },
+    "ollama-embeddings": {
+      "type": "ollama",
+      "model": "nomic-embed-text",
+      "baseUrl": "http://localhost:11434/v1"
+    }
+  },
+  "tasks": {
+    "compileProvider": "local",
+    "queryProvider": "local",
+    "embeddingProvider": "ollama-embeddings"
+  }
+}
+```
 
 ## Point It At A Repo Or Docs Hub
 

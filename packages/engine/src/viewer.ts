@@ -6,9 +6,10 @@ import { promisify } from "node:util";
 import matter from "gray-matter";
 import mime from "mime-types";
 import { loadVaultConfig } from "./config.js";
+import { buildViewerGraphArtifact } from "./graph-presentation.js";
 import { normalizeOutputAssets } from "./pages.js";
 import { searchPages } from "./search.js";
-import type { GraphArtifact } from "./types.js";
+import type { GraphArtifact, GraphReportArtifact } from "./types.js";
 import { fileExists, readJsonFile } from "./utils.js";
 import {
   acceptApproval,
@@ -97,7 +98,11 @@ async function ensureViewerDist(viewerDistDir: string): Promise<void> {
   }
 }
 
-export async function startGraphServer(rootDir: string, port?: number): Promise<{ port: number; close: () => Promise<void> }> {
+export async function startGraphServer(
+  rootDir: string,
+  port?: number,
+  options: { full?: boolean } = {}
+): Promise<{ port: number; close: () => Promise<void> }> {
   const { config, paths } = await loadVaultConfig(rootDir);
   const effectivePort = port ?? config.viewer.port;
   await ensureViewerDist(paths.viewerDistDir);
@@ -110,8 +115,16 @@ export async function startGraphServer(rootDir: string, port?: number): Promise<
         response.end(JSON.stringify({ error: "Graph artifact not found. Run `swarmvault compile` first." }));
         return;
       }
+      const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+      if (!graph) {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "Graph artifact not found. Run `swarmvault compile` first." }));
+        return;
+      }
+      const reportPath = path.join(paths.wikiDir, "graph", "report.json");
+      const report = (await readJsonFile<GraphReportArtifact>(reportPath)) ?? null;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(await fs.readFile(paths.graphPath, "utf8"));
+      response.end(JSON.stringify(buildViewerGraphArtifact(graph, { report, full: options.full ?? false })));
       return;
     }
 
@@ -306,7 +319,7 @@ export async function startGraphServer(rootDir: string, port?: number): Promise<
   };
 }
 
-export async function exportGraphHtml(rootDir: string, outputPath: string): Promise<string> {
+export async function exportGraphHtml(rootDir: string, outputPath: string, options: { full?: boolean } = {}): Promise<string> {
   const { paths } = await loadVaultConfig(rootDir);
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   if (!graph) {
@@ -356,8 +369,12 @@ export async function exportGraphHtml(rootDir: string, outputPath: string): Prom
 
   const script = await fs.readFile(scriptPath, "utf8");
   const style = stylePath && (await fileExists(stylePath)) ? await fs.readFile(stylePath, "utf8") : "";
-  const report = await readJsonFile(path.join(paths.wikiDir, "graph", "report.json"));
-  const embeddedData = JSON.stringify({ graph, pages: pages.filter(Boolean), report }, null, 2).replace(/</g, "\\u003c");
+  const report = await readJsonFile<GraphReportArtifact>(path.join(paths.wikiDir, "graph", "report.json"));
+  const embeddedData = JSON.stringify(
+    { graph: buildViewerGraphArtifact(graph, { report, full: options.full ?? false }), pages: pages.filter(Boolean), report },
+    null,
+    2
+  ).replace(/</g, "\\u003c");
   const html = [
     "<!doctype html>",
     '<html lang="en">',

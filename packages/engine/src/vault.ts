@@ -1707,10 +1707,22 @@ async function writePage(wikiDir: string, relativePath: string, content: string,
 function aggregateItems(
   analyses: SourceAnalysis[],
   kind: "concepts" | "entities"
-): Array<{ name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }> {
+): Array<{
+  name: string;
+  descriptions: string[];
+  sourceAnalyses: SourceAnalysis[];
+  sourceHashes: Record<string, string>;
+  sourceSemanticHashes: Record<string, string>;
+}> {
   const grouped = new Map<
     string,
-    { name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }
+    {
+      name: string;
+      descriptions: string[];
+      sourceAnalyses: SourceAnalysis[];
+      sourceHashes: Record<string, string>;
+      sourceSemanticHashes: Record<string, string>;
+    }
   >();
 
   for (const analysis of analyses) {
@@ -1720,11 +1732,13 @@ function aggregateItems(
         name: item.name,
         descriptions: [],
         sourceAnalyses: [],
-        sourceHashes: {}
+        sourceHashes: {},
+        sourceSemanticHashes: {}
       };
       existing.descriptions.push(item.description);
       existing.sourceAnalyses.push(analysis);
       existing.sourceHashes[analysis.sourceId] = analysis.sourceHash;
+      existing.sourceSemanticHashes[analysis.sourceId] = analysis.semanticHash;
       grouped.set(key, existing);
     }
   }
@@ -1743,6 +1757,7 @@ function emptyGraphPage(input: {
   nodeIds: string[];
   schemaHash: string;
   sourceHashes: Record<string, string>;
+  sourceSemanticHashes?: Record<string, string>;
   confidence: number;
   status?: PageStatus;
   createdAt?: string;
@@ -1765,6 +1780,7 @@ function emptyGraphPage(input: {
     backlinks: [],
     schemaHash: input.schemaHash,
     sourceHashes: input.sourceHashes,
+    sourceSemanticHashes: input.sourceSemanticHashes ?? {},
     relatedPageIds: [],
     relatedNodeIds: [],
     relatedSourceIds: [],
@@ -1995,6 +2011,7 @@ async function syncVaultArtifacts(
           nodeIds: [analysis.code.moduleId, ...analysis.code.symbols.map((symbol) => symbol.id)],
           schemaHash: sourceSchemaHash,
           sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+          sourceSemanticHashes: { [manifest.sourceId]: manifest.semanticHash },
           confidence: 1
         })
       : null;
@@ -2014,6 +2031,7 @@ async function syncVaultArtifacts(
       ],
       schemaHash: sourceSchemaHash,
       sourceHashes: { [manifest.sourceId]: manifest.contentHash },
+      sourceSemanticHashes: { [manifest.sourceId]: manifest.semanticHash },
       confidence: 1
     });
     const sourceRecord = await buildManagedGraphPage(
@@ -2139,6 +2157,7 @@ async function syncVaultArtifacts(
             aggregate.descriptions,
             aggregate.sourceAnalyses,
             aggregate.sourceHashes,
+            aggregate.sourceSemanticHashes,
             schemaHash,
             metadata,
             relativePath,
@@ -2410,6 +2429,7 @@ async function syncVaultArtifacts(
     projectConfigHash: projectConfigHash(config),
     analyses: Object.fromEntries(input.analyses.map((analysis) => [analysis.sourceId, analysisSignature(analysis)])),
     sourceHashes: Object.fromEntries(input.manifests.map((manifest) => [manifest.sourceId, manifest.contentHash])),
+    sourceSemanticHashes: Object.fromEntries(input.manifests.map((manifest) => [manifest.sourceId, manifest.semanticHash])),
     sourceProjects: input.sourceProjects,
     outputHashes: input.outputHashes,
     insightHashes: input.insightHashes,
@@ -2940,6 +2960,7 @@ function emptyCompileState(): CompileState {
     projectConfigHash: "",
     analyses: {},
     sourceHashes: {},
+    sourceSemanticHashes: {},
     sourceProjects: {},
     outputHashes: {},
     insightHashes: {},
@@ -3426,7 +3447,8 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
         managed_by: "human",
         backlinks: [],
         schema_hash: "",
-        source_hashes: {}
+        source_hashes: {},
+        source_semantic_hashes: {}
       }
     )
   );
@@ -3449,7 +3471,8 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
       managed_by: "system",
       backlinks: [],
       schema_hash: "",
-      source_hashes: {}
+      source_hashes: {},
+      source_semantic_hashes: {}
     })
   );
   await writeFileIfChanged(
@@ -3471,7 +3494,8 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
       managed_by: "system",
       backlinks: [],
       schema_hash: "",
-      source_hashes: {}
+      source_hashes: {},
+      source_semantic_hashes: {}
     })
   );
   if (options.obsidian) {
@@ -3519,7 +3543,7 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     );
   const nextProjectConfigHash = projectConfigHash(config);
   const projectConfigChanged = !previousState || previousState.projectConfigHash !== nextProjectConfigHash;
-  const previousSourceHashes = previousState?.sourceHashes ?? {};
+  const previousSourceHashes = previousState?.sourceSemanticHashes ?? previousState?.sourceHashes ?? {};
   const previousAnalyses = previousState?.analyses ?? {};
   const previousSourceProjects = previousState?.sourceProjects ?? {};
   const previousOutputHashes = previousState?.outputHashes ?? {};
@@ -3536,7 +3560,7 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
   const dirty: SourceManifest[] = [];
   const clean: SourceManifest[] = [];
   for (const manifest of manifests) {
-    const hashChanged = previousSourceHashes[manifest.sourceId] !== manifest.contentHash;
+    const hashChanged = previousSourceHashes[manifest.sourceId] !== manifest.semanticHash;
     const noAnalysis = !previousAnalyses[manifest.sourceId];
     const projectId = sourceProjects[manifest.sourceId] ?? null;
     const projectChanged = (previousSourceProjects[manifest.sourceId] ?? null) !== projectId;
@@ -4358,9 +4382,11 @@ function structuralLintFindings(
         });
       }
 
-      for (const [sourceId, knownHash] of Object.entries(page.sourceHashes)) {
+      const freshnessHashes = Object.keys(page.sourceSemanticHashes).length ? page.sourceSemanticHashes : page.sourceHashes;
+      for (const [sourceId, knownHash] of Object.entries(freshnessHashes)) {
         const manifest = manifestMap.get(sourceId);
-        if (manifest && manifest.contentHash !== knownHash) {
+        const manifestHash = manifest?.semanticHash ?? manifest?.contentHash;
+        if (manifestHash && manifestHash !== knownHash) {
           findings.push({
             severity: "warning",
             code: "stale_page",

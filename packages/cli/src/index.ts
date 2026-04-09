@@ -60,9 +60,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.2.1";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.2.2";
   } catch {
-    return "0.2.1";
+    return "0.2.2";
   }
 }
 
@@ -511,9 +511,10 @@ graph
   .command("serve")
   .description("Serve the local graph viewer.")
   .option("--port <port>", "Port override")
-  .action(async (options: { port?: string }) => {
+  .option("--full", "Disable overview sampling and render the full graph", false)
+  .action(async (options: { port?: string; full?: boolean }) => {
     const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
-    const server = await startGraphServer(process.cwd(), port);
+    const server = await startGraphServer(process.cwd(), port, { full: options.full ?? false });
     if (isJson()) {
       emitJson({ port: server.port, url: `http://localhost:${server.port}` });
     } else {
@@ -534,7 +535,8 @@ graph
   .option("--svg <output>", "Output SVG file path")
   .option("--graphml <output>", "Output GraphML file path")
   .option("--cypher <output>", "Output Cypher file path")
-  .action(async (options: { html?: string; svg?: string; graphml?: string; cypher?: string }) => {
+  .option("--full", "Disable overview sampling for HTML export", false)
+  .action(async (options: { html?: string; svg?: string; graphml?: string; cypher?: string; full?: boolean }) => {
     const targets = [
       options.html ? ({ format: "html", outputPath: options.html } as const) : null,
       options.svg ? ({ format: "svg", outputPath: options.svg } as const) : null,
@@ -549,7 +551,7 @@ graph
     const target = targets[0];
     const outputPath =
       target.format === "html"
-        ? await exportGraphHtml(process.cwd(), target.outputPath)
+        ? await exportGraphHtml(process.cwd(), target.outputPath, { full: options.full ?? false })
         : (await exportGraphFormat(process.cwd(), target.format, target.outputPath)).outputPath;
     if (isJson()) {
       emitJson({ format: target.format, outputPath });

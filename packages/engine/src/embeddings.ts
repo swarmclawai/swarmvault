@@ -172,7 +172,9 @@ async function resolveEmbeddingProvider(rootDir: string): Promise<ProviderAdapte
     }
     const provider = await createProvider(explicitProviderId, providerConfig, rootDir);
     if (!provider.capabilities.has("embeddings") || typeof provider.embedTexts !== "function") {
-      throw new Error(`Provider ${provider.id} does not support required capability "embeddings".`);
+      throw new Error(
+        `Provider ${provider.id} does not support required capability "embeddings". Configure tasks.embeddingProvider to use an embedding-capable backend such as ollama or another openai-compatible embedding service.`
+      );
     }
     return provider;
   }
