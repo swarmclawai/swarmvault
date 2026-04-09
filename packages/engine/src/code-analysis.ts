@@ -1985,6 +1985,37 @@ export function inferCodeLanguage(filePath: string, mimeType = "", options: Code
   if (extension === ".ps1" || extension === ".psm1" || extension === ".psd1") {
     return "powershell";
   }
+  if (extension === ".swift") {
+    return "swift";
+  }
+  if (extension === ".ex" || extension === ".exs") {
+    return "elixir";
+  }
+  if (extension === ".ml" || extension === ".mli") {
+    return "ocaml";
+  }
+  // Objective-C: only claim .m and .mm. Leave .h resolving to cpp (existing
+  // behavior) because ObjC and C++ headers are textually indistinguishable
+  // without content sniffing, and treating .h as cpp is a safe default for
+  // mixed ObjC/C++ codebases.
+  if (extension === ".m" || extension === ".mm") {
+    return "objc";
+  }
+  if (extension === ".res" || extension === ".resi") {
+    return "rescript";
+  }
+  if (extension === ".sol") {
+    return "solidity";
+  }
+  if (extension === ".html" || extension === ".htm") {
+    return "html";
+  }
+  if (extension === ".css") {
+    return "css";
+  }
+  if (extension === ".vue") {
+    return "vue";
+  }
   if (extension === ".c") {
     return "c";
   }
@@ -2233,6 +2264,30 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       return [".c", ".h"];
     case "cpp":
       return [".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"];
+    case "swift":
+      return [".swift"];
+    case "elixir":
+      return [".ex", ".exs"];
+    case "ocaml":
+      return [".ml", ".mli"];
+    case "objc":
+      // Objective-C source files share `.h` headers with C/C++; a `#import` in
+      // a `.m` file may target either an ObjC-specific header or a plain C
+      // header in the same repo, so enumerate the common header extensions too.
+      return [".m", ".mm", ".h"];
+    case "rescript":
+      return [".res", ".resi"];
+    case "solidity":
+      return [".sol"];
+    case "html":
+      // HTML link/script imports can point at any sibling asset. The primary
+      // targets are .css (from <link rel="stylesheet">) and .js/.mjs (from
+      // <script src>), so enumerate those along with nested HTML fragments.
+      return [".css", ".js", ".mjs", ".cjs", ".html", ".htm"];
+    case "css":
+      return [".css"];
+    default:
+      return [];
   }
 }
 
@@ -2341,6 +2396,55 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
       case "powershell":
         recordAlias(aliases, basename);
         break;
+      case "elixir":
+        // A single Elixir file can hold several `defmodule`/`defprotocol`
+        // declarations. finalizeCodeAnalysis only plumbs the first one through
+        // `moduleName`, so walk the class/interface symbols that the analyzer
+        // emitted and register each of their fully-qualified names as an alias
+        // too. Import resolution (`alias Foo.Bar`) can then target any module
+        // defined in the file, not just the first.
+        for (const symbol of analysis.code.symbols) {
+          if (symbol.kind === "class" || symbol.kind === "interface") {
+            recordAlias(aliases, symbol.name);
+          }
+        }
+        break;
+      case "ocaml": {
+        // OCaml's file-derived module name is the basename with its first letter
+        // uppercased: `printf.ml` implicitly defines a module named `Printf`.
+        // `open Printf` in another file should resolve to this module, so record
+        // the capitalized basename as an alias. Also register any nested
+        // `module Foo = struct ... end` declarations that the analyzer surfaced
+        // as class symbols, so their names become resolvable too.
+        if (basename) {
+          const capitalized = basename.charAt(0).toUpperCase() + basename.slice(1);
+          recordAlias(aliases, capitalized);
+          recordAlias(aliases, basename);
+        }
+        for (const symbol of analysis.code.symbols) {
+          if (symbol.kind === "class" || symbol.kind === "interface") {
+            recordAlias(aliases, symbol.name);
+          }
+        }
+        break;
+      }
+      case "rescript": {
+        // ReScript follows OCaml's convention: `widget.res` implicitly defines a
+        // module `Widget`. Register the capitalized basename plus any nested
+        // `module Foo = { ... }` symbols the analyzer emitted as aliases so
+        // `open Widget` resolves across files.
+        if (basename) {
+          const capitalized = basename.charAt(0).toUpperCase() + basename.slice(1);
+          recordAlias(aliases, capitalized);
+          recordAlias(aliases, basename);
+        }
+        for (const symbol of analysis.code.symbols) {
+          if (symbol.kind === "class") {
+            recordAlias(aliases, symbol.name);
+          }
+        }
+        break;
+      }
       default:
         break;
     }
@@ -2611,6 +2715,9 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
     case "kotlin":
     case "scala":
     case "csharp":
+    case "elixir":
+    case "ocaml":
+    case "rescript":
       return aliasMatches(lookup, codeImport.specifier);
     case "dart":
       return repoRelativePath && dartSpecifierLooksLocal(codeImport.specifier)
@@ -2654,6 +2761,10 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
     }
     case "c":
     case "cpp":
+    case "objc":
+    case "solidity":
+    case "html":
+    case "css":
       return repoRelativePath && !codeImport.isExternal
         ? repoPathMatches(lookup, ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language)))
         : aliasMatches(lookup, codeImport.specifier);
@@ -2687,8 +2798,10 @@ function importLooksLocal(manifest: SourceManifest, codeImport: CodeImport, cand
     case "powershell":
     case "c":
     case "cpp":
+    case "objc":
     case "kotlin":
     case "scala":
+    case "solidity":
       return !codeImport.isExternal;
     case "bash":
       return bashSpecifierLooksLocal(codeImport.specifier);

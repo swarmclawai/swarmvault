@@ -17,3 +17,28 @@ declare module "istextorbinary" {
     options?: { chunkLength?: number; chunkBegin?: number }
   ): "utf8" | "binary" | null;
 }
+
+// `rtf-parser` has no published type definitions. Provide a minimal inline
+// declaration for the callback-based string parsing API used by extractRtfText.
+declare module "rtf-parser" {
+  export interface RtfSpan {
+    value?: string;
+    style?: Record<string, unknown>;
+  }
+  export interface RtfParagraph {
+    content?: RtfSpan[];
+    style?: Record<string, unknown>;
+  }
+  export interface RtfDocument {
+    content?: Array<RtfParagraph | RtfSpan>;
+    style?: Record<string, unknown>;
+    charset?: string;
+  }
+  function parse(cb: (err: Error | null, doc: RtfDocument) => void): NodeJS.WritableStream;
+  namespace parse {
+    function string(input: string, cb: (err: Error | null, doc: RtfDocument) => void): void;
+    function stream(stream: NodeJS.ReadableStream, cb: (err: Error | null, doc: RtfDocument) => void): void;
+  }
+  export default parse;
+  export { parse };
+}

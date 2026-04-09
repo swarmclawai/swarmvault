@@ -777,7 +777,7 @@ try {
       );
       const tinyManifests = manifests.filter((manifest) => manifest.originalPath?.includes("/tiny-matrix/"));
       const sourceKinds = new Set(tinyManifests.map((manifest) => manifest.sourceKind));
-      for (const sourceKind of ["markdown", "text", "html", "pdf", "image", "code"]) {
+      for (const sourceKind of ["markdown", "text", "pdf", "image", "code"]) {
         assert.ok(sourceKinds.has(sourceKind), `tiny matrix missing source kind ${sourceKind}`);
       }
       for (const sourceKind of ["docx", "epub", "csv", "xlsx", "pptx"]) {
@@ -817,6 +817,8 @@ try {
       }
 
       const htmlManifest = tinyManifests.find((manifest) => manifest.repoRelativePath === "docs/page.html");
+      assert.equal(htmlManifest?.sourceKind, "code", "tiny matrix html file did not route through code ingest");
+      assert.equal(htmlManifest?.language, "html", "tiny matrix html file did not preserve the html language");
       assert.ok(htmlManifest?.extractedTextPath, "tiny matrix html file did not record extracted text");
       const htmlExtract = await fs.readFile(path.join(workspaceDir, htmlManifest.extractedTextPath), "utf8");
       assert.ok(htmlExtract.includes("Local HTML files should extract readable text before analysis."), "tiny matrix html extract was empty");
@@ -849,7 +851,8 @@ try {
       assert.equal(epubManifests.length, 2, "tiny matrix epub did not split into chapter manifests");
       const htmlSourcePagePath = path.join(workspaceDir, "wiki", "sources", `${htmlManifest.sourceId}.md`);
       const htmlSourcePage = await fs.readFile(htmlSourcePagePath, "utf8");
-      assert.ok(htmlSourcePage.includes("Tiny HTML Source"), "tiny matrix source page did not include html title");
+      assert.ok(htmlSourcePage.includes("Source Kind: `code`"), "tiny matrix source page did not preserve the html code kind");
+      assert.ok(htmlSourcePage.includes("Language: `html`"), "tiny matrix source page did not preserve the html language");
     });
   }
 

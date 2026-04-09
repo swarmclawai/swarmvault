@@ -198,20 +198,28 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Input | Extensions / Sources | Extraction |
 |-------|---------------------|------------|
 | PDF | `.pdf` | Local text extraction |
-| DOCX | `.docx` | Local extraction with metadata |
+| Word documents | `.docx .docm .dotx .dotm` | Local extraction with metadata (includes macro-enabled and template variants) |
+| Rich Text | `.rtf` | Local RTF text extraction via parser-backed walk |
+| OpenDocument | `.odt .odp .ods` | Local text / slide / sheet extraction |
 | EPUB books | `.epub` | Local chapter-split HTML-to-markdown extraction |
 | Datasets | `.csv .tsv` | Local tabular summary with bounded preview |
-| Spreadsheets | `.xlsx` | Local workbook and sheet preview extraction |
-| Slide decks | `.pptx` | Local slide and speaker-note extraction |
+| Spreadsheets | `.xlsx .xlsm .xlsb .xls .xltx .xltm` | Local workbook and sheet preview extraction (modern, macro-enabled, binary, and legacy formats) |
+| Slide decks | `.pptx .pptm .potx .potm` | Local slide and speaker-note extraction (includes macro-enabled and template variants) |
+| Jupyter notebooks | `.ipynb` | Local cell + output extraction |
+| BibTeX libraries | `.bib` | Parser-backed citation entry extraction |
+| Org-mode | `.org` | AST-backed headline, list, and block extraction |
+| AsciiDoc | `.adoc .asciidoc` | Asciidoctor-backed section and metadata extraction |
 | Transcripts | `.srt .vtt` | Local timestamped transcript extraction |
 | Chat exports | Slack export `.zip`, extracted Slack export directories | Local channel/day conversation extraction |
 | Email | `.eml .mbox` | Local message extraction and mailbox expansion |
 | Calendar | `.ics` | Local VEVENT expansion |
-| HTML | `.html`, URLs | Readability + Turndown to markdown |
-| Images | `.png .jpg .webp` | Vision provider (when configured) |
+| HTML | `.html`, URLs | Readability + Turndown to markdown (URL ingest) |
+| Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider (when configured) |
 | Research | arXiv, DOI, articles, X/Twitter | Normalized markdown via `swarmvault add` |
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
-| Code | `.js .jsx .ts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .php .rb .ps1` | AST via tree-sitter + module resolution |
+| Config / data | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | Structured preview with key/value schema hints |
+| Developer manifests | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` (and similar) | Content-sniffed text ingest — no plaintext dev files are silently dropped |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .hpp .hh .h .php .rb .ps1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`, plus extensionless scripts with `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebangs | AST via tree-sitter + module resolution |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 | Managed sources | local directories, public GitHub repo roots, docs hubs | Registry-backed sync via `swarmvault source add` |
 

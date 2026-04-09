@@ -14,17 +14,26 @@ import {
   buildExtractionHash,
   createHtmlReadabilityExtractionArtifact,
   createPlainTextExtractionArtifact,
+  extractAsciiDocText,
+  extractBibTeXText,
   extractCalendarEvents,
   extractCsvText,
   extractDocxText,
   extractEmailText,
   extractEpubChapters,
   extractImageWithVision,
+  extractJupyterNotebook,
   extractMboxMessages,
+  extractOdpText,
+  extractOdsText,
+  extractOdtText,
+  extractOrgText,
   extractPdfText,
   extractPptxText,
+  extractRtfText,
   extractSlackExportArchive,
   extractSlackExportDirectory,
+  extractStructuredData,
   extractTranscriptText,
   extractXlsxText,
   isSlackExportArchive,
@@ -157,16 +166,30 @@ function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLan
   if (isTranscriptFilePath(filePath) || mimeType === "application/x-subrip" || mimeType === "text/vtt") {
     return "transcript";
   }
-  if (mimeType.includes("markdown")) {
+  if (mimeType.includes("markdown") || filePath.toLowerCase().endsWith(".mdx")) {
+    // Treat MDX as markdown for v1; JSX nodes pass through as text. A future
+    // upgrade can add mdast-util-mdx if JSX noise degrades signal quality.
     return "markdown";
   }
+  // Note: `.html`/`.htm` is covered by the code-language classifier above
+  // (tree-sitter-html). This branch only catches explicit HTML mime types
+  // that slip through without an extension.
   if (mimeType.includes("html")) {
     return "html";
   }
   if (mimeType === "application/pdf" || filePath.toLowerCase().endsWith(".pdf")) {
     return "pdf";
   }
-  if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filePath.toLowerCase().endsWith(".docx")) {
+  if (
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mimeType === "application/vnd.ms-word.document.macroenabled.12" ||
+    mimeType === "application/vnd.ms-word.template.macroenabled.12" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.template" ||
+    filePath.toLowerCase().endsWith(".docx") ||
+    filePath.toLowerCase().endsWith(".docm") ||
+    filePath.toLowerCase().endsWith(".dotx") ||
+    filePath.toLowerCase().endsWith(".dotm")
+  ) {
     return "docx";
   }
   if (isEmailFilePath(filePath) || mimeType === "message/rfc822" || mimeType === "application/mbox") {
@@ -186,22 +209,92 @@ function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLan
   ) {
     return "csv";
   }
+  // Jupyter must be detected before the generic text/JSON fall-through since
+  // .ipynb files report as application/json on many systems.
+  if (mimeType === "application/x-ipynb+json" || filePath.toLowerCase().endsWith(".ipynb")) {
+    return "jupyter";
+  }
+  if (mimeType === "application/vnd.oasis.opendocument.text" || filePath.toLowerCase().endsWith(".odt")) {
+    return "odt";
+  }
+  if (mimeType === "application/vnd.oasis.opendocument.presentation" || filePath.toLowerCase().endsWith(".odp")) {
+    return "odp";
+  }
+  if (mimeType === "application/vnd.oasis.opendocument.spreadsheet" || filePath.toLowerCase().endsWith(".ods")) {
+    return "ods";
+  }
+  if (filePath.toLowerCase().endsWith(".bib") || mimeType === "application/x-bibtex") {
+    return "bibtex";
+  }
+  if (mimeType === "application/rtf" || mimeType === "text/rtf" || filePath.toLowerCase().endsWith(".rtf")) {
+    return "rtf";
+  }
+  if (filePath.toLowerCase().endsWith(".org") || mimeType === "text/x-org") {
+    return "org";
+  }
+  if (filePath.toLowerCase().endsWith(".adoc") || filePath.toLowerCase().endsWith(".asciidoc") || mimeType === "text/x-asciidoc") {
+    return "asciidoc";
+  }
+  // Structured-config files get a first-class `data` kind with schema hints,
+  // analogous to how CSV is treated. Detect before the text fall-through so
+  // these don't get classified as generic text.
+  if (isStructuredDataPath(filePath, mimeType)) {
+    return "data";
+  }
   if (mimeType.startsWith("text/") || isStructuredTextMime(mimeType)) {
     return "text";
   }
-  if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || filePath.toLowerCase().endsWith(".xlsx")) {
+  if (
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimeType === "application/vnd.ms-excel" ||
+    mimeType === "application/vnd.ms-excel.sheet.macroenabled.12" ||
+    mimeType === "application/vnd.ms-excel.template.macroenabled.12" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.template" ||
+    filePath.toLowerCase().endsWith(".xlsx") ||
+    filePath.toLowerCase().endsWith(".xlsm") ||
+    filePath.toLowerCase().endsWith(".xltx") ||
+    filePath.toLowerCase().endsWith(".xltm") ||
+    filePath.toLowerCase().endsWith(".xls")
+  ) {
     return "xlsx";
   }
   if (
     mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
-    filePath.toLowerCase().endsWith(".pptx")
+    mimeType === "application/vnd.ms-powerpoint.presentation.macroenabled.12" ||
+    mimeType === "application/vnd.ms-powerpoint.template.macroenabled.12" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.presentationml.template" ||
+    filePath.toLowerCase().endsWith(".pptx") ||
+    filePath.toLowerCase().endsWith(".pptm") ||
+    filePath.toLowerCase().endsWith(".potx") ||
+    filePath.toLowerCase().endsWith(".potm")
   ) {
     return "pptx";
   }
-  if (mimeType.startsWith("image/")) {
+  if (mimeType.startsWith("image/") || isImagePath(filePath)) {
     return "image";
   }
   return "binary";
+}
+
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".ico",
+  ".tiff",
+  ".tif",
+  ".heic",
+  ".heif",
+  ".avif",
+  ".jxl",
+  ".svg"
+]);
+
+function isImagePath(filePath: string): boolean {
+  return IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
 function isStructuredTextMime(mimeType: string): boolean {
@@ -223,6 +316,59 @@ function isStructuredTextMime(mimeType: string): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Detects config/data files that should be promoted to the `data` source
+ * kind (JSON, YAML, TOML). These used to fall through to plain `text` and
+ * lose their schema structure; the `data` kind gives them a schema-hint
+ * preview similar to CSV.
+ *
+ * Excludes JSON-family files that are actually code manifests (package.json,
+ * tsconfig.json) so developers still get per-manifest graph treatment if
+ * future work wires that up.
+ */
+function isStructuredDataPath(filePath: string, mimeType: string): boolean {
+  const lower = filePath.toLowerCase();
+  if (
+    lower.endsWith(".yaml") ||
+    lower.endsWith(".yml") ||
+    lower.endsWith(".toml") ||
+    mimeType === "application/toml" ||
+    mimeType === "application/yaml" ||
+    mimeType === "application/x-yaml"
+  ) {
+    return true;
+  }
+  if (
+    lower.endsWith(".xml") ||
+    lower.endsWith(".ini") ||
+    lower.endsWith(".env") ||
+    lower.endsWith(".properties") ||
+    lower.endsWith(".conf") ||
+    lower.endsWith(".cfg") ||
+    mimeType === "application/xml" ||
+    mimeType === "text/xml"
+  ) {
+    return true;
+  }
+  if (
+    lower.endsWith(".json") ||
+    lower.endsWith(".jsonc") ||
+    lower.endsWith(".json5") ||
+    mimeType === "application/json" ||
+    mimeType === "application/json5"
+  ) {
+    // Skip a handful of developer-tooling manifests that have better handling
+    // planned or that are noisy when treated as data. Regular data/config
+    // JSON files fall through to `data`.
+    const base = path.basename(lower);
+    if (base === "package.json" || base === "package-lock.json" || base === "tsconfig.json" || base === "pnpm-lock.yaml") {
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 async function localCodeDetectionOptions(absolutePath: string, payloadBytes?: Buffer): Promise<CodeLanguageDetectionOptions> {
@@ -2265,6 +2411,60 @@ async function prepareFileInputs(
     title = extracted.title?.trim() || title;
     extractedText = extracted.extractedText;
     extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "jupyter") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractJupyterNotebook({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "odt") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractOdtText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "odp") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractOdpText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "ods") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractOdsText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "data") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractStructuredData({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "bibtex") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractBibTeXText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "rtf") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractRtfText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "org") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractOrgText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "asciidoc") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractAsciiDocText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
   } else if (sourceKind === "epub") {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
     const extracted = await extractEpubChapters({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
@@ -2615,7 +2815,13 @@ async function collectInboxAttachmentRefs(inputDir: string, files: string[]): Pr
   for (const absolutePath of files) {
     const mimeType = guessMimeType(absolutePath);
     const detectionOptions = await localCodeDetectionOptions(absolutePath);
-    const sourceKind = inferKind(mimeType, absolutePath, detectionOptions);
+    let sourceKind = inferKind(mimeType, absolutePath, detectionOptions);
+    // Same override as `importInbox`: inside the inbox, .html files are
+    // browser clips with attachments, not code templates.
+    const lowerExt = path.extname(absolutePath).toLowerCase();
+    if ((lowerExt === ".html" || lowerExt === ".htm") && sourceKind === "code") {
+      sourceKind = "html";
+    }
     if (sourceKind !== "markdown" && sourceKind !== "html") {
       continue;
     }
@@ -3012,7 +3218,15 @@ export async function importInbox(rootDir: string, inputDir?: string): Promise<I
     const mimeType = guessMimeType(absolutePath);
     const detectionOptions = await localCodeDetectionOptions(absolutePath);
     let sourceKind = inferKind(mimeType, absolutePath, detectionOptions);
-    if (sourceKind === "binary" && path.extname(absolutePath).toLowerCase() === ".zip") {
+    // Context-aware override: inside the inbox, .html files are browser
+    // clips with referenced attachments — not code templates. Route them
+    // through the html-prose path so the Readability extractor and
+    // attachment linker fire.
+    const lowerExt = path.extname(absolutePath).toLowerCase();
+    if ((lowerExt === ".html" || lowerExt === ".htm") && sourceKind === "code") {
+      sourceKind = "html";
+    }
+    if (sourceKind === "binary" && lowerExt === ".zip") {
       const bytes = await fs.readFile(absolutePath);
       if (isSlackExportArchive(bytes)) {
         sourceKind = "chat_export";

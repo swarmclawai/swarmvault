@@ -577,6 +577,557 @@ describe("code-aware ingestion", () => {
     expect(searchResults.some((result) => result.path === `code/${dartWidgetManifest.sourceId}.md`)).toBe(true);
   });
 
+  it("degrades gracefully on Swift sources without loading the Swift grammar by default", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "swift"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "swift", "Widget.swift"),
+      [
+        "import Foundation",
+        "",
+        "public protocol Renderable {",
+        "    func render() -> String",
+        "}",
+        "",
+        "open class BaseWidget {}",
+        "",
+        "public class Widget: BaseWidget, Renderable {",
+        "    private let name: String",
+        "",
+        "    public init(name: String) {",
+        "        self.name = name",
+        "    }",
+        "",
+        "    public func render() -> String {",
+        "        return formatName(name)",
+        "    }",
+        "}",
+        "",
+        "public struct Point {",
+        "    public let x: Double",
+        "    public let y: Double",
+        "}",
+        "",
+        "public enum Direction {",
+        "    case north",
+        "    case south",
+        "}",
+        "",
+        "public typealias Coordinate = (Double, Double)"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const widgetManifest = await ingestInput(rootDir, "swift/Widget.swift");
+
+    expect(widgetManifest.language).toBe("swift");
+
+    await compileVault(rootDir);
+
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${widgetManifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(
+      analysis.code?.diagnostics.some((diagnostic) => diagnostic.message.includes("Swift parser-backed analysis is disabled by default"))
+    ).toBe(true);
+    expect(analysis.code?.symbols ?? []).toHaveLength(0);
+
+    const widgetModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${widgetManifest.sourceId}.md`), "utf8");
+    expect(widgetModulePage).toContain("Language: `swift`");
+    expect(widgetModulePage).toContain("Swift parser-backed analysis is disabled by default");
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget")).toBe(false);
+  });
+
+  it("builds parser-backed module pages for Elixir sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "elixir"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "elixir", "formatter.ex"),
+      ["defmodule MyApp.Formatter do", "  def format(value) do", '    "Elixir:" <> value', "  end", "end"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "elixir", "widget.ex"),
+      [
+        "defmodule MyApp.Widget do",
+        '  @moduledoc """',
+        "  A widget wrapped around a formatter.",
+        '  """',
+        "",
+        "  alias MyApp.Formatter",
+        "  require Logger",
+        "",
+        "  defstruct [:name]",
+        "",
+        "  def new(name) do",
+        "    %__MODULE__{name: name}",
+        "  end",
+        "",
+        "  def render(%__MODULE__{name: name}) do",
+        "    Formatter.format(name)",
+        "  end",
+        "",
+        "  defp internal_marker, do: :ok",
+        "end",
+        "",
+        "defprotocol MyApp.Renderable do",
+        "  def render(value)",
+        "end"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const formatterManifest = await ingestInput(rootDir, "elixir/formatter.ex");
+    const widgetManifest = await ingestInput(rootDir, "elixir/widget.ex");
+
+    expect(formatterManifest.language).toBe("elixir");
+    expect(widgetManifest.language).toBe("elixir");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "elixir")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "MyApp.Widget")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "MyApp.Renderable")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "MyApp.Widget.new")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "MyApp.Widget.render")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "MyApp.Formatter.format")).toBe(true);
+    // Private defp function exists as a symbol but is not exported.
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "MyApp.Widget.internal_marker")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+
+    const widgetModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${widgetManifest.sourceId}.md`), "utf8");
+    expect(widgetModulePage).toContain("Language: `elixir`");
+    expect(widgetModulePage).toContain("Module Name: `MyApp.Widget`");
+    expect(widgetModulePage).toContain("## Imports");
+    // Resolved Elixir `alias` should link to the formatter module's generated
+    // code page via its source ID, proving import resolution fired.
+    expect(widgetModulePage).toContain(`code/${formatterManifest.sourceId}`);
+
+    const searchResults = await searchVault(rootDir, "MyApp.Widget.render", 20);
+    expect(searchResults.some((result) => result.path === `code/${widgetManifest.sourceId}.md`)).toBe(true);
+  });
+
+  it("builds parser-backed module pages for OCaml sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "ocaml"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "ocaml", "formatter.ml"),
+      ['let format_name name = Printf.sprintf "OCaml:%s" name'].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "ocaml", "widget.ml"),
+      [
+        "open Formatter",
+        "",
+        "type direction = North | South | East | West",
+        "",
+        "type color = {",
+        "  r : int;",
+        "  g : int;",
+        "  b : int;",
+        "}",
+        "",
+        "module Widget = struct",
+        "  type t = { name : string }",
+        "  let make name = { name }",
+        "  let render w = format_name w.name",
+        "end",
+        "",
+        "module type RENDERABLE = sig",
+        "  val render : 'a -> string",
+        "end",
+        "",
+        "let entry_point name = Widget.render (Widget.make name)"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const formatterManifest = await ingestInput(rootDir, "ocaml/formatter.ml");
+    const widgetManifest = await ingestInput(rootDir, "ocaml/widget.ml");
+
+    expect(formatterManifest.language).toBe("ocaml");
+    expect(widgetManifest.language).toBe("ocaml");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "ocaml")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "RENDERABLE")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "direction")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "color")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "entry_point")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "format_name")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+
+    const widgetModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${widgetManifest.sourceId}.md`), "utf8");
+    expect(widgetModulePage).toContain("Language: `ocaml`");
+    expect(widgetModulePage).toContain("## Imports");
+    // Resolved `open Formatter` should link to formatter.ml's code page.
+    expect(widgetModulePage).toContain(`code/${formatterManifest.sourceId}`);
+  });
+
+  it("builds parser-backed module pages for Objective-C sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "objc"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "objc", "Widget.m"),
+      [
+        "#import <Foundation/Foundation.h>",
+        "",
+        "@protocol Renderable <NSObject>",
+        "- (NSString *)render;",
+        "@end",
+        "",
+        "@interface Widget : NSObject <Renderable>",
+        "@property (nonatomic, copy) NSString *name;",
+        "- (NSString *)render;",
+        "@end",
+        "",
+        "@implementation Widget",
+        "- (NSString *)render {",
+        '    return [NSString stringWithFormat:@"Widget:%@", _name];',
+        "}",
+        "@end",
+        "",
+        "NSString *formatName(NSString *name) {",
+        '    return [NSString stringWithFormat:@"Name:%@", name];',
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const widgetManifest = await ingestInput(rootDir, "objc/Widget.m");
+    expect(widgetManifest.language).toBe("objc");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "objc")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Renderable")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "formatName")).toBe(true);
+    // `Widget : NSObject` should yield an extends edge to NSObject (even if
+    // NSObject itself is not a local symbol; the edge check only needs the source
+    // and relation to exist).
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "implements" &&
+          nodeById.get(edge.source)?.label === "Widget" &&
+          nodeById.get(edge.target)?.label === "Renderable"
+      )
+    ).toBe(true);
+
+    const widgetModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${widgetManifest.sourceId}.md`), "utf8");
+    expect(widgetModulePage).toContain("Language: `objc`");
+  });
+
+  it("builds parser-backed module pages for ReScript sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "rescript"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "rescript", "formatter.res"),
+      ['let formatName = (name: string): string => "ReScript:" ++ name'].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "rescript", "widget.res"),
+      [
+        "open Formatter",
+        "",
+        "type direction = North | South | East | West",
+        "",
+        "type color = {",
+        "  r: int,",
+        "  g: int,",
+        "  b: int,",
+        "}",
+        "",
+        "module Widget = {",
+        "  type t = {name: string}",
+        "  let make = (name: string): t => {name: name}",
+        "  let render = (w: t): string => formatName(w.name)",
+        "}",
+        "",
+        "let defaultColor = {r: 0, g: 0, b: 0}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const formatterManifest = await ingestInput(rootDir, "rescript/formatter.res");
+    const widgetManifest = await ingestInput(rootDir, "rescript/widget.res");
+
+    expect(formatterManifest.language).toBe("rescript");
+    expect(widgetManifest.language).toBe("rescript");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "rescript")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "direction")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "color")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "formatName")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "defaultColor")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+
+    const widgetModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${widgetManifest.sourceId}.md`), "utf8");
+    expect(widgetModulePage).toContain("Language: `rescript`");
+    expect(widgetModulePage).toContain(`code/${formatterManifest.sourceId}`);
+  });
+
+  it("builds parser-backed module pages for Solidity sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "solidity"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "solidity", "IWidget.sol"),
+      [
+        "// SPDX-License-Identifier: MIT",
+        "pragma solidity ^0.8.20;",
+        "",
+        "interface IWidget {",
+        "    function render() external view returns (string memory);",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, "solidity", "Widget.sol"),
+      [
+        "// SPDX-License-Identifier: MIT",
+        "pragma solidity ^0.8.20;",
+        "",
+        'import "./IWidget.sol";',
+        "",
+        "library WidgetMath {",
+        "    function multiply(uint256 a, uint256 b) internal pure returns (uint256) {",
+        "        return a * b;",
+        "    }",
+        "}",
+        "",
+        "contract Widget is IWidget {",
+        "    string public name;",
+        "",
+        "    constructor(string memory _name) {",
+        "        name = _name;",
+        "    }",
+        "",
+        "    function render() external view override returns (string memory) {",
+        "        return name;",
+        "    }",
+        "}",
+        "",
+        "struct Point {",
+        "    uint256 x;",
+        "    uint256 y;",
+        "}",
+        "",
+        "enum Direction { North, South, East, West }"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const iWidgetManifest = await ingestInput(rootDir, "solidity/IWidget.sol");
+    const widgetManifest = await ingestInput(rootDir, "solidity/Widget.sol");
+
+    expect(iWidgetManifest.language).toBe("solidity");
+    expect(widgetManifest.language).toBe("solidity");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "solidity")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "IWidget")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "WidgetMath")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Point")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Direction")).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "implements" && nodeById.get(edge.source)?.label === "Widget" && nodeById.get(edge.target)?.label === "IWidget"
+      )
+    ).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+
+    const widgetModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${widgetManifest.sourceId}.md`), "utf8");
+    expect(widgetModulePage).toContain("Language: `solidity`");
+    expect(widgetModulePage).toContain(`code/${iWidgetManifest.sourceId}`);
+  });
+
+  it("builds parser-backed module pages for HTML sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "site"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "site", "index.html"),
+      [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="UTF-8">',
+        "  <title>Widget Demo</title>",
+        '  <link rel="stylesheet" href="./styles.css">',
+        "</head>",
+        "<body>",
+        '  <nav id="main-nav">',
+        '    <a href="#home">Home</a>',
+        "  </nav>",
+        '  <main id="content">',
+        '    <section id="hero">',
+        '      <my-custom-widget name="hello"></my-custom-widget>',
+        "    </section>",
+        "  </main>",
+        '  <script src="./widget.js"></script>',
+        "</body>",
+        "</html>"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manifest = await ingestInput(rootDir, "site/index.html");
+    expect(manifest.language).toBe("html");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "html")).toBe(true);
+    // Custom element <my-custom-widget> becomes a class symbol.
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "my-custom-widget")).toBe(true);
+    // Elements with id attributes become variable symbols.
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "main-nav")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "content")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "hero")).toBe(true);
+
+    const indexModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${manifest.sourceId}.md`), "utf8");
+    expect(indexModulePage).toContain("Language: `html`");
+    expect(indexModulePage).toContain("## Imports");
+  });
+
+  it("builds parser-backed module pages for CSS sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "styles"), { recursive: true });
+
+    await fs.writeFile(path.join(rootDir, "styles", "reset.css"), ["body { margin: 0; }"].join("\n"), "utf8");
+    await fs.writeFile(
+      path.join(rootDir, "styles", "main.css"),
+      [
+        '@import "./reset.css";',
+        "",
+        ":root {",
+        "    --primary: #3498db;",
+        "}",
+        "",
+        ".navigation {",
+        "    display: flex;",
+        "}",
+        "",
+        "#main-content {",
+        "    max-width: 1200px;",
+        "}",
+        "",
+        "@keyframes fadeIn {",
+        "    from { opacity: 0; }",
+        "    to { opacity: 1; }",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const resetManifest = await ingestInput(rootDir, "styles/reset.css");
+    const mainManifest = await ingestInput(rootDir, "styles/main.css");
+
+    expect(resetManifest.language).toBe("css");
+    expect(mainManifest.language).toBe("css");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "css")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === ".navigation")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "#main-content")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "@keyframes fadeIn")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+
+    const mainModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${mainManifest.sourceId}.md`), "utf8");
+    expect(mainModulePage).toContain("Language: `css`");
+    expect(mainModulePage).toContain(`code/${resetManifest.sourceId}`);
+  });
+
+  it("builds parser-backed module pages for Vue SFC sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "vue"), { recursive: true });
+
+    await fs.writeFile(
+      path.join(rootDir, "vue", "Widget.vue"),
+      [
+        "<script setup>",
+        "import { ref, computed } from 'vue'",
+        "const count = ref(0)",
+        "</script>",
+        "",
+        "<template>",
+        '  <div id="app-root">',
+        "    <h1>Counter: {{ count }}</h1>",
+        '    <SubWidget :value="count" />',
+        "  </div>",
+        "</template>",
+        "",
+        "<style scoped>",
+        ".container { padding: 1rem; }",
+        "</style>"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const widgetManifest = await ingestInput(rootDir, "vue/Widget.vue");
+    expect(widgetManifest.language).toBe("vue");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "vue")).toBe(true);
+    // The SFC's own component name (derived from the filename) is the primary symbol.
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget")).toBe(true);
+    // PascalCase tag inside <template> is treated as a Vue component reference.
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "SubWidget")).toBe(true);
+    // An id="app-root" on a plain element becomes a variable symbol.
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "app-root")).toBe(true);
+
+    const page = await fs.readFile(path.join(rootDir, "wiki", "code", `${widgetManifest.sourceId}.md`), "utf8");
+    expect(page).toContain("Language: `vue`");
+  });
+
   it("builds parser-backed module pages for C#, PHP, C, and C++ sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -768,29 +1319,32 @@ describe("code-aware ingestion", () => {
 
     const repoDir = path.join(rootDir, "repo");
     await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
-    const textFiles: Array<[string, string]> = [
-      ["package.json", '{"name": "demo", "version": "0.0.1"}\n'],
-      ["tsconfig.json", '{"compilerOptions": {"strict": true}}\n'],
-      ["pyproject.toml", '[project]\nname = "demo"\n'],
-      ["Cargo.toml", '[package]\nname = "demo"\n'],
-      ["go.mod", "module example.com/demo\n\ngo 1.22\n"],
-      ["go.sum", "example.com/demo v1.0.0 h1:abc\n"],
-      ["LICENSE", "MIT License\nCopyright (c) 2026\n"],
-      ["LICENSE-MIT", "MIT License\n"],
-      ["Makefile", "build:\n\techo hi\n"],
-      ["Dockerfile", 'FROM node:24\nCMD ["node"]\n'],
-      [".gitignore", "node_modules/\n"],
-      [".editorconfig", "root = true\n"]
+    // Most dev files land as `text`; TOML/YAML/JSON config files that are NOT code
+    // manifests (package.json / tsconfig.json) get promoted to the `data` source kind
+    // so their structure still surfaces in the graph.
+    const textFiles: Array<[string, string, "text" | "data"]> = [
+      ["package.json", '{"name": "demo", "version": "0.0.1"}\n', "text"],
+      ["tsconfig.json", '{"compilerOptions": {"strict": true}}\n', "text"],
+      ["pyproject.toml", '[project]\nname = "demo"\n', "data"],
+      ["Cargo.toml", '[package]\nname = "demo"\n', "data"],
+      ["go.mod", "module example.com/demo\n\ngo 1.22\n", "text"],
+      ["go.sum", "example.com/demo v1.0.0 h1:abc\n", "text"],
+      ["LICENSE", "MIT License\nCopyright (c) 2026\n", "text"],
+      ["LICENSE-MIT", "MIT License\n", "text"],
+      ["Makefile", "build:\n\techo hi\n", "text"],
+      ["Dockerfile", 'FROM node:24\nCMD ["node"]\n', "text"],
+      [".gitignore", "node_modules/\n", "text"],
+      [".editorconfig", "root = true\n", "text"]
     ];
     for (const [filename, body] of textFiles) {
       await fs.writeFile(path.join(repoDir, filename), body, "utf8");
     }
 
     const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
-    for (const [filename] of textFiles) {
+    for (const [filename, , expectedKind] of textFiles) {
       const manifest = result.imported.find((entry) => entry.originalPath?.endsWith(filename));
       expect(manifest, `expected ${filename} to be ingested`).toBeDefined();
-      expect(manifest?.sourceKind, filename).toBe("text");
+      expect(manifest?.sourceKind, filename).toBe(expectedKind);
     }
     expect(result.skipped.filter((entry) => entry.reason.startsWith("unsupported_kind"))).toHaveLength(0);
   });
@@ -1323,6 +1877,122 @@ describe("code-aware ingestion", () => {
     expect(system?.isExternal).toBe(true);
     expect(local?.isExternal).toBe(false);
     expect(local?.resolvedSourceId).toBe(localManifest?.sourceId);
+  });
+
+  it("tolerates C preprocessor directives that interrupt if/else control flow", async () => {
+    // Real json-c pattern: the `else` branch is stitched across a `#endif`. Without
+    // preprocessor neutralisation tree-sitter-c reports a dangling `else` and emits
+    // a spurious syntax error.
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "debug.c"),
+      [
+        "#include <stdio.h>",
+        "void log_msg(const char *msg) {",
+        "#if HAVE_SYSLOG",
+        "    syslog(0, msg);",
+        "    if (1)",
+        "    {",
+        '        printf("yes");',
+        "    }",
+        "    else",
+        "#endif",
+        '        printf("no");',
+        "}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("debug.c"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.code?.diagnostics ?? [], "debug.c should parse cleanly").toHaveLength(0);
+  });
+
+  it("tolerates C# preprocessor directives that split a single expression body", async () => {
+    // Real System.CommandLine pattern: `#if NET7_0_OR_GREATER` splits an
+    // expression-bodied method across two alternative bodies joined by `&&` with the
+    // trailing clause, which tree-sitter-c-sharp cannot reconcile unaided.
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "ConsoleHelpers.cs"),
+      [
+        "namespace System.CommandLine {",
+        "    internal static class ConsoleHelpers {",
+        "        private static readonly bool ColorsAreSupported = GetColorsAreSupported();",
+        "        private static bool GetColorsAreSupported()",
+        "#if NET7_0_OR_GREATER",
+        "            => !(OperatingSystem.IsBrowser() || OperatingSystem.IsAndroid())",
+        "#else",
+        '            => !(RuntimeInformation.IsOSPlatform(OSPlatform.Create("BROWSER")))',
+        "#endif",
+        "            && !Console.IsOutputRedirected;",
+        "    }",
+        "}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("ConsoleHelpers.cs"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.code?.diagnostics ?? [], "ConsoleHelpers.cs should parse cleanly").toHaveLength(0);
+    const symbolNames = (analysis.code?.symbols ?? []).map((s) => s.name);
+    expect(symbolNames).toContain("ConsoleHelpers");
+  });
+
+  it("suppresses grammar diagnostics on zsh-flavoured shell scripts", async () => {
+    // tree-sitter-bash parses POSIX bash only; feeding it zsh-specific parameter
+    // expansions produces noisy errors. Detect the dialect and silence the
+    // grammar-level diagnostics while still running the descendant-based walkers
+    // so functions and `source` edges still land in the graph.
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "completion.zsh"),
+      [
+        "#!/usr/bin/env zsh",
+        "",
+        "function collect_options() {",
+        '    local lines=( ${(f)"$(echo -e "a\\nb\\nc")"} )',
+        "    print -l $lines",
+        "}",
+        "",
+        "collect_options",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("completion.zsh"));
+    expect(manifest, "completion.zsh should be ingested").toBeDefined();
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.code?.diagnostics ?? [], "zsh script should have no grammar diagnostics").toHaveLength(0);
+    const symbolNames = (analysis.code?.symbols ?? []).map((s) => s.name);
+    expect(symbolNames).toContain("collect_options");
   });
 
   it("records a clear diagnostic when a tree-sitter grammar asset is missing without failing unrelated sources", async () => {

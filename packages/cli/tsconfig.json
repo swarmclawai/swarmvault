@@ -3,7 +3,9 @@
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "dist",
-    "rootDir": "src"
+    "paths": {
+      "@swarmvaultai/engine": ["../engine/src/index.ts"]
+    }
   },
   "include": ["src"]
 }

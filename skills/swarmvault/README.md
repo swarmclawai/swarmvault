@@ -66,7 +66,9 @@ The default `heuristic` provider is a valid local/offline starting point. Add a 
 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
 
-Supported non-code ingest includes `.pdf`, `.docx`, `.epub`, `.csv`, `.tsv`, `.xlsx`, `.pptx`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, images, markdown/text notes, browser clips, and research URLs captured through `swarmvault add`.
+Supported non-code ingest includes `.pdf`, the full Word family (`.docx`, `.docm`, `.dotx`, `.dotm`), `.rtf`, `.odt`, `.odp`, `.ods`, `.epub`, `.csv`, `.tsv`, the full Excel family (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.xltx`, `.xltm`), the full PowerPoint family (`.pptx`, `.pptm`, `.potx`, `.potm`), `.ipynb` (Jupyter notebooks), `.bib` (BibTeX), `.org` (Org-mode), `.adoc`/`.asciidoc`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.ico`, `.heic`, `.heif`, `.avif`, `.jxl`), markdown/MDX/text notes, structured config/data (`.json`, `.jsonc`, `.json5`, `.yaml`, `.toml`, `.xml`, `.ini`, `.conf`, `.cfg`, `.env`, `.properties`) with schema hints, common developer manifests (`package.json`, `tsconfig.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `go.sum`, `Dockerfile`, `Makefile`, `LICENSE`, `.gitignore`, `.editorconfig`, and similar) via content-sniffed text ingest so they are never silently dropped, browser clips, and research URLs captured through `swarmvault add`.
+
+Supported code ingest covers `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.sh`, `.bash`, `.zsh`, `.py`, `.go`, `.rs`, `.java`, `.kt`, `.kts`, `.scala`, `.sc`, `.dart`, `.lua`, `.zig`, `.cs`, `.c`, `.cpp`, `.hpp`, `.hh`, `.h`, `.php`, `.rb`, `.ps1`, `.ex`, `.exs`, `.ml`, `.mli`, `.m`, `.mm`, `.res`, `.resi`, `.sol`, `.vue`, `.css`, `.html`, `.htm`, plus extensionless executable scripts with `#!/usr/bin/env node|python|ruby|bash|zsh` shebangs. Each language goes through a tree-sitter AST walk to extract symbols, imports, and local module references.
 
 ## What The Skill Package Includes
 

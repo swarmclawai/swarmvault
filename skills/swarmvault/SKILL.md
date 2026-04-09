@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, dashboard, review, and MCP artifacts to disk from books, notes, transcripts, exports, datasets, slide decks, files, URLs, code, and recurring source workflows."
-version: "0.6.8"
+version: "0.7.0"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -54,8 +54,8 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 - `wiki/outputs/source-reviews/`: staged source-scoped review pages.
 - `wiki/outputs/source-guides/`: staged source-integration guides for one-source-at-a-time workflows.
 - `wiki/dashboards/`: recent sources, reading log, timeline, source sessions, source guides, research map, contradiction, and open-question dashboards.
-- `wiki/code/`: module pages for ingested JavaScript, JSX, TypeScript, TSX, Bash/shell script, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell sources.
-- `state/extracts/`: extracted markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, transcripts, Slack exports, email, calendar, and image sources.
+- `wiki/code/`: module pages for ingested JavaScript, JSX, TypeScript (including `.mts`/`.cts`), TSX, Bash/shell script (with shebang-based detection for extensionless scripts), Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++ (including `.h`/`.hpp`/`.hh`), PHP, Ruby, PowerShell, Elixir (`.ex`/`.exs`), OCaml (`.ml`/`.mli`), Objective-C (`.m`/`.mm`), ReScript (`.res`/`.resi`), Solidity (`.sol`), Vue single-file components (`.vue`), HTML (`.html`/`.htm`), and CSS sources.
+- `state/extracts/`: extracted markdown and JSON sidecars for PDF, the full Word family (`.docx`/`.docm`/`.dotx`/`.dotm`), RTF (`.rtf`), OpenDocument (ODT/ODP/ODS), EPUB, CSV/TSV, the full Excel family (`.xlsx`/`.xlsm`/`.xlsb`/`.xls`/`.xltx`/`.xltm`), the full PowerPoint family (`.pptx`/`.pptm`/`.potx`/`.potm`), Jupyter notebooks (`.ipynb`), BibTeX (`.bib`), Org-mode (`.org`), AsciiDoc (`.adoc`/`.asciidoc`), transcripts, Slack exports, email, calendar, and image sources (`.png`/`.jpg`/`.jpeg`/`.gif`/`.webp`/`.bmp`/`.tif`/`.tiff`/`.svg`/`.ico`/`.heic`/`.heif`/`.avif`/`.jxl`), plus structured previews for config/data files (JSON/JSONC/JSON5/TOML/YAML/XML/INI/ENV/PROPERTIES/CFG/CONF) and content-sniffed text ingest for developer manifests (`package.json`, `Cargo.toml`, `go.mod`, `LICENSE`, `.gitignore`, `Dockerfile`, `Makefile`, and similar plaintext files).
 - `state/code-index.json`: repo-aware code aliases and local import resolution data.
 - `wiki/projects/`: project rollups over canonical pages.
 - `wiki/candidates/`: staged concept and entity pages awaiting promotion.

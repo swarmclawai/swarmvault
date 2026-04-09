@@ -196,20 +196,28 @@ clawhub install swarmvault
 | 输入 | 扩展名 / 来源 | 提取方式 |
 |------|---------------|----------|
 | PDF | `.pdf` | 本地文本提取 |
-| DOCX | `.docx` | 本地提取与元数据捕获 |
+| Word 文档 | `.docx .docm .dotx .dotm` | 本地提取与元数据捕获（涵盖启用宏与模板变体） |
+| Rich Text | `.rtf` | 基于解析器的 RTF 文本本地提取 |
+| OpenDocument | `.odt .odp .ods` | 本地文本 / 幻灯片 / 工作表提取 |
 | EPUB 电子书 | `.epub` | 本地按章节拆分并转换为 Markdown |
 | 数据集 | `.csv .tsv` | 本地表格摘要与有限预览 |
-| 电子表格 | `.xlsx` | 本地工作簿与工作表预览提取 |
-| 幻灯片 | `.pptx` | 本地提取幻灯片文本与备注 |
+| 电子表格 | `.xlsx .xlsm .xlsb .xls .xltx .xltm` | 本地工作簿与工作表预览提取（现代、宏启用、二进制、旧版格式） |
+| 幻灯片 | `.pptx .pptm .potx .potm` | 本地提取幻灯片文本与备注（涵盖启用宏与模板变体） |
+| Jupyter 笔记本 | `.ipynb` | 本地提取 cell 与输出 |
+| BibTeX 文献库 | `.bib` | 基于解析器的引用条目提取 |
+| Org-mode | `.org` | 基于 AST 的标题、列表与代码块提取 |
+| AsciiDoc | `.adoc .asciidoc` | 基于 Asciidoctor 的章节与元数据提取 |
 | 转录稿 | `.srt .vtt` | 本地提取带时间戳的转录文本 |
 | 聊天导出 | Slack 导出 `.zip`、解压后的 Slack 导出目录 | 本地提取按频道/日期分组的对话 |
 | 邮件 | `.eml .mbox` | 本地提取单封邮件并展开邮箱文件 |
 | 日历 | `.ics` | 本地展开 `VEVENT` 事件 |
-| HTML | `.html`、URL | Readability + Turndown 转 Markdown |
-| Images | `.png .jpg .webp` | Vision provider（已配置时） |
+| HTML | `.html`、URL | Readability + Turndown 转 Markdown（URL 抓取） |
+| Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider（已配置时） |
 | Research | arXiv、DOI、文章、X/Twitter | 通过 `swarmvault add` 标准化为 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
-| Code | `.js .jsx .ts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .php .rb .ps1` | 基于 tree-sitter 的 AST 与模块解析 |
+| 配置 / 数据 | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | 结构化预览，带 key/value schema 提示 |
+| 开发清单文件 | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` 等 | 基于内容嗅探的文本 ingest —— 常见开发配置不会被静默丢弃 |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .hpp .hh .h .php .rb .ps1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 基于 tree-sitter 的 AST 与模块解析 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 | Managed sources | 本地目录、公开 GitHub 仓库根 URL、文档中心 URL | 通过 `swarmvault source add` 的 registry 同步 |
 

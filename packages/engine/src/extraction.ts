@@ -7,6 +7,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
 import { z } from "zod";
+import { firstMarkdownHeading } from "./markdown-ast.js";
 import { getProviderForTask } from "./providers/registry.js";
 import type { ProviderAdapter, SourceExtractionArtifact, SourceKind } from "./types.js";
 import { normalizeWhitespace, sha256, truncate } from "./utils.js";
@@ -536,6 +537,185 @@ export async function extractDocxText(input: {
   }
 }
 
+interface JupyterCell {
+  cell_type?: string;
+  source?: string | string[];
+  metadata?: Record<string, unknown>;
+  outputs?: Array<Record<string, unknown>>;
+  execution_count?: number | null;
+}
+
+interface JupyterNotebook {
+  cells?: JupyterCell[];
+  metadata?: {
+    kernelspec?: { name?: string; display_name?: string; language?: string };
+    language_info?: { name?: string; version?: string };
+    title?: string;
+  };
+  nbformat?: number;
+  nbformat_minor?: number;
+}
+
+function jupyterCellSource(cell: JupyterCell): string {
+  const source = cell.source;
+  if (Array.isArray(source)) {
+    return source.join("");
+  }
+  if (typeof source === "string") {
+    return source;
+  }
+  return "";
+}
+
+function jupyterOutputSummary(outputs: Array<Record<string, unknown>> | undefined): string | null {
+  if (!Array.isArray(outputs) || outputs.length === 0) {
+    return null;
+  }
+  // Keep text/plain and text/markdown outputs but drop image/* and
+  // application/* binary blobs so the extracted text does not balloon with
+  // base64 payloads. Truncate long outputs to keep analysis signal high.
+  const parts: string[] = [];
+  for (const output of outputs) {
+    const data = output.data as Record<string, unknown> | undefined;
+    if (data && typeof data === "object") {
+      const text = data["text/plain"] ?? data["text/markdown"];
+      if (typeof text === "string") {
+        parts.push(text.trim());
+        continue;
+      }
+      if (Array.isArray(text)) {
+        parts.push(text.join("").trim());
+        continue;
+      }
+    }
+    const textField = output.text;
+    if (typeof textField === "string") {
+      parts.push(textField.trim());
+      continue;
+    }
+    if (Array.isArray(textField)) {
+      parts.push(textField.join("").trim());
+    }
+  }
+  const joined = parts.filter(Boolean).join("\n").trim();
+  if (!joined) {
+    return `[${outputs.length} non-text output${outputs.length === 1 ? "" : "s"}]`;
+  }
+  return joined.length > 1_200 ? `${joined.slice(0, 1_200)}\n[output truncated]` : joined;
+}
+
+export async function extractJupyterNotebook(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const text = decodeTextBytes(input.bytes);
+    const notebook = JSON.parse(text) as JupyterNotebook;
+    const cells = Array.isArray(notebook.cells) ? notebook.cells : [];
+    const kernelLanguage = notebook.metadata?.language_info?.name?.trim() || notebook.metadata?.kernelspec?.language?.trim() || "";
+    const kernelDisplay = notebook.metadata?.kernelspec?.display_name?.trim() || "";
+
+    // A notebook's effective title is either the metadata title, the first
+    // markdown heading in any markdown cell (via mdast, not regex), or the
+    // filename.
+    let notebookTitle = typeof notebook.metadata?.title === "string" ? notebook.metadata.title.trim() : "";
+    if (!notebookTitle) {
+      for (const cell of cells) {
+        if (cell.cell_type === "markdown") {
+          const heading = firstMarkdownHeading(jupyterCellSource(cell));
+          if (heading) {
+            notebookTitle = heading;
+            break;
+          }
+        }
+      }
+    }
+    if (!notebookTitle && input.fileName) {
+      notebookTitle = path.basename(input.fileName, path.extname(input.fileName));
+    }
+
+    const sections: string[] = [];
+    let markdownCellCount = 0;
+    let codeCellCount = 0;
+    let outputCount = 0;
+    for (const cell of cells) {
+      const source = jupyterCellSource(cell).trim();
+      if (!source) {
+        continue;
+      }
+      if (cell.cell_type === "markdown") {
+        markdownCellCount += 1;
+        sections.push(source);
+        sections.push("");
+        continue;
+      }
+      if (cell.cell_type === "code") {
+        codeCellCount += 1;
+        const fence = kernelLanguage || "";
+        sections.push(`\`\`\`${fence}`);
+        sections.push(source);
+        sections.push("```");
+        const outputSummary = jupyterOutputSummary(cell.outputs);
+        if (outputSummary) {
+          outputCount += Array.isArray(cell.outputs) ? cell.outputs.length : 0;
+          sections.push("");
+          sections.push("_Output:_");
+          sections.push("");
+          sections.push(outputSummary);
+        }
+        sections.push("");
+        continue;
+      }
+      // raw or unknown cell type: include the source verbatim
+      sections.push(source);
+      sections.push("");
+    }
+
+    const heading = notebookTitle ? [`# ${notebookTitle}`, ""] : [];
+    const extractedText = [
+      ...heading,
+      `Jupyter Notebook (${cells.length} cell${cells.length === 1 ? "" : "s"}, kernel: ${kernelDisplay || kernelLanguage || "unknown"})`,
+      "",
+      ...sections
+    ]
+      .join("\n")
+      .trim();
+
+    const metadata: Record<string, string> = {
+      cell_count: String(cells.length),
+      markdown_cells: String(markdownCellCount),
+      code_cells: String(codeCellCount),
+      output_count: String(outputCount)
+    };
+    if (kernelLanguage) {
+      metadata.kernel_language = kernelLanguage;
+    }
+    if (kernelDisplay) {
+      metadata.kernel_display_name = kernelDisplay;
+    }
+    if (notebook.nbformat !== undefined) {
+      metadata.nbformat = `${notebook.nbformat}${notebook.nbformat_minor !== undefined ? `.${notebook.nbformat_minor}` : ""}`;
+    }
+
+    return {
+      title: notebookTitle || undefined,
+      extractedText: extractedText || undefined,
+      artifact: {
+        ...extractionMetadata("jupyter", input.mimeType, "jupyter_text"),
+        metadata
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("jupyter", input.mimeType, "jupyter_text"),
+        warnings: [`Jupyter notebook extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
 export async function extractCsvText(input: {
   mimeType: string;
   bytes: Buffer;
@@ -596,11 +776,11 @@ export async function extractCsvText(input: {
   }
 }
 
-export async function extractXlsxText(input: {
-  mimeType: string;
-  bytes: Buffer;
-  fileName?: string;
-}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+async function extractSpreadsheetWorkbook(
+  input: { mimeType: string; bytes: Buffer; fileName?: string },
+  sourceKind: "xlsx" | "ods",
+  extractor: "xlsx_text" | "ods_text"
+): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
   try {
     const XLSX = await import("xlsx");
     const workbook = XLSX.read(input.bytes, { type: "buffer", cellFormula: false, cellHTML: false, cellStyles: false });
@@ -651,7 +831,7 @@ export async function extractXlsxText(input: {
       title,
       extractedText,
       artifact: {
-        ...extractionMetadata("xlsx", input.mimeType, "xlsx_text"),
+        ...extractionMetadata(sourceKind, input.mimeType, extractor),
         metadata,
         warnings
       }
@@ -659,11 +839,30 @@ export async function extractXlsxText(input: {
   } catch (error) {
     return {
       artifact: {
-        ...extractionMetadata("xlsx", input.mimeType, "xlsx_text"),
-        warnings: [`XLSX extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+        ...extractionMetadata(sourceKind, input.mimeType, extractor),
+        warnings: [
+          `${sourceKind.toUpperCase()} extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`
+        ]
       }
     };
   }
+}
+
+export async function extractXlsxText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  return extractSpreadsheetWorkbook(input, "xlsx", "xlsx_text");
+}
+
+export async function extractOdsText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  // The `xlsx` npm package reads OpenDocument Spreadsheet (.ods) natively.
+  return extractSpreadsheetWorkbook(input, "ods", "ods_text");
 }
 
 export async function extractPptxText(input: {
@@ -1079,6 +1278,874 @@ function slackEntriesFromChannelIndex(
     entries.set(title, { id, title, members });
   }
   return entries;
+}
+
+/**
+ * Parses an ODF meta.xml (Dublin-core metadata container used by ODT/ODP/ODS)
+ * into a flat string map. Mirrors parseOfficeCoreMetadata but for the OASIS
+ * OpenDocument namespace.
+ */
+function parseOdfMetadata(bytes: Buffer): Record<string, string> | undefined {
+  try {
+    const archive = unzipSync(new Uint8Array(bytes));
+    const metaXml = zipEntryText(archive, "meta.xml");
+    if (!metaXml) {
+      return undefined;
+    }
+    const document = parseXmlDocument(metaXml);
+    const valuesByLocalName = new Map<string, string>();
+    for (const node of Array.from(document.getElementsByTagName("*"))) {
+      const localName = node.localName?.trim().toLowerCase();
+      const text = normalizeWhitespace(node.textContent ?? "");
+      if (!localName || !text || valuesByLocalName.has(localName)) {
+        continue;
+      }
+      valuesByLocalName.set(localName, text);
+    }
+
+    const metadata: Record<string, string> = {};
+    const mappings: Array<[string, string]> = [
+      ["title", "title"],
+      ["author", "creator"],
+      ["subject", "subject"],
+      ["description", "description"],
+      ["keywords", "keyword"],
+      ["initial_creator", "initial-creator"],
+      ["created", "creation-date"],
+      ["modified", "date"]
+    ];
+    for (const [targetKey, sourceKey] of mappings) {
+      const value = valuesByLocalName.get(sourceKey);
+      if (value) {
+        metadata[targetKey] = value;
+      }
+    }
+    return Object.keys(metadata).length ? metadata : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface OdfTextNode {
+  heading?: number;
+  text: string;
+}
+
+/**
+ * Walks an ODF content.xml body collecting paragraphs, headings, and list
+ * items in document order. Returns a flat list that callers render into
+ * markdown. Uses the existing JSDOM parser rather than a custom tokenizer.
+ */
+function collectOdfTextNodes(contentXml: string): OdfTextNode[] {
+  const document = parseXmlDocument(contentXml);
+  const nodes: OdfTextNode[] = [];
+  for (const node of Array.from(document.getElementsByTagName("*"))) {
+    const localName = node.localName ?? "";
+    if (localName === "h") {
+      const level = Number.parseInt(node.getAttribute("text:outline-level") ?? "1", 10);
+      const text = normalizeWhitespace(node.textContent ?? "");
+      if (text) {
+        nodes.push({ heading: Number.isFinite(level) && level > 0 ? level : 1, text });
+      }
+      continue;
+    }
+    if (localName === "p" || localName === "list-item") {
+      // Skip paragraphs that are inside a heading (already captured) or
+      // inside a parent we've already visited: we just look at the text
+      // here. Duplicate rendering risk is minimal because the ODF body is
+      // a flat sequence of paragraphs and headings in practice.
+      if (node.closest?.("h")) {
+        continue;
+      }
+      const text = normalizeWhitespace(node.textContent ?? "");
+      if (text) {
+        nodes.push({ text });
+      }
+    }
+  }
+  return nodes;
+}
+
+function renderOdfTextNodes(nodes: OdfTextNode[]): string {
+  const lines: string[] = [];
+  for (const node of nodes) {
+    if (node.heading) {
+      lines.push("");
+      lines.push(`${"#".repeat(Math.min(node.heading, 6))} ${node.text}`);
+      lines.push("");
+      continue;
+    }
+    lines.push(node.text);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+export async function extractOdtText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const archive = unzipSync(new Uint8Array(input.bytes));
+    const contentXml = zipEntryText(archive, "content.xml");
+    if (!contentXml) {
+      throw new Error("Missing content.xml");
+    }
+    const metadata = parseOdfMetadata(input.bytes);
+    const textNodes = collectOdfTextNodes(contentXml);
+    const headingCount = textNodes.filter((node) => node.heading).length;
+    const paragraphCount = textNodes.filter((node) => !node.heading).length;
+
+    const title =
+      metadata?.title ||
+      textNodes.find((node) => node.heading === 1)?.text ||
+      (input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined);
+    const body = renderOdfTextNodes(textNodes);
+    const extractedText = [title ? `# ${title}` : null, "", body]
+      .filter((item): item is string => item !== null)
+      .join("\n")
+      .trim();
+
+    return {
+      title,
+      extractedText: extractedText || undefined,
+      artifact: {
+        ...extractionMetadata("odt", input.mimeType, "odt_text"),
+        metadata: {
+          ...(metadata ?? {}),
+          heading_count: String(headingCount),
+          paragraph_count: String(paragraphCount)
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("odt", input.mimeType, "odt_text"),
+        warnings: [`ODT extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+export async function extractOdpText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const archive = unzipSync(new Uint8Array(input.bytes));
+    const contentXml = zipEntryText(archive, "content.xml");
+    if (!contentXml) {
+      throw new Error("Missing content.xml");
+    }
+    const metadata = parseOdfMetadata(input.bytes);
+    const document = parseXmlDocument(contentXml);
+    const pages = Array.from(document.getElementsByTagName("*")).filter((node) => node.localName === "page");
+    const slideSections: string[] = [];
+    pages.slice(0, 60).forEach((page, index) => {
+      const slideName = page.getAttribute("draw:name") ?? `Slide ${index + 1}`;
+      const text = normalizeWhitespace(page.textContent ?? "");
+      slideSections.push(`## Slide ${index + 1}: ${slideName}`);
+      if (text) {
+        slideSections.push(text);
+      }
+      slideSections.push("");
+    });
+
+    const title = metadata?.title || (input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined);
+    const extractedText = [title ? `# ${title}` : null, `Slides: ${pages.length}`, "", ...slideSections]
+      .filter((item): item is string => Boolean(item))
+      .join("\n")
+      .trim();
+
+    const warnings = pages.length > 60 ? ["ODP extraction truncated to the first 60 slides."] : undefined;
+    return {
+      title,
+      extractedText: extractedText || undefined,
+      artifact: {
+        ...extractionMetadata("odp", input.mimeType, "odp_text"),
+        metadata: {
+          ...(metadata ?? {}),
+          slide_count: String(pages.length)
+        },
+        warnings
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("odp", input.mimeType, "odp_text"),
+        warnings: [`ODP extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+/**
+ * Promotes JSON/YAML/TOML config files from the generic `text` fall-through
+ * into first-class `data` source pages with schema hints, matching how CSV
+ * is handled today. Uses JSON.parse / yaml / a narrow TOML parser rather
+ * than dropping them through the plain-text pipeline.
+ */
+type StructuredFormat = "json" | "yaml" | "toml" | "xml" | "ini" | "env" | "properties";
+
+interface StructuredDataShape {
+  format: StructuredFormat;
+  value: unknown;
+}
+
+function inferStructuredFormat(mimeType: string, fileName: string | undefined): StructuredFormat | null {
+  const lower = (fileName ?? "").toLowerCase();
+  if (
+    lower.endsWith(".jsonc") ||
+    lower.endsWith(".json") ||
+    lower.endsWith(".json5") ||
+    mimeType === "application/json" ||
+    mimeType === "application/json5"
+  ) {
+    return "json";
+  }
+  if (lower.endsWith(".yaml") || lower.endsWith(".yml") || mimeType === "application/yaml" || mimeType === "application/x-yaml") {
+    return "yaml";
+  }
+  if (lower.endsWith(".toml") || mimeType === "application/toml") {
+    return "toml";
+  }
+  if (lower.endsWith(".xml") || mimeType === "application/xml" || mimeType === "text/xml") {
+    return "xml";
+  }
+  if (lower.endsWith(".ini") || lower.endsWith(".conf") || lower.endsWith(".cfg")) {
+    return "ini";
+  }
+  if (lower.endsWith(".env")) {
+    return "env";
+  }
+  if (lower.endsWith(".properties")) {
+    return "properties";
+  }
+  return null;
+}
+
+/**
+ * Parses a `.env` file (`KEY=VALUE` per line, `#` comments) into a flat
+ * object. No regex — we slice each non-empty non-comment line at the first
+ * `=`. Values are returned as raw strings; dotenv quoting rules are not
+ * expanded because we only care about shape for the vault page.
+ */
+function parseEnvFile(text: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const eqIndex = line.indexOf("=");
+    if (eqIndex <= 0) {
+      continue;
+    }
+    const key = line.slice(0, eqIndex).trim();
+    let value = line.slice(eqIndex + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+/**
+ * Parses a Java-style `.properties` file. Same structure as `.env` but with
+ * both `=` and `:` separators permitted; backslash continuation lines are
+ * not handled (narrow reader for vault schema hints only).
+ */
+function parsePropertiesFile(text: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || line.startsWith("!")) {
+      continue;
+    }
+    let sep = line.indexOf("=");
+    if (sep < 0) {
+      sep = line.indexOf(":");
+    }
+    if (sep <= 0) {
+      continue;
+    }
+    const key = line.slice(0, sep).trim();
+    const value = line.slice(sep + 1).trim();
+    result[key] = value;
+  }
+  return result;
+}
+
+/**
+ * Walks an XML document into a flat object mapping of section labels to
+ * their direct text or child counts. Uses JSDOM (already a dep) rather
+ * than a custom regex scanner so namespaces and nested tags are handled
+ * correctly.
+ */
+function parseXmlToSchema(text: string): Record<string, unknown> {
+  const document = parseXmlDocument(text);
+  const root = document.documentElement;
+  if (!root) {
+    return {};
+  }
+  const childCounts = new Map<string, number>();
+  for (const child of Array.from(root.children)) {
+    const name = child.tagName || child.localName || "";
+    if (!name) {
+      continue;
+    }
+    childCounts.set(name, (childCounts.get(name) ?? 0) + 1);
+  }
+  const result: Record<string, unknown> = {};
+  for (const [name, count] of childCounts.entries()) {
+    result[name] = { count };
+  }
+  return { [root.tagName || "root"]: result };
+}
+
+function describeJsonShape(value: unknown): { type: string; size: number; depth: number } {
+  if (value === null) {
+    return { type: "null", size: 0, depth: 0 };
+  }
+  if (Array.isArray(value)) {
+    const depths = value.map((entry) => describeJsonShape(entry).depth);
+    return { type: "array", size: value.length, depth: 1 + (depths.length ? Math.max(...depths) : 0) };
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const depths = entries.map(([, v]) => describeJsonShape(v).depth);
+    return { type: "object", size: entries.length, depth: 1 + (depths.length ? Math.max(...depths) : 0) };
+  }
+  return { type: typeof value, size: 0, depth: 0 };
+}
+
+function describeTopLevelSchema(value: unknown): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    const shape = describeJsonShape(value);
+    return [`(root) ${shape.type}${shape.size ? ` (${shape.size})` : ""}`];
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.slice(0, 20).map(([key, child]) => {
+    const shape = describeJsonShape(child);
+    const sizeHint = shape.type === "array" ? ` (${shape.size} items)` : shape.type === "object" ? ` (${shape.size} keys)` : "";
+    return `${key}: ${shape.type}${sizeHint}`;
+  });
+}
+
+async function parseStructuredPayload(bytes: Buffer, format: StructuredFormat): Promise<StructuredDataShape> {
+  const text = decodeTextBytes(bytes);
+  if (format === "json") {
+    // Strip JSON-with-comments if present; JSON.parse rejects them otherwise.
+    const cleaned = text.replace(/^\uFEFF/, "");
+    return { format, value: JSON.parse(cleaned) };
+  }
+  if (format === "yaml") {
+    const yamlModule = await import("yaml");
+    return { format, value: yamlModule.parse(text) };
+  }
+  if (format === "toml") {
+    // Use `smol-toml`, a compliant TOML 1.0 parser, instead of a hand-rolled
+    // regex tokenizer. Dates, arrays of tables, inline tables, and multi-line
+    // strings are all handled correctly.
+    const tomlModule = await import("smol-toml");
+    return { format, value: tomlModule.parse(text) };
+  }
+  if (format === "xml") {
+    return { format, value: parseXmlToSchema(text) };
+  }
+  if (format === "ini") {
+    // INI uses [section]/key=value pairs. Reuse the TOML parser which
+    // handles the subset correctly.
+    try {
+      const tomlModule = await import("smol-toml");
+      return { format, value: tomlModule.parse(text) };
+    } catch {
+      // If TOML rejects it, fall back to .properties-style key=value parsing.
+      return { format, value: parsePropertiesFile(text) };
+    }
+  }
+  if (format === "env") {
+    return { format, value: parseEnvFile(text) };
+  }
+  return { format, value: parsePropertiesFile(text) };
+}
+
+export async function extractStructuredData(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  const format = inferStructuredFormat(input.mimeType, input.fileName);
+  if (!format) {
+    return {
+      artifact: {
+        ...extractionMetadata("data", input.mimeType, "structured_data"),
+        warnings: ["Structured data extraction skipped: format not recognized."]
+      }
+    };
+  }
+  try {
+    const { value } = await parseStructuredPayload(input.bytes, format);
+    const shape = describeJsonShape(value);
+    const schemaLines = describeTopLevelSchema(value);
+    const previewText = decodeTextBytes(input.bytes);
+    const previewLines = previewText.split(/\r?\n/).slice(0, 40);
+    const truncated = previewText.split(/\r?\n/).length > previewLines.length;
+
+    const title = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined;
+    const extractedText = [
+      title ? `# ${title}` : null,
+      `Format: ${format.toUpperCase()}`,
+      `Top-level: ${shape.type}`,
+      shape.type === "object" || shape.type === "array" ? `Size: ${shape.size}` : null,
+      `Nested depth: ${shape.depth}`,
+      "",
+      "## Schema",
+      "",
+      ...schemaLines.map((entry) => `- ${entry}`),
+      "",
+      "## Preview",
+      "",
+      `\`\`\`${format}`,
+      ...previewLines,
+      truncated ? "…" : null,
+      "```"
+    ]
+      .filter((item): item is string => item !== null)
+      .join("\n")
+      .trim();
+
+    return {
+      title,
+      extractedText,
+      artifact: {
+        ...extractionMetadata("data", input.mimeType, "structured_data"),
+        metadata: {
+          format,
+          top_level_type: shape.type,
+          top_level_size: String(shape.size),
+          nested_depth: String(shape.depth)
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("data", input.mimeType, "structured_data"),
+        warnings: [`Structured data extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+interface BibTeXCreator {
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  prefix?: string;
+  suffix?: string;
+}
+
+function formatBibCreator(creator: BibTeXCreator): string {
+  if (creator.name) {
+    return creator.name;
+  }
+  const parts = [creator.prefix, creator.firstName, creator.lastName, creator.suffix].filter(Boolean);
+  return parts.join(" ");
+}
+
+function bibFieldString(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => bibFieldString(item))
+      .filter(Boolean)
+      .join(", ");
+  }
+  if (typeof value === "object") {
+    return bibFieldString((value as { name?: unknown }).name ?? "");
+  }
+  return String(value);
+}
+
+export async function extractBibTeXText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    // Use a proper AST parser instead of regex-matching `@type{...}` blocks.
+    const bibtex = await import("@retorquere/bibtex-parser");
+    const text = decodeTextBytes(input.bytes);
+    const library = bibtex.parse(text);
+    const entries = Array.isArray(library.entries) ? library.entries : [];
+
+    const citationTypes = new Map<string, number>();
+    for (const entry of entries) {
+      const type = (entry.type ?? "misc").toLowerCase();
+      citationTypes.set(type, (citationTypes.get(type) ?? 0) + 1);
+    }
+
+    const entrySections: string[] = [];
+    for (const entry of entries.slice(0, 200)) {
+      const fields = (entry.fields ?? {}) as Record<string, unknown>;
+      const title = bibFieldString(fields.title);
+      const authorList = Array.isArray(fields.author)
+        ? (fields.author as BibTeXCreator[]).map((creator) => formatBibCreator(creator)).filter(Boolean)
+        : bibFieldString(fields.author)
+            .split(/\s+and\s+/i)
+            .filter(Boolean);
+      const editorList = Array.isArray(fields.editor)
+        ? (fields.editor as BibTeXCreator[]).map((creator) => formatBibCreator(creator)).filter(Boolean)
+        : [];
+      const year = bibFieldString(fields.year ?? fields.date ?? "");
+      const journal = bibFieldString(fields.journal ?? fields.booktitle ?? fields.publisher ?? "");
+      const doi = bibFieldString(fields.doi);
+      const url = bibFieldString(fields.url);
+
+      const credit = authorList.length ? authorList.join(", ") : editorList.length ? `${editorList.join(", ")} (eds.)` : "Unknown";
+      const descriptorParts = [credit];
+      if (year) {
+        descriptorParts.push(year);
+      }
+      const descriptor = descriptorParts.join(", ");
+      const trailing: string[] = [];
+      if (journal) {
+        trailing.push(journal);
+      }
+      if (doi) {
+        trailing.push(`doi:${doi}`);
+      }
+      if (url) {
+        trailing.push(url);
+      }
+      const trailingText = trailing.length ? ` — ${trailing.join(", ")}` : "";
+      entrySections.push(`- [${entry.key}] ${title || "(untitled)"} (${descriptor})${trailingText}`);
+    }
+
+    const totalEntries = entries.length;
+    const truncated = entries.length > 200;
+    const typeSummary = [...citationTypes.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([type, count]) => `${type} (${count})`)
+      .join(", ");
+
+    const title = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : "BibTeX library";
+    const extractedText = [
+      `# ${title}`,
+      "",
+      `BibTeX library with ${totalEntries} entr${totalEntries === 1 ? "y" : "ies"}.`,
+      typeSummary ? `Citation types: ${typeSummary}.` : null,
+      "",
+      "## Entries",
+      "",
+      ...entrySections,
+      truncated ? `\n_Preview truncated to the first 200 entries._` : null
+    ]
+      .filter((item): item is string => item !== null)
+      .join("\n")
+      .trim();
+
+    const warnings = library.errors?.length ? [`BibTeX parser reported ${library.errors.length} parse error(s).`] : undefined;
+
+    return {
+      title,
+      extractedText,
+      artifact: {
+        ...extractionMetadata("bibtex", input.mimeType, "bibtex_text"),
+        metadata: {
+          entry_count: String(totalEntries),
+          citation_types: [...citationTypes.keys()].sort().join(",")
+        },
+        warnings
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("bibtex", input.mimeType, "bibtex_text"),
+        warnings: [`BibTeX extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+interface RtfSpan {
+  value?: string;
+}
+
+interface RtfParagraph {
+  content?: RtfSpan[];
+}
+
+interface RtfDocument {
+  content?: RtfParagraph[];
+}
+
+export async function extractRtfText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    // Use the proper rtf-parser AST rather than stripping control codes with
+    // regex. The library walks RTF groups, builds a RTFDocument, and lets us
+    // read back paragraphs of styled spans.
+    const rtfParser = (await import("rtf-parser")) as unknown as {
+      default?: {
+        string: (input: string, cb: (err: Error | null, doc: RtfDocument | null) => void) => void;
+      };
+      string?: (input: string, cb: (err: Error | null, doc: RtfDocument | null) => void) => void;
+    };
+    const parseString = rtfParser.string ?? rtfParser.default?.string;
+    if (typeof parseString !== "function") {
+      throw new Error("rtf-parser did not expose a string parser.");
+    }
+    const rtfText = decodeTextBytes(input.bytes);
+    const document = await new Promise<RtfDocument>((resolve, reject) => {
+      parseString(rtfText, (err, doc) => {
+        if (err || !doc) {
+          reject(err ?? new Error("RTF parse returned no document"));
+          return;
+        }
+        resolve(doc);
+      });
+    });
+
+    const paragraphs: string[] = [];
+    for (const paragraph of document.content ?? []) {
+      const spans = paragraph.content ?? [];
+      const text = normalizeWhitespace(spans.map((span) => span.value ?? "").join(""));
+      if (text) {
+        paragraphs.push(text);
+      }
+    }
+
+    const title = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined;
+    const extractedText = [title ? `# ${title}` : null, "", ...paragraphs]
+      .filter((item): item is string => item !== null)
+      .join("\n\n")
+      .trim();
+
+    return {
+      title,
+      extractedText: extractedText || undefined,
+      artifact: {
+        ...extractionMetadata("rtf", input.mimeType, "rtf_text"),
+        metadata: {
+          paragraph_count: String(paragraphs.length)
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("rtf", input.mimeType, "rtf_text"),
+        warnings: [`RTF extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+interface OrgNodeBase {
+  type: string;
+  level?: number;
+  keyword?: string;
+  value?: string;
+  tags?: string[];
+  children?: OrgNodeBase[];
+  properties?: Record<string, unknown>;
+}
+
+function collectOrgNodeText(node: OrgNodeBase): string {
+  if (typeof node.value === "string") {
+    return node.value;
+  }
+  if (!Array.isArray(node.children)) {
+    return "";
+  }
+  return node.children.map((child) => collectOrgNodeText(child)).join("");
+}
+
+function renderOrgNode(node: OrgNodeBase, lines: string[]): void {
+  if (node.type === "headline") {
+    const depth = Math.min(Math.max(node.level ?? 1, 1), 6);
+    const keyword = node.keyword ? `${node.keyword} ` : "";
+    const tags = node.tags?.length ? `  \`${node.tags.join(":")}\`` : "";
+    const text = normalizeWhitespace(collectOrgNodeText(node));
+    lines.push("");
+    lines.push(`${"#".repeat(depth)} ${keyword}${text}${tags}`.trim());
+    lines.push("");
+    return;
+  }
+  if (node.type === "paragraph") {
+    const text = normalizeWhitespace(collectOrgNodeText(node));
+    if (text) {
+      lines.push(text);
+      lines.push("");
+    }
+    return;
+  }
+  if (node.type === "list") {
+    for (const child of node.children ?? []) {
+      if (child.type === "list.item") {
+        const text = normalizeWhitespace(collectOrgNodeText(child));
+        if (text) {
+          lines.push(`- ${text}`);
+        }
+      }
+    }
+    lines.push("");
+    return;
+  }
+  if (node.type === "block") {
+    const name = (node as { name?: string }).name ?? "";
+    const body = typeof node.value === "string" ? node.value.trimEnd() : "";
+    if (body) {
+      lines.push(`\`\`\`${name === "src" ? "" : name.toLowerCase()}`);
+      lines.push(body);
+      lines.push("```");
+      lines.push("");
+    }
+    return;
+  }
+  for (const child of node.children ?? []) {
+    renderOrgNode(child, lines);
+  }
+}
+
+export async function extractOrgText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    // Proper Org-mode AST parser; no regex scanning of the raw text.
+    const orga = await import("orga");
+    const text = decodeTextBytes(input.bytes);
+    const document = orga.parse(text) as unknown as OrgNodeBase & {
+      properties?: Record<string, string | string[] | Record<string, string>>;
+    };
+
+    const properties = document.properties ?? {};
+    const documentTitle = Array.isArray(properties.title)
+      ? properties.title.join(" ")
+      : typeof properties.title === "string"
+        ? properties.title
+        : "";
+
+    let headlineCount = 0;
+    let todoCount = 0;
+    const walk = (node: OrgNodeBase): void => {
+      if (node.type === "headline") {
+        headlineCount += 1;
+        if (node.keyword) {
+          todoCount += 1;
+        }
+      }
+      for (const child of node.children ?? []) {
+        walk(child);
+      }
+    };
+    walk(document);
+
+    const bodyLines: string[] = [];
+    for (const child of document.children ?? []) {
+      renderOrgNode(child, bodyLines);
+    }
+
+    const title = documentTitle.trim() || (input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined);
+    const extractedText = [title ? `# ${title}` : null, "", ...bodyLines]
+      .filter((item): item is string => item !== null)
+      .join("\n")
+      .trim();
+
+    return {
+      title,
+      extractedText: extractedText || undefined,
+      artifact: {
+        ...extractionMetadata("org", input.mimeType, "org_text"),
+        metadata: {
+          headline_count: String(headlineCount),
+          todo_count: String(todoCount)
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("org", input.mimeType, "org_text"),
+        warnings: [`Org extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+export async function extractAsciiDocText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    // Use the official Asciidoctor.js parser to convert to HTML, then walk
+    // the HTML through the shared htmlToMarkdown helper (readability +
+    // turndown) — same pipeline as HTML ingest.
+    const asciidoctorModule = await import("@asciidoctor/core");
+    const factory = (asciidoctorModule.default ??
+      (asciidoctorModule as unknown as () => {
+        convert: (input: string, options?: Record<string, unknown>) => string;
+        load: (input: string, options?: Record<string, unknown>) => { getTitle?: () => string | undefined };
+      })) as () => {
+      convert: (input: string, options?: Record<string, unknown>) => string;
+      load: (input: string, options?: Record<string, unknown>) => { getTitle?: () => string | undefined };
+    };
+    const processor = factory();
+    const source = decodeTextBytes(input.bytes);
+    const loaded = processor.load(source, { safe: "safe" });
+    const html = processor.convert(source, { safe: "safe", standalone: false }) as string;
+    const markdown = htmlToMarkdown(html);
+
+    const docTitle = (typeof loaded.getTitle === "function" ? loaded.getTitle() : undefined) ?? undefined;
+    const fileTitle = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined;
+    const title = docTitle?.trim() || fileTitle;
+
+    const extractedText = [title ? `# ${title}` : null, "", markdown]
+      .filter((item): item is string => item !== null)
+      .join("\n")
+      .trim();
+
+    return {
+      title,
+      extractedText: extractedText || undefined,
+      artifact: {
+        ...extractionMetadata("asciidoc", input.mimeType, "asciidoc_text"),
+        metadata: {
+          html_size: String(html.length),
+          markdown_size: String(markdown.length)
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("asciidoc", input.mimeType, "asciidoc_text"),
+        warnings: [`AsciiDoc extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
 }
 
 export async function extractTranscriptText(input: {

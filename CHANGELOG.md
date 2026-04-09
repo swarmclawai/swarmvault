@@ -1,7 +1,10 @@
 # Changelog
 
-## 0.6.8
+## 0.7.0
 
+- Expanded non-code ingest coverage with the full Word family (`.docx`/`.docm`/`.dotx`/`.dotm`), Excel family (`.xlsx`/`.xlsm`/`.xlsb`/`.xls`/`.xltx`/`.xltm` including legacy biff8), and PowerPoint family (`.pptx`/`.pptm`/`.potx`/`.potm`), plus first-class Rich Text (`.rtf`), BibTeX (`.bib`), Org-mode (`.org`), AsciiDoc (`.adoc`/`.asciidoc`), OpenDocument (`.odt`/`.odp`/`.ods`), and Jupyter (`.ipynb`) extractors; broadened the image pipeline to explicitly route `.heic`/`.heif`/`.avif`/`.jxl`/`.bmp`/`.tif`/`.tiff`/`.svg`/`.ico` alongside `.png`/`.jpg`/`.webp`; and extended the structured-data preview to `.xml`/`.ini`/`.env`/`.properties`/`.cfg`/`.conf` so config/data files match what the README advertises
+- Added parser-backed ingestion for Elixir (`.ex`/`.exs`), OCaml (`.ml`/`.mli`), Objective-C (`.m`/`.mm`, leaving `.h` headers routed through the C/C++ analyzer), ReScript (`.res`/`.resi`), Solidity (`.sol`), Vue single-file components (`.vue`), HTML (`.html`/`.htm`), and CSS (`.css`) sources via tree-sitter AST walkers, exposing each source's modules, classes, protocols, functions, inheritance edges, and import references through the existing module-page, graph, search, and code-index pipeline
+- Restored Swift to the documented graceful-degradation path by disabling parser-backed Swift analysis by default, avoiding Node 24 V8 out-of-memory crashes during test and OSS-corpus runs while keeping an explicit opt-in escape hatch for local experiments
 - Replaced several regex-shaped code import parsers with parser-backed AST extraction for Python, Go, Rust, Java, Kotlin, Scala, C#, PHP, and C/C++ includes, reducing brittle language handling and improving grouped import fidelity
 - Hardened repo-aware code resolution for real multi-crate and multi-root projects by expanding Rust crate alias handling, stripping trailing symbol segments when imports target module files, and broadening Lua local module candidate resolution
 - Refactored agent hook installation to ship built hook bundles from the engine package instead of embedding large inline hook scripts in source, keeping installed hook artifacts aligned with the packaged runtime

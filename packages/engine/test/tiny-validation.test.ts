@@ -164,6 +164,96 @@ function createSimpleEpub(): Buffer {
   );
 }
 
+function createSimpleOdt(): Buffer {
+  return Buffer.from(
+    zipSync({
+      // ODF requires the mimetype file to be the first (stored/uncompressed)
+      // entry; fflate handles this as long as it's emitted first.
+      mimetype: Buffer.from("application/vnd.oasis.opendocument.text", "utf8"),
+      "META-INF/manifest.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">',
+          '<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>',
+          '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>',
+          '<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>',
+          "</manifest:manifest>"
+        ].join(""),
+        "utf8"
+      ),
+      "meta.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0">',
+          "<office:meta>",
+          "<dc:title>Tiny ODT Source</dc:title>",
+          "<dc:creator>SwarmVault Tests</dc:creator>",
+          "<dc:subject>odt fixture</dc:subject>",
+          "<meta:keyword>odt</meta:keyword>",
+          "</office:meta>",
+          "</office:document-meta>"
+        ].join(""),
+        "utf8"
+      ),
+      "content.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+          "<office:body><office:text>",
+          '<text:h text:outline-level="1">Tiny ODT Source</text:h>',
+          "<text:p>Local ODT files should extract readable text before analysis.</text:p>",
+          "<text:p>They should also preserve basic metadata.</text:p>",
+          "</office:text></office:body>",
+          "</office:document-content>"
+        ].join(""),
+        "utf8"
+      )
+    })
+  );
+}
+
+function createSimpleOdp(): Buffer {
+  return Buffer.from(
+    zipSync({
+      mimetype: Buffer.from("application/vnd.oasis.opendocument.presentation", "utf8"),
+      "META-INF/manifest.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">',
+          '<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.presentation"/>',
+          '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>',
+          '<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>',
+          "</manifest:manifest>"
+        ].join(""),
+        "utf8"
+      ),
+      "meta.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+          "<office:meta>",
+          "<dc:title>Tiny ODP Source</dc:title>",
+          "</office:meta>",
+          "</office:document-meta>"
+        ].join(""),
+        "utf8"
+      ),
+      "content.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+          "<office:body><office:presentation>",
+          '<draw:page draw:name="Slide 1"><text:p>ODP slides should be extracted too.</text:p></draw:page>',
+          '<draw:page draw:name="Slide 2"><text:p>Speaker notes and shapes should surface as text.</text:p></draw:page>',
+          "</office:presentation></office:body>",
+          "</office:document-content>"
+        ].join(""),
+        "utf8"
+      )
+    })
+  );
+}
+
 async function createTempWorkspace(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-tiny-"));
   tempDirs.push(dir);
@@ -278,28 +368,299 @@ describe("tiny validation matrix", () => {
     await fs.writeFile(path.join(repoDir, "docs", "workbook.xlsx"), await createSimpleXlsx());
     await fs.writeFile(path.join(repoDir, "docs", "book.epub"), createSimpleEpub());
 
+    // Jupyter notebook fixture (pure JSON).
+    await fs.writeFile(
+      path.join(repoDir, "docs", "notebook.ipynb"),
+      JSON.stringify(
+        {
+          cells: [
+            {
+              cell_type: "markdown",
+              source: ["# Tiny Notebook\n", "\n", "This notebook documents the analysis pipeline."]
+            },
+            {
+              cell_type: "code",
+              source: ["def add(x, y):\n", "    return x + y\n"],
+              outputs: [{ output_type: "stream", text: "Computed sum\n" }]
+            }
+          ],
+          metadata: {
+            kernelspec: { name: "python3", display_name: "Python 3", language: "python" },
+            language_info: { name: "python", version: "3.11.0" }
+          },
+          nbformat: 4,
+          nbformat_minor: 5
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    // MDX fixture: gets classified as markdown.
+    await fs.writeFile(
+      path.join(repoDir, "docs", "component-notes.mdx"),
+      ["# MDX Component Notes", "", "import { Callout } from '@site/src/components';", "", "Documentation explaining the pipeline."].join(
+        "\n"
+      ),
+      "utf8"
+    );
+
+    // Structured-data fixtures: JSON, YAML, TOML should all land as `data`.
+    await fs.writeFile(
+      path.join(repoDir, "docs", "settings.json"),
+      JSON.stringify({ name: "platform", services: ["edge", "api"], limits: { burst: 100 } }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "docs", "rollout.yaml"),
+      ["name: rollout", "stages:", "  - name: staging", "  - name: production"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "docs", "config.toml"),
+      ['title = "Platform"', "", "[limits]", "burst = 100", "sustained = 20"].join("\n"),
+      "utf8"
+    );
+
+    // ODS fixture reused from the XLSX helper — xlsx npm lib writes ODS too.
+    const XLSX = await import("xlsx");
+    const odsWorkbook = XLSX.utils.book_new();
+    const odsSheet = XLSX.utils.aoa_to_sheet([
+      ["Metric", "Value"],
+      ["Users", 12],
+      ["Errors", 1]
+    ]);
+    XLSX.utils.book_append_sheet(odsWorkbook, odsSheet, "Overview");
+    await fs.writeFile(
+      path.join(repoDir, "docs", "workbook.ods"),
+      Buffer.from(XLSX.write(odsWorkbook, { type: "buffer", bookType: "ods" }))
+    );
+
+    // Hand-built minimal ODT and ODP fixtures (ZIP + content.xml + meta.xml).
+    await fs.writeFile(path.join(repoDir, "docs", "brief.odt"), createSimpleOdt());
+    await fs.writeFile(path.join(repoDir, "docs", "deck.odp"), createSimpleOdp());
+
+    // BibTeX, RTF, Org, and AsciiDoc fixtures — all parsed by proper libs.
+    await fs.writeFile(
+      path.join(repoDir, "docs", "refs.bib"),
+      [
+        "@article{karpathy2015char-rnn,",
+        "  title = {The Unreasonable Effectiveness of Recurrent Neural Networks},",
+        "  author = {Karpathy, Andrej},",
+        "  year = {2015},",
+        "  journal = {Blog},",
+        "  url = {https://karpathy.github.io/2015/05/21/rnn-effectiveness/}",
+        "}",
+        "",
+        "@book{knuth1997art,",
+        "  title = {The Art of Computer Programming},",
+        "  author = {Knuth, Donald E.},",
+        "  year = {1997},",
+        "  publisher = {Addison-Wesley}",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    // Minimal hand-authored RTF document.
+    await fs.writeFile(
+      path.join(repoDir, "docs", "legal.rtf"),
+      [
+        "{\\rtf1\\ansi\\deff0",
+        "{\\fonttbl{\\f0 Helvetica;}}",
+        "\\f0\\fs24",
+        "Tiny RTF Source\\par",
+        "Local RTF files should extract readable text before analysis.\\par",
+        "They should also preserve paragraph structure.\\par",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    await fs.writeFile(
+      path.join(repoDir, "docs", "notes.org"),
+      [
+        "#+TITLE: Tiny Org Source",
+        "",
+        "* Introduction",
+        "",
+        "Local Org files should extract readable text via the orga parser.",
+        "",
+        "* TODO Roll out rate limiter",
+        "",
+        "Deploy the new rate limiter to staging, then production.",
+        "",
+        "** DONE Canary validation",
+        "",
+        "- Verified p99 latency stays below target",
+        "- No regression in error rate"
+      ].join("\n"),
+      "utf8"
+    );
+
+    await fs.writeFile(
+      path.join(repoDir, "docs", "spec.adoc"),
+      [
+        "= Tiny AsciiDoc Source",
+        "SwarmVault Tests <tests@example.com>",
+        "",
+        "== Introduction",
+        "",
+        "Local AsciiDoc files should extract readable text via the Asciidoctor parser.",
+        "",
+        "== Goals",
+        "",
+        "* Preserve section structure.",
+        "* Extract metadata and prose.",
+        "* Route through the shared htmlToMarkdown helper so downstream analysis is consistent."
+      ].join("\n"),
+      "utf8"
+    );
+
+    // Modern image extensions — verify explicit routing catches formats the
+    // mime-types package may miss. Bytes don't need to be valid image data
+    // since we only assert on sourceKind (the vision extractor records a
+    // warning on invalid payloads without crashing the ingest pipeline).
+    const imageExtFixtures: Array<[string, Buffer]> = [
+      ["docs/photo.heic", Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63])],
+      ["docs/snap.avif", Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66])],
+      ["docs/scene.jxl", Buffer.from([0xff, 0x0a])],
+      ["docs/banner.bmp", Buffer.from([0x42, 0x4d, 0x00, 0x00])],
+      ["docs/favicon.ico", Buffer.from([0x00, 0x00, 0x01, 0x00])],
+      ["docs/landscape.tiff", Buffer.from([0x49, 0x49, 0x2a, 0x00])]
+    ];
+    for (const [fixturePath, bytes] of imageExtFixtures) {
+      await fs.writeFile(path.join(repoDir, fixturePath), bytes);
+    }
+
+    // Office family variants — each variant needs UNIQUE content since the
+    // ingest pipeline dedupes by content hash (shared bytes would collapse
+    // into a single manifest). The .docm/.dotx/.dotm, .xlsm/.xltx/.xltm,
+    // and .pptm/.potx/.potm extensions reuse the OOXML container of their
+    // parent formats, so SheetJS/mammoth read them unchanged.
+    async function makeUniqueXlsx(label: string, bookType: "xlsx" | "biff8"): Promise<Buffer> {
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet([
+          ["Label", label],
+          ["Timestamp", Date.now().toString()],
+          ["Index", Math.random().toString()]
+        ]),
+        label
+      );
+      workbook.Props = { Title: `Tiny ${label}` };
+      return Buffer.from(XLSX.write(workbook, { type: "buffer", bookType }));
+    }
+
+    // Word family: DOCX test bytes are base64-decoded above. For macro/template
+    // variants we cannot easily generate fresh OOXML bytes without pulling in
+    // a DOCX builder, so we take the shared MINIMAL_DOCX and append a small
+    // trailing marker outside the ZIP central directory — mammoth still parses
+    // the core content and the bytes hash differently per fixture.
+    await fs.writeFile(
+      path.join(repoDir, "docs", "macro-enabled.docm"),
+      Buffer.concat([MINIMAL_DOCX, Buffer.from("\n<!--docm-marker-->", "utf8")])
+    );
+    await fs.writeFile(
+      path.join(repoDir, "docs", "report-template.dotx"),
+      Buffer.concat([MINIMAL_DOCX, Buffer.from("\n<!--dotx-marker-->", "utf8")])
+    );
+
+    // Excel family: unique workbook per extension.
+    await fs.writeFile(path.join(repoDir, "docs", "macro-enabled.xlsm"), await makeUniqueXlsx("xlsm", "xlsx"));
+    await fs.writeFile(path.join(repoDir, "docs", "budget-template.xltx"), await makeUniqueXlsx("xltx", "xlsx"));
+    // Legacy .xls binary format — SheetJS writes biff8 natively and ingest
+    // should route it through the same xlsx kind.
+    await fs.writeFile(path.join(repoDir, "docs", "legacy.xls"), await makeUniqueXlsx("xls", "biff8"));
+
+    // PowerPoint family: createSimplePptx() produces the same bytes each call,
+    // so append markers to differentiate. The PPTX extractor reads the ZIP
+    // contents; trailing bytes don't confuse it.
+    await fs.writeFile(
+      path.join(repoDir, "docs", "macro-enabled.pptm"),
+      Buffer.concat([createSimplePptx(), Buffer.from("\n<!--pptm-marker-->", "utf8")])
+    );
+    await fs.writeFile(
+      path.join(repoDir, "docs", "slide-template.potx"),
+      Buffer.concat([createSimplePptx(), Buffer.from("\n<!--potx-marker-->", "utf8")])
+    );
+
+    // Config/data expansion: XML, INI, .env, .properties should all promote
+    // to the `data` source kind rather than falling through to plain text or
+    // binary. Uses real parseable payloads so extraction succeeds.
+    await fs.writeFile(
+      path.join(repoDir, "docs", "pipeline.xml"),
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<pipeline>",
+        "  <name>ingest</name>",
+        "  <stages>",
+        "    <stage>fetch</stage>",
+        "    <stage>parse</stage>",
+        "    <stage>compile</stage>",
+        "  </stages>",
+        "</pipeline>"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "docs", "service.ini"),
+      ["[server]", "host=localhost", "port=8080", "", "[logging]", "level=info"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "docs", "config.env"),
+      ["DATABASE_URL=postgres://localhost/app", "DEBUG=true", "PORT=3000"].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "docs", "app.properties"),
+      ["app.name=platform", "app.version=1.0", "app.feature.flags=rollout-v2"].join("\n"),
+      "utf8"
+    );
+
     await initVault(rootDir);
     await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
     await compileVault(rootDir);
 
     const manifests = await readManifests(rootDir);
     const sourceKinds = new Set(manifests.map((manifest) => manifest.sourceKind));
-    const expectedSourceKinds: SourceKind[] = ["markdown", "text", "html", "pdf", "docx", "epub", "csv", "xlsx", "pptx", "image", "code"];
+    const expectedSourceKinds: SourceKind[] = [
+      "markdown",
+      "text",
+      "pdf",
+      "docx",
+      "epub",
+      "csv",
+      "xlsx",
+      "pptx",
+      "image",
+      "code",
+      "jupyter",
+      "odt",
+      "odp",
+      "ods",
+      "data",
+      "bibtex",
+      "rtf",
+      "org",
+      "asciidoc"
+    ];
+    // NOTE: `.html` is now routed through the tree-sitter HTML code grammar
+    // added in packages/engine/src/code-tree-sitter.ts, so `.html` files land
+    // as `code` source kind with `language: html`. The former html-prose
+    // extractor path is exercised elsewhere (e.g., HTML URLs via
+    // `swarmvault add`), not by the repo-ingest matrix.
 
     for (const sourceKind of expectedSourceKinds) {
       expect(sourceKinds.has(sourceKind), `missing source kind ${sourceKind}`).toBe(true);
     }
 
     const htmlManifest = manifests.find((manifest) => manifest.repoRelativePath === "docs/page.html");
-    expect(htmlManifest?.sourceKind).toBe("html");
-    expect(htmlManifest?.extractedTextPath).toBeTruthy();
-    expect(htmlManifest?.extractedMetadataPath).toBeTruthy();
-    const htmlExtract = await fs.readFile(path.join(rootDir, htmlManifest?.extractedTextPath ?? ""), "utf8");
-    expect(htmlExtract).toContain("Local HTML files should extract readable text before analysis.");
-    const htmlArtifact = JSON.parse(
-      await fs.readFile(path.join(rootDir, htmlManifest?.extractedMetadataPath ?? ""), "utf8")
-    ) as SourceExtractionArtifact;
-    expect(htmlArtifact.extractor).toBe("html_readability");
+    expect(htmlManifest?.sourceKind).toBe("code");
+    expect(htmlManifest?.language).toBe("html");
 
     const pdfManifest = manifests.find((manifest) => manifest.repoRelativePath === "docs/paper.pdf");
     const pdfArtifact = JSON.parse(
@@ -368,5 +729,45 @@ describe("tiny validation matrix", () => {
     const rstExtract = await fs.readFile(path.join(rootDir, rstManifest?.extractedTextPath ?? ""), "utf8");
     expect(rstExtract).toContain("# Tiny reStructuredText Source");
     expect(rstExtract).toContain("Note: The extracted text should normalize headings and directives.");
-  }, 20_000);
+
+    // Routing specificity checks for newly-added file-type coverage. The
+    // `expectedSourceKinds` set above only proves each kind appears at
+    // least once; these assertions prove each specific extension routes
+    // correctly (catches regressions where, say, .docm falls through to
+    // binary because someone forgot to widen the `.docx` extension check).
+    const expectedFileRouting: Array<[string, SourceKind]> = [
+      // Modern image extensions.
+      ["docs/photo.heic", "image"],
+      ["docs/snap.avif", "image"],
+      ["docs/scene.jxl", "image"],
+      ["docs/banner.bmp", "image"],
+      ["docs/favicon.ico", "image"],
+      ["docs/landscape.tiff", "image"],
+      // Office family variants — same kinds as their parent formats.
+      ["docs/macro-enabled.docm", "docx"],
+      ["docs/report-template.dotx", "docx"],
+      ["docs/macro-enabled.xlsm", "xlsx"],
+      ["docs/budget-template.xltx", "xlsx"],
+      ["docs/legacy.xls", "xlsx"],
+      ["docs/macro-enabled.pptm", "pptx"],
+      ["docs/slide-template.potx", "pptx"],
+      // Config/data expansion beyond JSON/YAML/TOML.
+      ["docs/pipeline.xml", "data"],
+      ["docs/service.ini", "data"],
+      ["docs/config.env", "data"],
+      ["docs/app.properties", "data"]
+    ];
+    const routingFailures: string[] = [];
+    for (const [repoRelativePath, expectedKind] of expectedFileRouting) {
+      const routedManifest = manifests.find((manifest) => manifest.repoRelativePath === repoRelativePath);
+      if (!routedManifest) {
+        routingFailures.push(`missing manifest: ${repoRelativePath}`);
+        continue;
+      }
+      if (routedManifest.sourceKind !== expectedKind) {
+        routingFailures.push(`${repoRelativePath}: expected ${expectedKind}, got ${routedManifest.sourceKind}`);
+      }
+    }
+    expect(routingFailures, `routing regressions:\n${routingFailures.join("\n")}`).toEqual([]);
+  }, 30_000);
 });

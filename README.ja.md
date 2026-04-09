@@ -196,20 +196,28 @@ clawhub install swarmvault
 | Input | 拡張子 / ソース | 抽出方法 |
 |-------|-----------------|----------|
 | PDF | `.pdf` | ローカルでテキスト抽出 |
-| DOCX | `.docx` | ローカル抽出とメタデータ取得 |
+| Word ドキュメント | `.docx .docm .dotx .dotm` | ローカル抽出とメタデータ取得（マクロ対応およびテンプレートも含む） |
+| Rich Text | `.rtf` | パーサーベースの RTF テキスト抽出 |
+| OpenDocument | `.odt .odp .ods` | ローカルでテキスト / スライド / シートを抽出 |
 | EPUB 書籍 | `.epub` | ローカルで章ごとに分割し Markdown 化 |
 | データセット | `.csv .tsv` | ローカルで表形式サマリーと限定プレビューを生成 |
-| スプレッドシート | `.xlsx` | ローカルでブックとシートのプレビューを抽出 |
-| スライド | `.pptx` | ローカルでスライド本文とノートを抽出 |
+| スプレッドシート | `.xlsx .xlsm .xlsb .xls .xltx .xltm` | ローカルでブックとシートのプレビューを抽出（モダン、マクロ対応、バイナリ、レガシー形式） |
+| スライド | `.pptx .pptm .potx .potm` | ローカルでスライド本文とノートを抽出（マクロ対応およびテンプレートも含む） |
+| Jupyter ノートブック | `.ipynb` | ローカルでセルと出力を抽出 |
+| BibTeX ライブラリ | `.bib` | パーサーベースの引用エントリ抽出 |
+| Org-mode | `.org` | AST ベースの見出し・リスト・ブロック抽出 |
+| AsciiDoc | `.adoc .asciidoc` | Asciidoctor ベースのセクション・メタデータ抽出 |
 | 書き起こし | `.srt .vtt` | タイムスタンプ付きのテキストをローカル抽出 |
 | チャット書き出し | Slack export `.zip`、展開済み Slack export ディレクトリ | チャンネル/日付単位の会話をローカル抽出 |
 | メール | `.eml .mbox` | 単一メール抽出と mailbox 展開 |
 | カレンダー | `.ics` | `VEVENT` のローカル展開 |
-| HTML | `.html`, URLs | Readability + Turndown による Markdown 化 |
-| Images | `.png .jpg .webp` | Vision provider（設定されている場合） |
+| HTML | `.html`, URLs | Readability + Turndown による Markdown 化（URL 取り込み） |
+| Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider（設定されている場合） |
 | Research | arXiv, DOI, articles, X/Twitter | `swarmvault add` による正規化 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest と軽量な `.rst` 見出し正規化 |
-| Code | `.js .jsx .ts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .php .rb .ps1` | tree-sitter ベースの AST とモジュール解決 |
+| 設定 / データ | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | key/value スキーマヒント付きの構造化プレビュー |
+| 開発者マニフェスト | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` など | コンテンツスニッフベースのテキスト ingest —— 一般的な開発設定ファイルが暗黙的に捨てられることはありません |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .hpp .hh .h .php .rb .ps1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`、および `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang を持つ拡張子なしスクリプト | tree-sitter ベースの AST とモジュール解決 |
 | Browser clips | inbox bundles | `inbox import` によるアセット書き換え済み Markdown |
 | Managed sources | ローカルディレクトリ、公開 GitHub リポジトリ root URL、docs ハブ URL | `swarmvault source add` によるレジストリ同期 |
 

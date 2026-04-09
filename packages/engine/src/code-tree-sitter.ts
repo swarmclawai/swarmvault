@@ -16,6 +16,7 @@ import { normalizeWhitespace, slugify, toPosix, truncate, uniqueBy } from "./uti
 const require = createRequire(import.meta.url);
 const TREE_SITTER_RUNTIME_PACKAGE = "@vscode/tree-sitter-wasm";
 const TREE_SITTER_EXTRA_GRAMMARS_PACKAGE = "tree-sitter-wasms";
+const SWIFT_TREE_SITTER_OPT_IN_ENV = "SWARMVAULT_ENABLE_SWIFT_TREE_SITTER";
 const packageRootCache = new Map<string, string>();
 
 type DraftCodeSymbol = {
@@ -113,7 +114,16 @@ const grammarAssetByLanguage: Record<Exclude<CodeLanguage, "javascript" | "jsx" 
   cpp: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-cpp.wasm" },
   php: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-php.wasm" },
   ruby: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-ruby.wasm" },
-  powershell: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-powershell.wasm" }
+  powershell: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-powershell.wasm" },
+  swift: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-swift.wasm" },
+  elixir: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-elixir.wasm" },
+  ocaml: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-ocaml.wasm" },
+  objc: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-objc.wasm" },
+  rescript: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-rescript.wasm" },
+  solidity: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-solidity.wasm" },
+  html: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-html.wasm" },
+  css: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-css.wasm" },
+  vue: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-vue.wasm" }
 };
 
 function resolvePackageRoot(packageName: string): string {
@@ -186,7 +196,7 @@ function normalizeSymbolReference(value: string): string {
 
 function stripCodeExtension(filePath: string): string {
   return filePath.replace(
-    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i,
+    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx|swift|exs?|mli?|mm|resi?|sol|html?|css|vue)$/i,
     ""
   );
 }
@@ -567,6 +577,94 @@ function quotedPath(value: string): string {
   return value.replace(/^['"<]+|['">]+$/g, "").trim();
 }
 
+// Tree-sitter grammars for C, C++, and C# parse preprocessor directives as ordinary
+// tokens with no branch resolution. When `#if` / `#else` / `#endif` interrupts a
+// single statement or expression the grammar sees two partial fragments and emits
+// spurious syntax errors (e.g. a dangling `else` split across `#endif`, or two
+// expression-bodied method bodies joined by `&&` across an `#if`/`#else` pair).
+//
+// This helper walks the input line by line, always takes the first `#if` branch, and
+// blanks out the conditional directive lines themselves plus every line inside
+// non-taken branches. Other directives (`#include`, `#define`, `#pragma`, ...) pass
+// through untouched because the grammars parse them cleanly and the downstream
+// walkers (`parseCppInclude` and friends) rely on their AST nodes. "Blank" means an
+// empty string with the trailing newline retained so downstream diagnostics keep
+// their original line numbers.
+function neutralizePreprocessorDirectives(content: string): string {
+  const lines = content.split("\n");
+  // Each stack entry records whether the current branch at this depth is taken.
+  const active: boolean[] = [];
+  const isActive = () => active.every(Boolean);
+  const directiveHead = (line: string): string | undefined => {
+    const trimmed = line.trimStart();
+    if (trimmed[0] !== "#") {
+      return undefined;
+    }
+    const rest = trimmed.slice(1).trimStart();
+    const match = rest.match(/^([A-Za-z]+)/);
+    return match?.[1]?.toLowerCase();
+  };
+  const out: string[] = [];
+  for (const line of lines) {
+    const head = directiveHead(line);
+    if (head === "if" || head === "ifdef" || head === "ifndef") {
+      active.push(isActive());
+      out.push("");
+      continue;
+    }
+    if (head === "elif") {
+      if (active.length > 0) {
+        active[active.length - 1] = false;
+      }
+      out.push("");
+      continue;
+    }
+    if (head === "else") {
+      if (active.length > 0) {
+        active[active.length - 1] = false;
+      }
+      out.push("");
+      continue;
+    }
+    if (head === "endif") {
+      if (active.length > 0) {
+        active.pop();
+      }
+      out.push("");
+      continue;
+    }
+    if (!isActive()) {
+      out.push("");
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+// Detect shell scripts that use zsh-only syntax. Tree-sitter-bash parses POSIX bash
+// only, so feeding it zsh scripts produces noisy grammar errors. Rather than ship a
+// separate zsh grammar (tree-sitter-wasms does not include one) we detect the dialect
+// and suppress tree-sitter diagnostics for the affected file — the descendant-based
+// symbol and import walkers still extract functions and `source` edges, same as the
+// Lua suppression path.
+function detectShellDialect(content: string): "zsh" | "bash" {
+  const prefix = content.slice(0, 4096);
+  if (/^#!\s*(?:\/usr\/bin\/env\s+)?zsh\b/m.test(prefix)) {
+    return "zsh";
+  }
+  if (/^\s*#compdef\b/m.test(prefix)) {
+    return "zsh";
+  }
+  if (/\$\{\([fFsq@%]/.test(prefix)) {
+    return "zsh";
+  }
+  if (/\b(?:setopt|unsetopt|zmodload|compinit|autoload\s+-Uz)\b/.test(prefix)) {
+    return "zsh";
+  }
+  return "bash";
+}
+
 function diagnosticsFromTree(rootNode: TreeNode): CodeDiagnostic[] {
   if (!rootNode.hasError) {
     return [];
@@ -636,6 +734,22 @@ export function resetTreeSitterLanguageCacheForTests(): void {
   treeSitterInitPromise = undefined;
   languageCache.clear();
   packageRootCache.clear();
+}
+
+function swiftTreeSitterEnabled(): boolean {
+  return process.env[SWIFT_TREE_SITTER_OPT_IN_ENV] === "1";
+}
+
+function swiftTreeSitterDisabledDiagnostic(): CodeDiagnostic {
+  return {
+    code: 9012,
+    category: "warning",
+    message:
+      `Swift parser-backed analysis is disabled by default because the packaged tree-sitter grammar can trigger Node/V8 out-of-memory crashes during WASM compilation. ` +
+      `Set ${SWIFT_TREE_SITTER_OPT_IN_ENV}=1 to opt in anyway.`,
+    line: 1,
+    column: 1
+  };
 }
 
 // Join the `identifier` children of a `dotted_name` tree-sitter node with `.`.
@@ -1622,25 +1736,24 @@ function zigDeclarationKind(node: TreeNode): CodeSymbolKind | undefined {
   return undefined;
 }
 
-function bashCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+function bashCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[], rawContent?: string): CodeAnalysis {
   const imports: CodeImport[] = [];
   const draftSymbols: DraftCodeSymbol[] = [];
   const exportLabels: string[] = [];
 
-  for (const child of rootNode.namedChildren) {
-    if (!child) {
-      continue;
+  // Use descendantsOfType rather than direct children so scripts that trip the
+  // tree-sitter-bash grammar (e.g. zsh dialect constructs wrapped in ERROR nodes)
+  // still surface their commands and function definitions.
+  const commandNodes = rootNode.descendantsOfType("command").filter((node): node is TreeNode => node !== null);
+  for (const command of commandNodes) {
+    const parsed = parseBashImport(command);
+    if (parsed) {
+      imports.push(parsed);
     }
-    if (child.type === "command") {
-      const parsed = parseBashImport(child);
-      if (parsed) {
-        imports.push(parsed);
-      }
-      continue;
-    }
-    if (child.type !== "function_definition") {
-      continue;
-    }
+  }
+  const functionNodes = rootNode.descendantsOfType("function_definition").filter((node): node is TreeNode => node !== null);
+  const functionByName = new Map<string, TreeNode>();
+  for (const child of functionNodes) {
     const name = nodeText(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null).trim();
     if (!name) {
       continue;
@@ -1656,18 +1769,54 @@ function bashCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
       bodyText: nodeText(child.childForFieldName("body") ?? findNamedChild(child, "compound_statement"))
     });
     exportLabels.push(name);
+    if (!functionByName.has(name)) {
+      functionByName.set(name, child);
+    }
   }
 
   for (let index = 0; index < draftSymbols.length; index += 1) {
-    const functionNode = rootNode.namedChildren.find(
-      (child) =>
-        child?.type === "function_definition" &&
-        nodeText(child.childForFieldName("name") ?? child.namedChildren.at(0) ?? null).trim() === draftSymbols[index]?.name
-    );
-    draftSymbols[index]!.callNames = bashCallNamesFromBody(
+    const symbol = draftSymbols[index]!;
+    const functionNode = functionByName.get(symbol.name);
+    symbol.callNames = bashCallNamesFromBody(
       functionNode?.childForFieldName("body") ?? findNamedChild(functionNode, "compound_statement"),
-      draftSymbols[index]!.name
+      symbol.name
     );
+  }
+
+  // Fallback: if the tree-sitter parse recovered no functions at all — typically
+  // when a zsh-only construct earlier in the file wrapped everything in an ERROR
+  // node — scan the raw content for POSIX function definitions. This is the
+  // escape hatch we reach when there is no parser available for the dialect:
+  // extracting function names via a bounded line-anchored match preserves the
+  // function edges in the graph. It mirrors how `interpreterFromShebang` already
+  // uses a bounded text check for dialect detection.
+  if (draftSymbols.length === 0 && rawContent) {
+    const seen = new Set<string>();
+    for (const line of rawContent.split("\n")) {
+      const trimmed = line.trimStart();
+      // `function name` or `function name()` style
+      let match = trimmed.match(/^function\s+([A-Za-z_][\w-]*)\s*(?:\(\))?/);
+      if (!match) {
+        // `name()` style
+        match = trimmed.match(/^([A-Za-z_][\w-]*)\s*\(\)/);
+      }
+      const name = match?.[1];
+      if (!name || seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      draftSymbols.push({
+        name,
+        kind: "function",
+        signature: singleLineSignature(trimmed),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: ""
+      });
+      exportLabels.push(name);
+    }
   }
 
   return finalizeCodeAnalysis(manifest, "bash", imports, draftSymbols, exportLabels, diagnostics);
@@ -2516,7 +2665,27 @@ function csharpCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagno
     if (child.type === "file_scoped_namespace_declaration" || child.type === "namespace_declaration") {
       namespaceName = nodeText(child.childForFieldName("name")) || namespaceName;
       if (child.type === "namespace_declaration") {
-        for (const nested of child.namedChildren) {
+        // Block-style namespaces wrap their members in a `declaration_list` child;
+        // file-scoped namespaces put members directly at the compilation_unit level
+        // and never reach this branch. Flatten one layer of `declaration_list` so
+        // top-level classes are still discovered.
+        const nameNode = child.childForFieldName("name");
+        const namespaceMembers: TreeNode[] = [];
+        for (const directChild of child.namedChildren) {
+          if (!directChild || directChild === nameNode) {
+            continue;
+          }
+          if (directChild.type === "declaration_list") {
+            for (const inner of directChild.namedChildren) {
+              if (inner) {
+                namespaceMembers.push(inner);
+              }
+            }
+            continue;
+          }
+          namespaceMembers.push(directChild);
+        }
+        for (const nested of namespaceMembers) {
           if (nested && nested !== child.childForFieldName("name")) {
             // Top-level declarations inside block namespaces still belong to the file namespace.
             if (
@@ -2870,6 +3039,1498 @@ function powershellCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, di
   return finalizeCodeAnalysis(manifest, "powershell", imports, draftSymbols, exportLabels, diagnostics);
 }
 
+// tree-sitter-swift exposes the `import` specifier as a single `identifier`
+// named child whose text is the dotted module path (e.g. "Foundation" or
+// "struct.Foo.Bar" when sub-item imports like `import struct Foo.Bar` are used).
+// Reading that child's text directly avoids re-joining segments via descendant
+// walks.
+function parseSwiftImport(node: TreeNode): CodeImport | undefined {
+  const identifierNode = findNamedChild(node, "identifier");
+  if (!identifierNode) {
+    return undefined;
+  }
+  const specifier = identifierNode.text.trim();
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    // Swift does not have file-local relative imports; every `import` references
+    // an external module (Foundation, UIKit, a SwiftPM package product, or the
+    // current target's own module). Mark them all as external so the dependency
+    // aggregator groups them with other package-level graph edges.
+    isExternal: true,
+    reExport: false
+  };
+}
+
+// Walk the anonymous keyword children of a `class_declaration` to find whether
+// the declaration uses `class`, `struct`, or `enum`. tree-sitter-swift exposes
+// each of these as a plain child whose `type` equals the keyword text — no
+// regex or text inspection required.
+function swiftDeclarationKindFromKeyword(node: TreeNode): CodeSymbolKind {
+  for (const child of node.children) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "struct") {
+      return "struct";
+    }
+    if (child.type === "enum") {
+      return "enum";
+    }
+    if (child.type === "class") {
+      return "class";
+    }
+  }
+  return "class";
+}
+
+// Swift visibility is expressed as a `modifiers` child containing a
+// `visibility_modifier`, whose innermost child carries the concrete keyword
+// (public / private / fileprivate / internal / open). Missing visibility means
+// `internal`, which Swift treats as module-accessible. For the SwarmVault
+// graph's "exported" flag we treat everything except `private` and
+// `fileprivate` as exported.
+function swiftVisibilityKeyword(node: TreeNode): string | undefined {
+  const modifiers = findNamedChild(node, "modifiers");
+  if (!modifiers) {
+    return undefined;
+  }
+  const visibility = findNamedChild(modifiers, "visibility_modifier");
+  if (!visibility) {
+    return undefined;
+  }
+  for (const kw of visibility.children) {
+    if (!kw) {
+      continue;
+    }
+    if (kw.type === "public" || kw.type === "private" || kw.type === "fileprivate" || kw.type === "internal" || kw.type === "open") {
+      return kw.type;
+    }
+  }
+  return undefined;
+}
+
+function swiftExported(node: TreeNode): boolean {
+  const visibility = swiftVisibilityKeyword(node);
+  return visibility !== "private" && visibility !== "fileprivate";
+}
+
+function swiftCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  // tree-sitter-swift exposes inherited types as a SEQUENCE of sibling
+  // `inheritance_specifier` children on the declaration (one per comma-separated
+  // parent), rather than a single specifier wrapping all of them. Walk every
+  // such child and collect the parent type in declaration order so downstream
+  // code can split the first entry (superclass) from the rest (protocols).
+  const recordParentTypes = (declaration: TreeNode): string[] => {
+    const specifiers = declaration.namedChildren.filter((item): item is TreeNode => item?.type === "inheritance_specifier");
+    if (specifiers.length === 0) {
+      return [];
+    }
+    const ordered: string[] = [];
+    for (const specifier of specifiers) {
+      // Prefer the specifier's direct named child (`user_type` or `type_identifier`)
+      // so nested generic parameters don't leak additional type names into the
+      // parent list.
+      const primary =
+        findNamedChild(specifier, "user_type") ??
+        findNamedChild(specifier, "type_identifier") ??
+        specifier.namedChildren.find((item): item is TreeNode => item !== null) ??
+        null;
+      if (!primary) {
+        continue;
+      }
+      const name = normalizeSymbolReference(primary.text);
+      if (name) {
+        ordered.push(name);
+      }
+    }
+    return uniqueBy(ordered, (item) => item);
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+
+    if (child.type === "import_declaration") {
+      const parsed = parseSwiftImport(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+
+    if (child.type === "protocol_declaration") {
+      const name = extractIdentifier(findNamedChild(child, "type_identifier"));
+      if (!name) {
+        continue;
+      }
+      const parents = recordParentTypes(child);
+      const exported = swiftExported(child);
+      draftSymbols.push({
+        name,
+        kind: "interface",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: parents,
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(child, "protocol_body")) || child.text
+      });
+      if (exported) {
+        exportLabels.push(name);
+      }
+      continue;
+    }
+
+    if (child.type === "class_declaration") {
+      const name = extractIdentifier(findNamedChild(child, "type_identifier"));
+      if (!name) {
+        continue;
+      }
+      const kind = swiftDeclarationKindFromKeyword(child);
+      // Swift class declarations list a single superclass followed by zero or
+      // more protocol conformances, all inside `inheritance_specifier`. The
+      // grammar does not label which entry is the superclass, so we apply the
+      // Swift language rule: only the first type is eligible to be a concrete
+      // superclass, and only when the declaration is a class. Structs and enums
+      // have no superclass, so every parent type is a protocol conformance.
+      const parentTypes = recordParentTypes(child);
+      const extendsNames = kind === "class" && parentTypes.length > 0 ? [parentTypes[0]!] : [];
+      const implementsNames = kind === "class" ? parentTypes.slice(1) : parentTypes;
+      const exported = swiftExported(child);
+      const body = findNamedChild(child, "class_body") ?? findNamedChild(child, "enum_class_body");
+      draftSymbols.push({
+        name,
+        kind,
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames,
+        implementsNames,
+        bodyText: nodeText(body) || child.text
+      });
+      if (exported) {
+        exportLabels.push(name);
+      }
+      continue;
+    }
+
+    if (child.type === "typealias_declaration") {
+      const name = extractIdentifier(findNamedChild(child, "type_identifier"));
+      if (!name) {
+        continue;
+      }
+      const exported = swiftExported(child);
+      draftSymbols.push({
+        name,
+        kind: "type_alias",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      if (exported) {
+        exportLabels.push(name);
+      }
+      continue;
+    }
+
+    if (child.type === "function_declaration") {
+      const name = extractIdentifier(findNamedChild(child, "simple_identifier") ?? findNamedChild(child, "identifier"));
+      if (!name) {
+        continue;
+      }
+      const exported = swiftExported(child);
+      draftSymbols.push({
+        name,
+        kind: "function",
+        signature: singleLineSignature(child.text),
+        exported,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(child, "function_body")) || child.text
+      });
+      if (exported) {
+        exportLabels.push(name);
+      }
+      continue;
+    }
+
+    if (child.type === "property_declaration") {
+      // Top-level `let`/`var` bindings become `variable` symbols. Tree-sitter
+      // exposes the binding's name via a `pattern` child containing a
+      // `simple_identifier`. A single declaration can bind multiple names
+      // (`var a, b: Int`); walk all pattern children to capture each one.
+      const exported = swiftExported(child);
+      const patterns = child.namedChildren.filter((item): item is TreeNode => item?.type === "pattern");
+      for (const pattern of patterns) {
+        const name = extractIdentifier(findNamedChild(pattern, "simple_identifier") ?? pattern.namedChildren[0] ?? null);
+        if (!name) {
+          continue;
+        }
+        draftSymbols.push({
+          name,
+          kind: "variable",
+          signature: singleLineSignature(child.text),
+          exported,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: child.text
+        });
+        if (exported) {
+          exportLabels.push(name);
+        }
+      }
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "swift", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+// Elixir's tree-sitter grammar is uniform: every top-level construct (`defmodule`,
+// `defprotocol`, `def`, `defp`, `alias`, `import`, etc.) is represented as a `call`
+// node whose first named child is an `identifier` holding the macro name, whose
+// second named child is an `arguments` node, and which may have a trailing
+// `do_block` for block-style forms. These helpers extract the pieces we care
+// about by walking named children directly — no regex, no text scans.
+
+function elixirCallIdentifier(callNode: TreeNode): string | undefined {
+  return findNamedChild(callNode, "identifier")?.text.trim() || undefined;
+}
+
+// Read a module path from an `arguments` node. Elixir module paths come through
+// the grammar as an `alias` node (e.g. `MyApp.Formatter`), but bare identifiers
+// (e.g. `Logger` in `require Logger`) may also appear as `alias` or `identifier`.
+// Walk the argument's named children in order and pick the first hit, matching
+// the first positional argument a reader would expect to be the module path.
+function elixirFirstModulePath(argumentsNode: TreeNode | null | undefined): string | undefined {
+  if (!argumentsNode) {
+    return undefined;
+  }
+  for (const child of argumentsNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "alias" || child.type === "identifier") {
+      const text = child.text.trim();
+      if (text) {
+        return text;
+      }
+    }
+  }
+  return undefined;
+}
+
+// Extract the function/macro name that a `def` / `defp` / `defmacro` / `defmacrop`
+// call defines. The `arguments` node's first child takes one of two shapes:
+//   1. A `call` whose identifier holds the name and whose own arguments hold the
+//      parameter list: `def foo(a, b) do ... end`.
+//   2. A bare `identifier`: `def foo, do: ...` or `def foo`.
+function elixirFunctionNameFromArguments(argumentsNode: TreeNode | null | undefined): string | undefined {
+  if (!argumentsNode) {
+    return undefined;
+  }
+  const first = argumentsNode.namedChildren.find((item): item is TreeNode => item !== null);
+  if (!first) {
+    return undefined;
+  }
+  if (first.type === "call") {
+    const inner = findNamedChild(first, "identifier");
+    return inner?.text.trim() || undefined;
+  }
+  if (first.type === "identifier") {
+    return first.text.trim() || undefined;
+  }
+  return undefined;
+}
+
+const ELIXIR_IMPORT_MACROS = new Set(["alias", "import", "require", "use"]);
+const ELIXIR_PUBLIC_DEF_MACROS = new Set(["def", "defmacro"]);
+const ELIXIR_PRIVATE_DEF_MACROS = new Set(["defp", "defmacrop"]);
+
+function elixirCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  // Elixir module names are chosen by the developer inside `defmodule Foo.Bar do`
+  // and do NOT mirror the filesystem layout the way Python or Rust modules do.
+  // Remember the first top-level module we encounter so we can plumb it through
+  // `finalizeCodeAnalysis` as the canonical moduleName; downstream import
+  // resolution relies on that string to match `alias Foo.Bar` against this file.
+  let primaryModuleName: string | undefined;
+
+  // Walk every top-level `call`. Elixir files typically contain one or more
+  // `defmodule`/`defprotocol` calls; everything else (top-level `alias`, bare
+  // expressions) lives inside those module bodies in real code.
+  for (const topCall of rootNode.namedChildren) {
+    if (!topCall || topCall.type !== "call") {
+      continue;
+    }
+    const macroName = elixirCallIdentifier(topCall);
+    if (macroName !== "defmodule" && macroName !== "defprotocol") {
+      continue;
+    }
+
+    const moduleArgs = findNamedChild(topCall, "arguments");
+    const moduleName = elixirFirstModulePath(moduleArgs);
+    if (!moduleName) {
+      continue;
+    }
+
+    const moduleKind: CodeSymbolKind = macroName === "defprotocol" ? "interface" : "class";
+    const moduleHeaderLine = topCall.text.split("\n")[0] ?? topCall.text;
+    if (primaryModuleName === undefined) {
+      primaryModuleName = moduleName;
+    }
+    draftSymbols.push({
+      name: moduleName,
+      kind: moduleKind,
+      signature: singleLineSignature(moduleHeaderLine),
+      // Modules and protocols are always module-level public in Elixir.
+      exported: true,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: topCall.text
+    });
+    exportLabels.push(moduleName);
+
+    const doBlock = findNamedChild(topCall, "do_block");
+    if (!doBlock) {
+      continue;
+    }
+
+    // Walk the module's `do_block` for the calls that matter to the graph:
+    // imports, function/macro definitions. Attribute calls (`@moduledoc`, `@doc`,
+    // `@type`, ...) surface as `unary_operator` nodes and are intentionally skipped
+    // here — the shared rationale walker picks them up separately via
+    // commentNodes(), and the `@type` declaration's own `call` lives under the
+    // operator where finalizeCodeAnalysis would not surface it in a useful way.
+    for (const innerNode of doBlock.namedChildren) {
+      if (!innerNode || innerNode.type !== "call") {
+        continue;
+      }
+      const innerMacro = elixirCallIdentifier(innerNode);
+      if (!innerMacro) {
+        continue;
+      }
+
+      if (ELIXIR_IMPORT_MACROS.has(innerMacro)) {
+        const importArgs = findNamedChild(innerNode, "arguments");
+        const modulePath = elixirFirstModulePath(importArgs);
+        if (!modulePath) {
+          continue;
+        }
+        imports.push({
+          specifier: modulePath,
+          importedSymbols: [],
+          // Elixir imports always target a compiled BEAM module; there is no
+          // notion of "file-local" relative imports the way Python or JS use them.
+          // Treat every entry as external.
+          isExternal: true,
+          reExport: false
+        });
+        continue;
+      }
+
+      if (ELIXIR_PUBLIC_DEF_MACROS.has(innerMacro) || ELIXIR_PRIVATE_DEF_MACROS.has(innerMacro)) {
+        const innerArgs = findNamedChild(innerNode, "arguments");
+        const fnName = elixirFunctionNameFromArguments(innerArgs);
+        if (!fnName) {
+          continue;
+        }
+        const qualifiedName = `${moduleName}.${fnName}`;
+        const exported = ELIXIR_PUBLIC_DEF_MACROS.has(innerMacro);
+        const headerLine = innerNode.text.split("\n")[0] ?? innerNode.text;
+        draftSymbols.push({
+          name: qualifiedName,
+          kind: "function",
+          signature: singleLineSignature(headerLine),
+          exported,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: nodeText(findNamedChild(innerNode, "do_block")) || innerNode.text
+        });
+        if (exported) {
+          exportLabels.push(qualifiedName);
+        }
+      }
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "elixir", imports, draftSymbols, exportLabels, diagnostics, {
+    moduleName: primaryModuleName
+  });
+}
+
+// OCaml top-level declarations come in a handful of well-named shapes. Each one
+// exposes its identifying name through an easily-discoverable child field:
+//   - `open_module`   contains a `module_path` whose text is the opened module.
+//   - `module_definition` wraps a `module_binding` with `module_name`.
+//   - `module_type_definition` exposes the interface name via `module_type_name`.
+//   - `type_definition` wraps a `type_binding` whose `type_constructor` child is the type name.
+//   - `value_definition` wraps a `let_binding` whose `value_name` child is the value name,
+//      with an optional `parameter` child that distinguishes function bindings
+//      from simple value bindings.
+// All helpers below walk named children directly; no regex, no text scraping.
+
+function parseOCamlOpen(node: TreeNode): CodeImport | undefined {
+  const modulePath = findNamedChild(node, "module_path");
+  if (!modulePath) {
+    return undefined;
+  }
+  const specifier = modulePath.text.trim();
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    // Every OCaml `open` references a compiled module; there is no file-local
+    // "./sibling" form. Classify as external and let resolveCodeImport's single-
+    // candidate short-circuit promote it to local when an alias matches.
+    isExternal: true,
+    reExport: false
+  };
+}
+
+function ocamlValueBindingKind(letBinding: TreeNode | null | undefined): CodeSymbolKind | undefined {
+  if (!letBinding) {
+    return undefined;
+  }
+  // `let foo x y = ...` → function (has parameter child)
+  // `let foo = value`   → variable (no parameter child)
+  // `let () = ...`      → unit binding, skipped upstream
+  const hasParameter = letBinding.namedChildren.some((child): child is TreeNode => child?.type === "parameter");
+  return hasParameter ? "function" : "variable";
+}
+
+function ocamlTypeKind(typeBinding: TreeNode | null | undefined): CodeSymbolKind {
+  if (!typeBinding) {
+    return "type_alias";
+  }
+  // `type t = { ... }`          -> record_declaration child  -> struct
+  // `type t = Foo | Bar`        -> variant_declaration child -> enum
+  // `type t = another_type`      -> no structural child      -> type_alias
+  for (const child of typeBinding.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "record_declaration") {
+      return "struct";
+    }
+    if (child.type === "variant_declaration") {
+      return "enum";
+    }
+  }
+  return "type_alias";
+}
+
+function ocamlCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+
+    if (child.type === "open_module") {
+      const parsed = parseOCamlOpen(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+
+    if (child.type === "module_definition") {
+      // tree-sitter-ocaml exposes `module_name`, `module_type_name`, and
+      // `type_constructor` as terminal-ish nodes whose text IS the identifier
+      // we want. extractIdentifier's allowed-type list does not cover these
+      // OCaml-specific node names, so read the text directly instead of
+      // recursing. The text has already been lexed by the parser — no regex.
+      const binding = findNamedChild(child, "module_binding");
+      const moduleNameNode = binding ? findNamedChild(binding, "module_name") : null;
+      const name = moduleNameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      draftSymbols.push({
+        name,
+        kind: "class",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        // OCaml's `let`/`module` bindings are exported from the containing
+        // compilation unit unless an explicit `.mli` interface hides them.
+        // Treat everything defined in a `.ml` file as exported; consumers who
+        // want hiding should rely on the downstream interface-file merge.
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(binding, "structure")) || child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "module_type_definition") {
+      const nameNode = findNamedChild(child, "module_type_name");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      draftSymbols.push({
+        name,
+        kind: "interface",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(child, "signature")) || child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "type_definition") {
+      const binding = findNamedChild(child, "type_binding");
+      const typeConstructorNode = binding ? findNamedChild(binding, "type_constructor") : null;
+      const name = typeConstructorNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      const kind = ocamlTypeKind(binding);
+      draftSymbols.push({
+        name,
+        kind,
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "value_definition") {
+      const binding = findNamedChild(child, "let_binding");
+      if (!binding) {
+        continue;
+      }
+      const valueNameNode = findNamedChild(binding, "value_name");
+      const name = valueNameNode?.text.trim();
+      if (!name) {
+        // Skip bindings with no name (e.g. `let () = ...` unit-pattern entry points).
+        continue;
+      }
+      const kind = ocamlValueBindingKind(binding) ?? "function";
+      draftSymbols.push({
+        name,
+        kind,
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "ocaml", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+// tree-sitter-objc exposes Objective-C top-level declarations through a small
+// handful of shapes:
+//   - preproc_include          (#import / #include) — parseCppInclude already
+//     handles both `<system/Header.h>` and `"LocalHeader.h"` variants.
+//   - protocol_declaration     @protocol Name <Parent1, Parent2> ... @end
+//   - class_interface          @interface Name : Super <Protocols> ... @end
+//   - class_implementation     @implementation Name ... @end
+//   - function_definition      C-style free functions returning objc types
+//
+// Every named-thing-carrying node exposes its identifier as a plain `identifier`
+// named child (not wrapped in a synthetic "name" field), so we walk named
+// children directly. Parent classes and conformed protocols are found by
+// inspecting the second `identifier` child (for @interface) and any
+// `parameterized_arguments > type_name` descendants.
+function objcCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  // An Objective-C file can legally contain BOTH `@interface Foo` and
+  // `@implementation Foo` for the same class. When both are present, we only
+  // emit the `@interface` entry (which captures the superclass + protocol list)
+  // and skip the matching `@implementation` so the graph doesn't end up with
+  // two different `symbol:id:foo` / `symbol:id:foo-2` entries for one class.
+  const declaredClassNames = new Set<string>();
+
+  // C-style function declarators return the name through recursively nested
+  // `declarator` fields when the return type includes pointer qualifiers like
+  // `NSString *formatName(...)`. This mirrors the helper used in cFamilyCodeAnalysis.
+  const functionNameFromDeclarator = (node: TreeNode | null | undefined): string | undefined => {
+    if (!node) {
+      return undefined;
+    }
+    const declarator = node.childForFieldName("declarator");
+    if (declarator) {
+      return functionNameFromDeclarator(declarator);
+    }
+    return extractIdentifier(node);
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+
+    if (child.type === "preproc_include") {
+      const parsed = parseCppInclude(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+
+    if (child.type === "protocol_declaration") {
+      const nameNode = findNamedChild(child, "identifier");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      // Parent protocols live inside `protocol_reference_list` as `identifier`
+      // children, separated by anonymous `,` tokens.
+      const refList = findNamedChild(child, "protocol_reference_list");
+      const parents = refList
+        ? uniqueBy(
+            refList.namedChildren
+              .filter((item): item is TreeNode => item?.type === "identifier")
+              .map((item) => item.text.trim())
+              .filter(Boolean),
+            (item) => item
+          )
+        : [];
+      draftSymbols.push({
+        name,
+        kind: "interface",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: parents,
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "class_interface") {
+      // The identifier children of `class_interface` are ordered: class name,
+      // then superclass (if any) — `@interface Name : Super`. The `:` between
+      // them is an anonymous token so it does not shift the named-child index.
+      const identifierChildren = child.namedChildren.filter((item): item is TreeNode => item?.type === "identifier");
+      const name = identifierChildren[0]?.text.trim();
+      if (!name) {
+        continue;
+      }
+      const superclass = identifierChildren[1]?.text.trim();
+      // Conformed protocols live inside `parameterized_arguments` as `type_name`
+      // children (or plain `identifier` for some grammar variants).
+      const parameterized = findNamedChild(child, "parameterized_arguments");
+      const protocols = parameterized
+        ? uniqueBy(
+            parameterized.namedChildren
+              .filter((item): item is TreeNode => item?.type === "type_name" || item?.type === "identifier")
+              .map((item) => item.text.trim())
+              .filter(Boolean),
+            (item) => item
+          )
+        : [];
+      declaredClassNames.add(name);
+      draftSymbols.push({
+        name,
+        kind: "class",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: superclass ? [superclass] : [],
+        implementsNames: protocols,
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "class_implementation") {
+      const nameNode = findNamedChild(child, "identifier");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      // Skip the duplicate if the same class was already declared via
+      // `@interface` in this file.
+      if (declaredClassNames.has(name)) {
+        continue;
+      }
+      declaredClassNames.add(name);
+      draftSymbols.push({
+        name,
+        kind: "class",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "function_definition") {
+      const name = functionNameFromDeclarator(child.childForFieldName("declarator"));
+      if (!name) {
+        continue;
+      }
+      draftSymbols.push({
+        name,
+        kind: "function",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(child.childForFieldName("body")) || child.text
+      });
+      exportLabels.push(name);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "objc", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+// tree-sitter-rescript top-level shape:
+//   - open_statement         `open ModuleName` — `module_identifier` child has the path
+//   - module_declaration     `module Name = { ... }` — `module_binding` child wraps
+//                            `module_identifier` (name) + `block` body
+//   - type_declaration       `type foo = ...` — `type_binding` child has
+//                            `type_identifier` (name) + optional `variant_type` /
+//                            `record_type` subchild that disambiguates the kind
+//   - let_declaration        `let name = expr` — `let_binding` child has
+//                            `value_identifier` (name) + an expression; when that
+//                            expression is a `function` node the binding is a
+//                            function, otherwise it is a plain value.
+function rescriptCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  const rescriptTypeKind = (typeBinding: TreeNode | null | undefined): CodeSymbolKind => {
+    if (!typeBinding) {
+      return "type_alias";
+    }
+    for (const child of typeBinding.namedChildren) {
+      if (!child) {
+        continue;
+      }
+      if (child.type === "variant_type") {
+        return "enum";
+      }
+      if (child.type === "record_type") {
+        return "struct";
+      }
+    }
+    return "type_alias";
+  };
+
+  const rescriptLetBindingKind = (letBinding: TreeNode | null | undefined): CodeSymbolKind => {
+    if (!letBinding) {
+      return "variable";
+    }
+    // The binding's RHS is the last named child after `value_identifier` and
+    // `=`. A `function` node marks the binding as a function definition.
+    for (const child of letBinding.namedChildren) {
+      if (child?.type === "function") {
+        return "function";
+      }
+    }
+    return "variable";
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+
+    if (child.type === "open_statement") {
+      const identNode = findNamedChild(child, "module_identifier");
+      const specifier = identNode?.text.trim();
+      if (!specifier) {
+        continue;
+      }
+      imports.push({
+        specifier,
+        importedSymbols: [],
+        // ReScript modules resolve through the build system's own module graph;
+        // they are never file-local in the Python "./relative" sense.
+        isExternal: true,
+        reExport: false
+      });
+      continue;
+    }
+
+    if (child.type === "module_declaration") {
+      const binding = findNamedChild(child, "module_binding");
+      const nameNode = binding ? findNamedChild(binding, "module_identifier") : null;
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      draftSymbols.push({
+        name,
+        kind: "class",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(binding, "block")) || child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "type_declaration") {
+      const binding = findNamedChild(child, "type_binding");
+      const nameNode = binding ? findNamedChild(binding, "type_identifier") : null;
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      const kind = rescriptTypeKind(binding);
+      draftSymbols.push({
+        name,
+        kind,
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "let_declaration") {
+      const binding = findNamedChild(child, "let_binding");
+      const nameNode = binding ? findNamedChild(binding, "value_identifier") : null;
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      const kind = rescriptLetBindingKind(binding);
+      draftSymbols.push({
+        name,
+        kind,
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "rescript", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+// tree-sitter-solidity top-level shape:
+//   - pragma_directive        pragma solidity ^0.8.20;
+//   - import_directive        import "./Foo.sol";  OR
+//                             import {Name} from "./Foo.sol"; (with identifier
+//                             children for each imported symbol and a `string`
+//                             child for the path)
+//   - interface_declaration   interface Name { ... }        -> kind: interface
+//   - library_declaration     library Name { ... }          -> kind: class
+//   - contract_declaration    contract Name is A, B { ... } -> kind: class,
+//                             inheritance_specifier children under an `is` token
+//                             carry the parent contracts as `user_defined_type`
+//   - struct_declaration      struct Name { ... }           -> kind: struct
+//   - enum_declaration        enum Name { ... }             -> kind: enum
+// Solidity supports genuine multiple inheritance (`contract C is A, B, C`), so
+// we emit every parent as an `implementsNames` entry rather than arbitrarily
+// picking the first as `extends` the way Swift/OCaml-ish languages do. This
+// keeps the graph edges honest about the language's real semantics.
+function parseSolidityImport(node: TreeNode): CodeImport[] {
+  const stringNode = node.namedChildren.find((item): item is TreeNode => item?.type === "string");
+  if (!stringNode) {
+    return [];
+  }
+  // tree-sitter-solidity's `string` node text retains its surrounding quotes.
+  // quotedPath strips the outer `"` / `'` and any whitespace.
+  const specifier = quotedPath(stringNode.text);
+  if (!specifier) {
+    return [];
+  }
+  const importedSymbols = uniqueBy(
+    node.namedChildren
+      .filter((item): item is TreeNode => item?.type === "identifier")
+      .map((item) => item.text.trim())
+      .filter(Boolean),
+    (item) => item
+  );
+  // Solidity file imports use relative paths (`./Foo.sol`, `../lib/Bar.sol`) for
+  // local-within-repo targets and either absolute paths (`/abs/...`) or bare
+  // package references (`@openzeppelin/contracts/...`) for third-party code.
+  const isLocal = specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/");
+  return [
+    {
+      specifier,
+      importedSymbols,
+      isExternal: !isLocal,
+      reExport: false
+    }
+  ];
+}
+
+function solidityCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+
+  const collectParents = (declaration: TreeNode): string[] => {
+    const specifiers = declaration.namedChildren.filter((item): item is TreeNode => item?.type === "inheritance_specifier");
+    const names: string[] = [];
+    for (const specifier of specifiers) {
+      for (const node of specifier.namedChildren) {
+        if (node && (node.type === "user_defined_type" || node.type === "identifier")) {
+          const text = normalizeSymbolReference(node.text);
+          if (text) {
+            names.push(text);
+          }
+        }
+      }
+    }
+    return uniqueBy(names, (item) => item);
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+
+    if (child.type === "import_directive") {
+      for (const parsed of parseSolidityImport(child)) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+
+    if (child.type === "interface_declaration") {
+      const nameNode = findNamedChild(child, "identifier");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      const parents = collectParents(child);
+      draftSymbols.push({
+        name,
+        kind: "interface",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: parents,
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(child, "contract_body")) || child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "library_declaration" || child.type === "contract_declaration") {
+      const nameNode = findNamedChild(child, "identifier");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      const parents = child.type === "contract_declaration" ? collectParents(child) : [];
+      draftSymbols.push({
+        name,
+        kind: "class",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        // Solidity supports multiple inheritance; list every parent contract
+        // as a `implements` edge rather than arbitrarily promoting one to
+        // `extends`.
+        implementsNames: parents,
+        bodyText: nodeText(findNamedChild(child, "contract_body")) || child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "struct_declaration") {
+      const nameNode = findNamedChild(child, "identifier");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      draftSymbols.push({
+        name,
+        kind: "struct",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "enum_declaration") {
+      const nameNode = findNamedChild(child, "identifier");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      draftSymbols.push({
+        name,
+        kind: "enum",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: child.text
+      });
+      exportLabels.push(name);
+      continue;
+    }
+
+    if (child.type === "function_definition") {
+      // Top-level free functions (Solidity 0.7+).
+      const nameNode = findNamedChild(child, "identifier");
+      const name = nameNode?.text.trim();
+      if (!name) {
+        continue;
+      }
+      draftSymbols.push({
+        name,
+        kind: "function",
+        signature: singleLineSignature(child.text.split("\n")[0] ?? child.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: nodeText(findNamedChild(child, "function_body")) || child.text
+      });
+      exportLabels.push(name);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "solidity", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+// tree-sitter-html's tree is structural (nested `element` nodes, `attribute`
+// children with `attribute_name` + `quoted_attribute_value`). For SwarmVault
+// purposes HTML files are mostly not "code" in the symbol-extraction sense, so
+// we focus on two graph-useful signals:
+//   1. Imports: `<link rel="stylesheet" href="./x.css">` and `<script src="./y.js">`
+//      point at first-party sibling assets and should become import edges.
+//   2. Symbols: custom elements (tag names containing a `-`, e.g.
+//      `<my-widget>`) and elements carrying an `id="..."` attribute become
+//      class-kind symbols so the graph has named anchors to reason about.
+// Plain structural tags (`<div>`, `<p>`, ...) are intentionally NOT emitted to
+// keep the graph from drowning in structural noise.
+
+function htmlAttributeValue(attribute: TreeNode): string | undefined {
+  // An `attribute` node's second named child is either `quoted_attribute_value`
+  // (double- or single-quoted) or `attribute_value` (unquoted). Both expose
+  // their content as a `string_content`/`attribute_value_content` or as a
+  // child whose text IS the content (with quotes already consumed).
+  const quoted = attribute.namedChildren.find((c): c is TreeNode => c?.type === "quoted_attribute_value");
+  if (quoted) {
+    const inner = quoted.namedChildren.find((c): c is TreeNode => c?.type === "attribute_value");
+    if (inner) {
+      return inner.text.trim();
+    }
+    // Fall back to stripping the outer quote characters from the full node
+    // text. The parser has already delimited the node so slicing off the first
+    // and last char is safe.
+    const raw = quoted.text;
+    if (raw.length >= 2 && (raw[0] === '"' || raw[0] === "'")) {
+      return raw.slice(1, -1).trim();
+    }
+    return raw.trim();
+  }
+  const bare = attribute.namedChildren.find((c): c is TreeNode => c?.type === "attribute_value");
+  return bare?.text.trim();
+}
+
+function htmlAttributesOf(element: TreeNode): Map<string, string> {
+  const out = new Map<string, string>();
+  const startTag = findNamedChild(element, "start_tag") ?? findNamedChild(element, "self_closing_tag");
+  if (!startTag) {
+    return out;
+  }
+  for (const child of startTag.namedChildren) {
+    if (!child || child.type !== "attribute") {
+      continue;
+    }
+    const nameNode = findNamedChild(child, "attribute_name");
+    const name = nameNode?.text.trim().toLowerCase();
+    if (!name) {
+      continue;
+    }
+    const value = htmlAttributeValue(child);
+    if (value !== undefined) {
+      out.set(name, value);
+    }
+  }
+  return out;
+}
+
+function htmlTagName(element: TreeNode): string | undefined {
+  const startTag = findNamedChild(element, "start_tag") ?? findNamedChild(element, "self_closing_tag") ?? null;
+  if (!startTag) {
+    return undefined;
+  }
+  return findNamedChild(startTag, "tag_name")?.text.trim().toLowerCase();
+}
+
+function htmlCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const seenSymbolNames = new Set<string>();
+
+  const isLocalAssetSpecifier = (specifier: string): boolean => {
+    if (!specifier) {
+      return false;
+    }
+    if (specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/")) {
+      return true;
+    }
+    if (specifier.startsWith("http://") || specifier.startsWith("https://") || specifier.startsWith("//")) {
+      return false;
+    }
+    // Bare `widget.js` — treat as local repo-relative sibling.
+    return !specifier.includes(":");
+  };
+
+  // Walk every element and script_element descendant once. For large HTML
+  // documents this can be many nodes, but the grammar tree is small relative
+  // to the source, and we filter aggressively to emit only graph-useful items.
+  const elements = rootNode
+    .descendantsOfType(["element", "script_element", "style_element"])
+    .filter((item): item is TreeNode => item !== null);
+
+  for (const element of elements) {
+    const attrs = htmlAttributesOf(element);
+    const tagName = htmlTagName(element);
+
+    // Imports from <link rel="stylesheet" href="...">
+    if (tagName === "link") {
+      const rel = attrs.get("rel");
+      const href = attrs.get("href");
+      if (rel === "stylesheet" && href) {
+        imports.push({
+          specifier: href,
+          importedSymbols: [],
+          isExternal: !isLocalAssetSpecifier(href),
+          reExport: false
+        });
+      }
+      continue;
+    }
+
+    // Imports from <script src="...">
+    if (element.type === "script_element") {
+      const src = attrs.get("src");
+      if (src) {
+        imports.push({
+          specifier: src,
+          importedSymbols: [],
+          isExternal: !isLocalAssetSpecifier(src),
+          reExport: false
+        });
+      }
+      continue;
+    }
+
+    // Symbols: custom elements (tag name contains `-`) become class-kind symbols.
+    if (tagName && tagName.includes("-")) {
+      if (!seenSymbolNames.has(tagName)) {
+        seenSymbolNames.add(tagName);
+        draftSymbols.push({
+          name: tagName,
+          kind: "class",
+          signature: singleLineSignature(element.text.split("\n")[0] ?? element.text),
+          exported: true,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: element.text
+        });
+        exportLabels.push(tagName);
+      }
+    }
+
+    // Symbols: any element with an id attribute becomes a variable-kind symbol
+    // (a named anchor in the document), regardless of tag name.
+    const id = attrs.get("id");
+    if (id && !seenSymbolNames.has(id)) {
+      seenSymbolNames.add(id);
+      draftSymbols.push({
+        name: id,
+        kind: "variable",
+        signature: singleLineSignature(element.text.split("\n")[0] ?? element.text),
+        exported: true,
+        callNames: [],
+        extendsNames: [],
+        implementsNames: [],
+        bodyText: element.text
+      });
+      exportLabels.push(id);
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "html", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+// tree-sitter-css top-level shape:
+//   - import_statement   `@import "path.css";` or `@import url("path.css");`
+//                        The path lives in a `string_value` child of the
+//                        import_statement, or in a nested
+//                        `call_expression > arguments > string_value` when
+//                        `url(...)` form is used.
+//   - rule_set           Each CSS rule wraps `selectors` + `block`. We use the
+//                        `selectors` text as the symbol name and classify as
+//                        `class` kind — it's the closest match in the constrained
+//                        CodeSymbolKind set for "named-collection-of-rules".
+//   - keyframes_statement  `@keyframes name { ... }` — emit `name` as a class symbol.
+// Selectors inside `@media`/`@supports` blocks are intentionally not walked in
+// this first pass because they are wrapped in a separate `media_statement` node
+// and the rule set is nested one level deeper; supporting them is a follow-up.
+function parseCssImport(node: TreeNode): CodeImport | undefined {
+  // Direct form: `@import "./foo.css";` — string_value is a direct child.
+  const directString = node.namedChildren.find((c): c is TreeNode => c?.type === "string_value");
+  if (directString) {
+    const specifier = quotedPath(directString.text);
+    if (!specifier) {
+      return undefined;
+    }
+    return {
+      specifier,
+      importedSymbols: [],
+      isExternal: !(specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/")),
+      reExport: false
+    };
+  }
+  // url() form: `@import url("./foo.css");` — dig through call_expression.
+  const call = node.namedChildren.find((c): c is TreeNode => c?.type === "call_expression");
+  if (call) {
+    const args = findNamedChild(call, "arguments");
+    const stringNode = args?.namedChildren.find((c): c is TreeNode => c?.type === "string_value");
+    if (stringNode) {
+      const specifier = quotedPath(stringNode.text);
+      if (!specifier) {
+        return undefined;
+      }
+      return {
+        specifier,
+        importedSymbols: [],
+        isExternal: !(specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/")),
+        reExport: false
+      };
+    }
+  }
+  return undefined;
+}
+
+function cssCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const seenSymbols = new Set<string>();
+
+  const addSelectorSymbol = (name: string, ruleText: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || seenSymbols.has(trimmed)) {
+      return;
+    }
+    seenSymbols.add(trimmed);
+    draftSymbols.push({
+      name: trimmed,
+      kind: "class",
+      signature: singleLineSignature(ruleText.split("\n")[0] ?? ruleText),
+      exported: true,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: ruleText
+    });
+    exportLabels.push(trimmed);
+  };
+
+  for (const child of rootNode.namedChildren) {
+    if (!child) {
+      continue;
+    }
+
+    if (child.type === "import_statement") {
+      const parsed = parseCssImport(child);
+      if (parsed) {
+        imports.push(parsed);
+      }
+      continue;
+    }
+
+    if (child.type === "rule_set") {
+      const selectors = findNamedChild(child, "selectors");
+      if (!selectors) {
+        continue;
+      }
+      // Use the full selector text as the symbol name. tree-sitter-css already
+      // parsed it, so `normalizeWhitespace` collapses multi-line selectors to
+      // a single logical name without touching selector semantics.
+      const selectorText = normalizeWhitespace(selectors.text);
+      addSelectorSymbol(selectorText, child.text);
+      continue;
+    }
+
+    if (child.type === "keyframes_statement") {
+      // `@keyframes name { ... }` — the keyframe name is a plain identifier
+      // (type `keyframes_name` or `plain_value`) as a named child.
+      const nameNode = child.namedChildren.find((c): c is TreeNode => c?.type === "keyframes_name" || c?.type === "plain_value");
+      const name = nameNode?.text.trim();
+      if (name) {
+        addSelectorSymbol(`@keyframes ${name}`, child.text);
+      }
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "css", imports, draftSymbols, exportLabels, diagnostics);
+}
+
+// tree-sitter-vue's root is a `component` with direct children for
+// `script_element`, `template_element`, and `style_element`. Each section
+// exposes a `start_tag` (with attributes) and a `raw_text` payload for script
+// and style. Inside `template_element`, the element tree mirrors HTML's shape.
+//
+// For this first-pass adapter we:
+//   1. Emit a single class symbol whose name is the SFC basename (e.g.
+//      `Widget.vue` -> `Widget`) so downstream import-by-filename resolves.
+//   2. Walk elements inside the template for ids and PascalCase tag names
+//      (Vue's component-reference convention); those become variable and
+//      class symbols respectively.
+// We intentionally DO NOT attempt to nest-parse the script block's embedded
+// JS/TS here; that would require re-invoking the TypeScript analyzer on the
+// `raw_text`, which changes the shape of `analyzeTreeSitterCode` and is a
+// follow-up. The SFC is still classified as `vue` and contributes the
+// outer component symbol to the graph.
+function vueCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const seenSymbols = new Set<string>();
+
+  // SFC filename-derived component name. manifestBasename-like: take the
+  // original path's basename without extension.
+  const repoPath = manifest.repoRelativePath ?? path.basename(manifest.originalPath ?? manifest.storedPath);
+  const basename = path.posix.basename(stripCodeExtension(toPosix(repoPath)));
+  if (basename) {
+    seenSymbols.add(basename);
+    draftSymbols.push({
+      name: basename,
+      kind: "class",
+      signature: `vue component ${basename}`,
+      exported: true,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: rootNode.text
+    });
+    exportLabels.push(basename);
+  }
+
+  const templateElement = rootNode.namedChildren.find((c): c is TreeNode => c?.type === "template_element");
+  if (templateElement) {
+    const elements = templateElement.descendantsOfType(["element"]).filter((item): item is TreeNode => item !== null);
+    for (const element of elements) {
+      const tagName = htmlTagName(element);
+      const attrs = htmlAttributesOf(element);
+
+      // Vue custom-component convention: tag names start with uppercase
+      // (PascalCase). We can detect that from the original (case-sensitive)
+      // tag_name text rather than the lowercased helper result.
+      const startTag = findNamedChild(element, "start_tag") ?? findNamedChild(element, "self_closing_tag") ?? null;
+      const rawTagName = startTag ? findNamedChild(startTag, "tag_name")?.text.trim() : undefined;
+      if (rawTagName && /^[A-Z]/.test(rawTagName) && !seenSymbols.has(rawTagName)) {
+        seenSymbols.add(rawTagName);
+        draftSymbols.push({
+          name: rawTagName,
+          kind: "class",
+          signature: singleLineSignature(element.text.split("\n")[0] ?? element.text),
+          exported: true,
+          callNames: [],
+          extendsNames: [],
+          implementsNames: [],
+          bodyText: element.text
+        });
+        exportLabels.push(rawTagName);
+      }
+
+      // Non-custom elements with id="..." become variable symbols (stable
+      // anchors inside the template).
+      if (tagName && !tagName.includes("-") && !(rawTagName && /^[A-Z]/.test(rawTagName))) {
+        const id = attrs.get("id");
+        if (id && !seenSymbols.has(id)) {
+          seenSymbols.add(id);
+          draftSymbols.push({
+            name: id,
+            kind: "variable",
+            signature: singleLineSignature(element.text.split("\n")[0] ?? element.text),
+            exported: true,
+            callNames: [],
+            extendsNames: [],
+            implementsNames: [],
+            bodyText: element.text
+          });
+          exportLabels.push(id);
+        }
+      }
+    }
+  }
+
+  return finalizeCodeAnalysis(manifest, "vue", imports, draftSymbols, exportLabels, diagnostics);
+}
+
 function cFamilyCodeAnalysis(
   manifest: SourceManifest,
   language: "c" | "cpp",
@@ -2969,16 +4630,40 @@ export async function analyzeTreeSitterCode(
   code: CodeAnalysis;
   rationales: SourceRationale[];
 }> {
+  // The vendored Swift grammar currently triggers multi-gigabyte V8 wasm
+  // compilation spikes on Node 24, which crashes local test and OSS-corpus
+  // runs before any actual Swift AST walk happens. Keep Swift on the
+  // documented "unsupported but graceful" path unless a caller explicitly
+  // opts in for local experimentation.
+  if (language === "swift" && !swiftTreeSitterEnabled()) {
+    return {
+      code: finalizeCodeAnalysis(manifest, language, [], [], [], [swiftTreeSitterDisabledDiagnostic()]),
+      rationales: []
+    };
+  }
+
+  // Preprocessor directives confuse tree-sitter-c / tree-sitter-cpp /
+  // tree-sitter-c-sharp when they interrupt a statement or expression. Neutralise
+  // them before parsing by always taking the first `#if` branch and blanking every
+  // directive line plus every line inside non-taken branches. Line numbers are
+  // preserved so any remaining diagnostics still point at the right source line.
+  const parseInput = language === "c" || language === "cpp" || language === "csharp" ? neutralizePreprocessorDirectives(content) : content;
   let tree: Tree | null = null;
   try {
     const module = await getTreeSitterModule();
     await ensureTreeSitterInit(module);
     const parser = new module.Parser();
     parser.setLanguage(await loadLanguage(language));
-    tree = parser.parse(content);
+    tree = parser.parse(parseInput);
   } catch (error) {
+    const diagnostic = treeSitterCompatibilityDiagnostic(language, error);
+    // Downgrade the known tree-sitter-bash initialisation flake so a single transient
+    // wasm failure on one shell script does not mark the whole source as broken.
+    if (language === "bash" && typeof diagnostic.message === "string" && diagnostic.message.includes("resolved is not a function")) {
+      diagnostic.category = "warning";
+    }
     return {
-      code: finalizeCodeAnalysis(manifest, language, [], [], [], [treeSitterCompatibilityDiagnostic(language, error)]),
+      code: finalizeCodeAnalysis(manifest, language, [], [], [], [diagnostic]),
       rationales: []
     };
   }
@@ -3013,11 +4698,28 @@ export async function analyzeTreeSitterCode(
     // and import walkers below still work against the corrupted tree because they find
     // nodes by type rather than by structural position, so the actual extraction stays
     // correct; only the grammar-level diagnostics are unreliable. Suppress them for Lua.
-    const diagnostics = language === "lua" ? [] : diagnosticsFromTree(tree.rootNode);
+    // Lua's tree-sitter grammar leaks wasm state across parses (see earlier fix) —
+    // suppress its diagnostics. For bash, suppress diagnostics whenever the source
+    // is actually zsh; tree-sitter-bash cannot parse zsh-only constructs but the
+    // descendant-type walkers still find functions and `source` edges correctly.
+    const suppressDiagnostics = language === "lua" || (language === "bash" && detectShellDialect(content) === "zsh");
+    const rawDiagnostics = suppressDiagnostics ? [] : diagnosticsFromTree(tree.rootNode);
+    // Tree-sitter grammars for C, C++, C#, and Bash have well-known gaps: C and C++
+    // don't run the preprocessor, so macro-prefixed declarations like
+    // `JSON_EXPORT struct foo *bar();` confuse the parser; tree-sitter-c-sharp
+    // doesn't handle several newer C# features (verbatim/interpolated strings in
+    // some positions, pattern-matching extensions); tree-sitter-bash cannot parse
+    // zsh at all. These grammar gaps produce "syntax errors" on code that actually
+    // compiles fine. Downgrade them from `error` to `warning` so users still see
+    // the signal that parsing was imperfect without the sources looking broken.
+    const grammarGappedLanguages: ReadonlySet<string> = new Set(["c", "cpp", "csharp", "bash"]);
+    const diagnostics = grammarGappedLanguages.has(language)
+      ? rawDiagnostics.map((d) => (d.category === "error" ? { ...d, category: "warning" as const } : d))
+      : rawDiagnostics;
     const rationales = extractTreeSitterRationales(manifest, language, tree.rootNode);
     switch (language) {
       case "bash":
-        return { code: bashCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+        return { code: bashCodeAnalysis(manifest, tree.rootNode, diagnostics, content), rationales };
       case "python":
         return { code: pythonCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "go":
@@ -3044,6 +4746,24 @@ export async function analyzeTreeSitterCode(
         return { code: rubyCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "powershell":
         return { code: powershellCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "swift":
+        return { code: swiftCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "elixir":
+        return { code: elixirCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "ocaml":
+        return { code: ocamlCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "objc":
+        return { code: objcCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "rescript":
+        return { code: rescriptCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "solidity":
+        return { code: solidityCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "html":
+        return { code: htmlCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "css":
+        return { code: cssCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "vue":
+        return { code: vueCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "c":
       case "cpp":
         return { code: cFamilyCodeAnalysis(manifest, language, tree.rootNode, diagnostics), rationales };
