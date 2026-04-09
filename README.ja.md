@@ -162,13 +162,17 @@ clawhub install swarmvault
 
 | Input | 拡張子 / ソース | 抽出方法 |
 |-------|-----------------|----------|
-| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | tree-sitter ベースの AST とモジュール解決 |
 | PDF | `.pdf` | ローカルでテキスト抽出 |
 | DOCX | `.docx` | ローカル抽出とメタデータ取得 |
+| EPUB 書籍 | `.epub` | ローカルで章ごとに分割し Markdown 化 |
+| データセット | `.csv .tsv` | ローカルで表形式サマリーと限定プレビューを生成 |
+| スプレッドシート | `.xlsx` | ローカルでブックとシートのプレビューを抽出 |
+| スライド | `.pptx` | ローカルでスライド本文とノートを抽出 |
 | HTML | `.html`, URLs | Readability + Turndown による Markdown 化 |
 | Images | `.png .jpg .webp` | Vision provider（設定されている場合） |
 | Research | arXiv, DOI, articles, X/Twitter | `swarmvault add` による正規化 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest と軽量な `.rst` 見出し正規化 |
+| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | tree-sitter ベースの AST とモジュール解決 |
 | Browser clips | inbox bundles | `inbox import` によるアセット書き換え済み Markdown |
 | Managed sources | ローカルディレクトリ、公開 GitHub リポジトリ root URL、docs ハブ URL | `swarmvault source add` によるレジストリ同期 |
 

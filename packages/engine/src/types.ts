@@ -46,7 +46,7 @@ export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
-export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "docx" | "binary" | "code";
+export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "docx" | "epub" | "csv" | "xlsx" | "pptx" | "binary" | "code";
 export type SourceCaptureType = "arxiv" | "doi" | "tweet" | "article" | "url";
 export type SourceClass = "first_party" | "third_party" | "resource" | "generated";
 export type ManagedSourceKind = "directory" | "github_repo" | "crawl_url";
@@ -257,7 +257,16 @@ export interface SourceAttachment {
   originalPath?: string;
 }
 
-export type ExtractionKind = "plain_text" | "html_readability" | "pdf_text" | "docx_text" | "image_vision";
+export type ExtractionKind =
+  | "plain_text"
+  | "html_readability"
+  | "pdf_text"
+  | "docx_text"
+  | "epub_text"
+  | "csv_text"
+  | "xlsx_text"
+  | "pptx_text"
+  | "image_vision";
 
 export interface ExtractionTerm {
   name: string;
@@ -318,6 +327,16 @@ export interface DirectoryIngestResult {
   skipped: DirectoryIngestSkip[];
 }
 
+export interface InputIngestResult {
+  input: string;
+  scannedCount: number;
+  created: SourceManifest[];
+  updated: SourceManifest[];
+  unchanged: SourceManifest[];
+  removed: SourceManifest[];
+  skipped: DirectoryIngestSkip[];
+}
+
 export interface SourceManifest {
   sourceId: string;
   title: string;
@@ -336,6 +355,13 @@ export interface SourceManifest {
   mimeType: string;
   contentHash: string;
   semanticHash: string;
+  sourceGroupId?: string;
+  sourceGroupTitle?: string;
+  sourcePartKey?: string;
+  partIndex?: number;
+  partCount?: number;
+  partTitle?: string;
+  details?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
   attachments?: SourceAttachment[];

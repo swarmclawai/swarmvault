@@ -5,7 +5,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
-import { ingestInput, listManifests } from "./ingest.js";
+import { ingestInputDetailed, listManifests } from "./ingest.js";
 import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact } from "./types.js";
 import { fileExists, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
@@ -25,7 +25,7 @@ import {
   searchVault
 } from "./vault.js";
 
-const SERVER_VERSION = "0.2.2";
+const SERVER_VERSION = "0.3.0";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -218,8 +218,8 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
       }
     },
     async ({ input }) => {
-      const manifest = await ingestInput(rootDir, input);
-      return asToolText(manifest);
+      const result = await ingestInputDetailed(rootDir, input);
+      return asToolText(result);
     }
   );
 

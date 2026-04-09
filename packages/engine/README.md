@@ -186,17 +186,21 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `reloadManagedSources(rootDir, { id, all, compile, brief, maxPages, maxDepth })` re-syncs one managed source or the full registry
 - `deleteManagedSource(rootDir, id)` removes a managed-source registry entry and transient sync state without deleting canonical vault artifacts
 - `ingestInput(rootDir, input, { includeAssets, maxAssetSize })` ingests a local file path or URL
+- `ingestInputDetailed(rootDir, input, { includeAssets, maxAssetSize })` returns a summary envelope with `created`, `updated`, `unchanged`, and `removed` manifests when one input expands into multiple sources
 - `addInput(rootDir, input, { author, contributor })` captures supported URLs into normalized markdown before ingesting them, or falls back to generic URL ingest
 - `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore, extractClasses })` recursively ingests a local directory as a repo-aware code/content source tree
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files plus markdown and HTML browser-clipper style bundles
 - managed sources support local directories, public GitHub repo root URLs, and bounded same-domain docs hubs
 - registry data lives in `state/sources.json`, working state lives under `state/sources/<id>/`, and source briefs are written to `wiki/outputs/source-briefs/<id>.md`
+- EPUB inputs split into chapter-level manifests with shared group metadata so books stay navigable instead of becoming one giant source
+- CSV and TSV inputs produce bounded tabular summaries with delimiter-aware previews and compact column hints
+- XLSX inputs extract workbook-level and sheet-level previews, while PPTX inputs extract slide text plus speaker notes when present
 - JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
 - `.rst` and `.rest` inputs are treated as first-class text sources with lightweight heading and directive normalization before analysis
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
 - repo-aware manifests, graph nodes, and graph pages can also carry `sourceClass` so first-party, third-party, resource, and generated material can be filtered and reported separately
 - HTML and markdown URL ingests localize remote image references into `raw/assets/<sourceId>/` by default and rewrite the stored markdown to local relative paths
-- PDF and DOCX ingests now write extracted-text and metadata sidecars under `state/extracts/`, and image ingest keeps the same sidecar model for vision extraction
+- PDF, DOCX, EPUB, CSV/TSV, XLSX, and PPTX ingests write extracted-text and metadata sidecars under `state/extracts/`, and image ingest keeps the same sidecar model for vision extraction
 - Tree-sitter-backed languages now verify runtime and grammar compatibility per language; failures stay local to the affected source and surface as diagnostics instead of aborting the whole compile
 
 ### Compile + Query

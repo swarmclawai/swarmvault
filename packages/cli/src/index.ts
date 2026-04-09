@@ -18,7 +18,7 @@ import {
   getWatchStatus,
   importInbox,
   ingestDirectory,
-  ingestInput,
+  ingestInputDetailed,
   initVault,
   installAgent,
   installGitHooks,
@@ -60,9 +60,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.2.2";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.3.0";
   } catch {
-    return "0.2.2";
+    return "0.3.0";
   }
 }
 
@@ -200,11 +200,18 @@ program
         }
         return;
       }
-      const manifest = await ingestInput(process.cwd(), input, commonOptions);
+      const ingest = await ingestInputDetailed(process.cwd(), input, commonOptions);
       if (isJson()) {
-        emitJson(manifest);
+        emitJson(ingest);
       } else {
-        log(manifest.sourceId);
+        const primary = [...ingest.created, ...ingest.updated, ...ingest.unchanged][0];
+        if (ingest.created.length + ingest.updated.length + ingest.removed.length <= 1 && primary) {
+          log(primary.sourceId);
+        } else {
+          log(
+            `Created ${ingest.created.length}, updated ${ingest.updated.length}, unchanged ${ingest.unchanged.length}, removed ${ingest.removed.length}.`
+          );
+        }
       }
     }
   );

@@ -8,6 +8,7 @@ export {
   importInbox,
   ingestDirectory,
   ingestInput,
+  ingestInputDetailed,
   listManifests,
   listTrackedRepoRoots,
   readExtractedText,

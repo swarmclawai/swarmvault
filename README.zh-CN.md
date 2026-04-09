@@ -162,13 +162,17 @@ clawhub install swarmvault
 
 | 输入 | 扩展名 / 来源 | 提取方式 |
 |------|---------------|----------|
-| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | 基于 tree-sitter 的 AST 与模块解析 |
 | PDF | `.pdf` | 本地文本提取 |
 | DOCX | `.docx` | 本地提取与元数据捕获 |
+| EPUB 电子书 | `.epub` | 本地按章节拆分并转换为 Markdown |
+| 数据集 | `.csv .tsv` | 本地表格摘要与有限预览 |
+| 电子表格 | `.xlsx` | 本地工作簿与工作表预览提取 |
+| 幻灯片 | `.pptx` | 本地提取幻灯片文本与备注 |
 | HTML | `.html`、URL | Readability + Turndown 转 Markdown |
 | Images | `.png .jpg .webp` | Vision provider（已配置时） |
 | Research | arXiv、DOI、文章、X/Twitter | 通过 `swarmvault add` 标准化为 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
+| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | 基于 tree-sitter 的 AST 与模块解析 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 | Managed sources | 本地目录、公开 GitHub 仓库根 URL、文档中心 URL | 通过 `swarmvault source add` 的 registry 同步 |
 

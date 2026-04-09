@@ -13,9 +13,13 @@ import {
   buildExtractionHash,
   createHtmlReadabilityExtractionArtifact,
   createPlainTextExtractionArtifact,
+  extractCsvText,
   extractDocxText,
+  extractEpubChapters,
   extractImageWithVision,
-  extractPdfText
+  extractPdfText,
+  extractPptxText,
+  extractXlsxText
 } from "./extraction.js";
 import { appendLogEntry } from "./logs.js";
 import { classifyRepoPath, normalizeExtractClasses } from "./source-classification.js";
@@ -26,6 +30,7 @@ import type {
   DirectoryIngestResult,
   InboxImportResult,
   IngestOptions,
+  InputIngestResult,
   RepoSyncResult,
   ResolvedPaths,
   SourceAttachment,
@@ -96,6 +101,13 @@ type PreparedInput = {
   attachments?: PreparedAttachment[];
   contentHash?: string;
   semanticHash?: string;
+  sourceGroupId?: string;
+  sourceGroupTitle?: string;
+  sourcePartKey?: string;
+  partIndex?: number;
+  partCount?: number;
+  partTitle?: string;
+  details?: Record<string, string>;
   logDetails?: string[];
 };
 
@@ -135,14 +147,34 @@ function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKi
   if (mimeType.includes("html")) {
     return "html";
   }
-  if (mimeType.startsWith("text/")) {
-    return "text";
-  }
   if (mimeType === "application/pdf" || filePath.toLowerCase().endsWith(".pdf")) {
     return "pdf";
   }
   if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filePath.toLowerCase().endsWith(".docx")) {
     return "docx";
+  }
+  if (mimeType === "application/epub+zip" || filePath.toLowerCase().endsWith(".epub")) {
+    return "epub";
+  }
+  if (
+    mimeType === "text/csv" ||
+    mimeType === "text/tab-separated-values" ||
+    filePath.toLowerCase().endsWith(".csv") ||
+    filePath.toLowerCase().endsWith(".tsv")
+  ) {
+    return "csv";
+  }
+  if (mimeType.startsWith("text/")) {
+    return "text";
+  }
+  if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || filePath.toLowerCase().endsWith(".xlsx")) {
+    return "xlsx";
+  }
+  if (
+    mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    filePath.toLowerCase().endsWith(".pptx")
+  ) {
+    return "pptx";
   }
   if (mimeType.startsWith("image/")) {
     return "image";
@@ -171,6 +203,16 @@ function guessMimeType(target: string): string {
     return "text/x-rst";
   }
   return mime.lookup(target) || "application/octet-stream";
+}
+
+function sourceGroupIdFor(prepared: {
+  title: string;
+  originType: SourceManifest["originType"];
+  originalPath?: string;
+  url?: string;
+}): string {
+  const originKey = prepared.originType === "url" ? (prepared.url ?? prepared.title) : (prepared.originalPath ?? prepared.title);
+  return `${slugify(prepared.title)}-${sha256(originKey).slice(0, 8)}`;
 }
 
 function rstAdornmentLine(line: string): string | undefined {
@@ -865,6 +907,10 @@ function manifestMatchesOrigin(manifest: SourceManifest, prepared: PreparedInput
   return Boolean(prepared.originalPath && manifest.originalPath && toPosix(manifest.originalPath) === toPosix(prepared.originalPath));
 }
 
+function manifestMatchesOriginPart(manifest: SourceManifest, prepared: PreparedInput): boolean {
+  return manifestMatchesOrigin(manifest, prepared) && (manifest.sourcePartKey ?? "") === (prepared.sourcePartKey ?? "");
+}
+
 function buildCompositeHash(payloadBytes: Buffer, attachments: PreparedAttachment[] = []): string {
   if (!attachments.length) {
     return sha256(payloadBytes);
@@ -1024,21 +1070,27 @@ async function readManifestByHash(manifestsDir: string, contentHash: string): Pr
   return null;
 }
 
-async function readManifestByOrigin(manifestsDir: string, prepared: PreparedInput): Promise<SourceManifest | null> {
+async function readManifestsByOrigin(manifestsDir: string, prepared: PreparedInput): Promise<SourceManifest[]> {
   const entries = await fs.readdir(manifestsDir, { withFileTypes: true }).catch(() => []);
+  const manifests: SourceManifest[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) {
       continue;
     }
     const manifest = await readJsonFile<SourceManifest>(path.join(manifestsDir, entry.name));
     if (manifest && manifestMatchesOrigin(manifest, prepared)) {
-      return {
+      manifests.push({
         ...manifest,
         semanticHash: manifest.semanticHash ?? manifest.contentHash
-      };
+      });
     }
   }
-  return null;
+  return manifests;
+}
+
+async function readManifestByOrigin(manifestsDir: string, prepared: PreparedInput): Promise<SourceManifest | null> {
+  const manifests = await readManifestsByOrigin(manifestsDir, prepared);
+  return manifests.find((manifest) => manifestMatchesOriginPart(manifest, prepared)) ?? null;
 }
 
 async function loadGitignoreMatcher(repoRoot: string, enabled: boolean) {
@@ -1338,7 +1390,7 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
   const semanticHash = prepared.semanticHash ?? contentHash;
   const extractionHash = prepared.extractionHash ?? buildExtractionHash(prepared.extractedText, prepared.extractionArtifact);
   const existingByOrigin = await readManifestByOrigin(paths.manifestsDir, prepared);
-  const existingByHash = existingByOrigin ? null : await readManifestByHash(paths.manifestsDir, contentHash);
+  const existingByHash = existingByOrigin || prepared.sourcePartKey ? null : await readManifestByHash(paths.manifestsDir, contentHash);
   if (
     existingByOrigin &&
     existingByOrigin.contentHash === contentHash &&
@@ -1350,7 +1402,14 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     existingByOrigin.sourceClass === prepared.sourceClass &&
     existingByOrigin.language === prepared.language &&
     existingByOrigin.mimeType === prepared.mimeType &&
-    existingByOrigin.repoRelativePath === prepared.repoRelativePath
+    existingByOrigin.repoRelativePath === prepared.repoRelativePath &&
+    existingByOrigin.sourceGroupId === prepared.sourceGroupId &&
+    existingByOrigin.sourceGroupTitle === prepared.sourceGroupTitle &&
+    existingByOrigin.sourcePartKey === prepared.sourcePartKey &&
+    existingByOrigin.partIndex === prepared.partIndex &&
+    existingByOrigin.partCount === prepared.partCount &&
+    existingByOrigin.partTitle === prepared.partTitle &&
+    JSON.stringify(existingByOrigin.details ?? {}) === JSON.stringify(prepared.details ?? {})
   ) {
     return { manifest: existingByOrigin, isNew: false, wasUpdated: false };
   }
@@ -1415,6 +1474,13 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
     mimeType: prepared.mimeType,
     contentHash,
     semanticHash,
+    sourceGroupId: prepared.sourceGroupId,
+    sourceGroupTitle: prepared.sourceGroupTitle,
+    sourcePartKey: prepared.sourcePartKey,
+    partIndex: prepared.partIndex,
+    partCount: prepared.partCount,
+    partTitle: prepared.partTitle,
+    details: prepared.details,
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
     attachments: manifestAttachments.length ? manifestAttachments : undefined
@@ -1438,6 +1504,51 @@ async function persistPreparedInput(rootDir: string, prepared: PreparedInput, pa
   }
 
   return { manifest, isNew: !previous, wasUpdated: Boolean(previous) };
+}
+
+async function persistPreparedInputs(
+  rootDir: string,
+  input: string,
+  preparedInputs: PreparedInput[],
+  paths: ResolvedPaths
+): Promise<InputIngestResult> {
+  const template = preparedInputs[0];
+  const existingByOrigin = template ? await readManifestsByOrigin(paths.manifestsDir, template) : [];
+  const created: SourceManifest[] = [];
+  const updated: SourceManifest[] = [];
+  const unchanged: SourceManifest[] = [];
+  const removed: SourceManifest[] = [];
+  const seenSourceIds = new Set<string>();
+
+  for (const prepared of preparedInputs) {
+    const result = await persistPreparedInput(rootDir, prepared, paths);
+    if (result.isNew) {
+      created.push(result.manifest);
+    } else if (result.wasUpdated) {
+      updated.push(result.manifest);
+    } else {
+      unchanged.push(result.manifest);
+    }
+    seenSourceIds.add(result.manifest.sourceId);
+  }
+
+  for (const manifest of existingByOrigin) {
+    if (seenSourceIds.has(manifest.sourceId)) {
+      continue;
+    }
+    await removeManifestArtifacts(rootDir, manifest, paths);
+    removed.push(manifest);
+  }
+
+  return {
+    input,
+    scannedCount: preparedInputs.length,
+    created,
+    updated,
+    unchanged,
+    removed,
+    skipped: []
+  };
 }
 
 async function removeManifestArtifacts(rootDir: string, manifest: SourceManifest, paths: ResolvedPaths): Promise<void> {
@@ -1475,13 +1586,21 @@ function preparedMatchesManifest(manifest: SourceManifest, prepared: PreparedInp
   return (
     manifest.contentHash === contentHash &&
     manifest.extractionHash === (prepared.extractionHash ?? buildExtractionHash(prepared.extractedText, prepared.extractionArtifact)) &&
+    manifest.semanticHash === (prepared.semanticHash ?? contentHash) &&
     manifest.title === prepared.title &&
     manifest.sourceKind === prepared.sourceKind &&
     manifest.sourceType === prepared.sourceType &&
     manifest.sourceClass === prepared.sourceClass &&
     manifest.language === prepared.language &&
     manifest.mimeType === prepared.mimeType &&
-    manifest.repoRelativePath === prepared.repoRelativePath
+    manifest.repoRelativePath === prepared.repoRelativePath &&
+    manifest.sourceGroupId === prepared.sourceGroupId &&
+    manifest.sourceGroupTitle === prepared.sourceGroupTitle &&
+    manifest.sourcePartKey === prepared.sourcePartKey &&
+    manifest.partIndex === prepared.partIndex &&
+    manifest.partCount === prepared.partCount &&
+    manifest.partTitle === prepared.partTitle &&
+    JSON.stringify(manifest.details ?? {}) === JSON.stringify(prepared.details ?? {})
   );
 }
 
@@ -1492,6 +1611,10 @@ function shouldDeferWatchSemanticRefresh(sourceKind: SourceManifest["sourceKind"
     sourceKind === "html" ||
     sourceKind === "pdf" ||
     sourceKind === "docx" ||
+    sourceKind === "epub" ||
+    sourceKind === "csv" ||
+    sourceKind === "xlsx" ||
+    sourceKind === "pptx" ||
     sourceKind === "image"
   );
 }
@@ -1571,13 +1694,16 @@ export async function syncTrackedRepos(rootDir: string, options?: IngestOptions,
     const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
     for (const absolutePath of files) {
       const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
-      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot, sourceClassForRelativePath(relativePath, normalizedOptions));
-      const result = await persistPreparedInput(rootDir, prepared, paths);
-      if (result.isNew) {
-        imported.push(result.manifest);
-      } else if (result.wasUpdated) {
-        updated.push(result.manifest);
-      }
+      const preparedInputs = await prepareFileInputs(
+        rootDir,
+        absolutePath,
+        repoRoot,
+        sourceClassForRelativePath(relativePath, normalizedOptions)
+      );
+      const result = await persistPreparedInputs(rootDir, absolutePath, preparedInputs, paths);
+      imported.push(...result.created);
+      updated.push(...result.updated);
+      removed.push(...result.removed);
       progress.tick();
     }
     progress.finish(`repo=${toPosix(path.relative(rootDir, repoRoot)) || "."}`);
@@ -1647,11 +1773,6 @@ export async function syncTrackedReposForWatch(
 
   for (const repoRoot of uniqueRoots) {
     const repoManifests = manifestsByRepoRoot.get(repoRoot) ?? [];
-    const manifestsByOriginalPath = new Map(
-      repoManifests
-        .filter((manifest) => manifest.originalPath)
-        .map((manifest) => [path.resolve(manifest.originalPath as string), manifest] as const)
-    );
 
     if (!(await fileExists(repoRoot))) {
       for (const manifest of repoManifests) {
@@ -1692,39 +1813,54 @@ export async function syncTrackedReposForWatch(
     const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
     for (const absolutePath of files) {
       const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
-      const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot, sourceClassForRelativePath(relativePath, normalizedOptions));
-      if (shouldDeferWatchSemanticRefresh(prepared.sourceKind)) {
-        const existing = manifestsByOriginalPath.get(path.resolve(absolutePath));
-        const contentHash = buildCompositeHash(prepared.payloadBytes, prepared.attachments);
-        const changed = !existing || !preparedMatchesManifest(existing, prepared, contentHash);
+      const preparedInputs = await prepareFileInputs(
+        rootDir,
+        absolutePath,
+        repoRoot,
+        sourceClassForRelativePath(relativePath, normalizedOptions)
+      );
+      const firstPrepared = preparedInputs[0];
+      if (firstPrepared && shouldDeferWatchSemanticRefresh(firstPrepared.sourceKind)) {
+        const existing = repoManifests.filter(
+          (manifest) => manifest.originalPath && path.resolve(manifest.originalPath) === path.resolve(absolutePath)
+        );
+        const existingByPartKey = new Map(existing.map((manifest) => [manifest.sourcePartKey ?? "__single__", manifest]));
+        const changed =
+          existing.length !== preparedInputs.length ||
+          preparedInputs.some((prepared) => {
+            const match = existingByPartKey.get(prepared.sourcePartKey ?? "__single__");
+            const contentHash = buildCompositeHash(prepared.payloadBytes, prepared.attachments);
+            return !match || !preparedMatchesManifest(match, prepared, contentHash);
+          }) ||
+          existing.some(
+            (manifest) => !preparedInputs.some((prepared) => (prepared.sourcePartKey ?? "") === (manifest.sourcePartKey ?? ""))
+          );
         if (changed) {
           pendingSemanticRefresh.push({
             id: pendingSemanticRefreshId(
-              existing ? "modified" : "added",
+              existing.length ? "modified" : "added",
               repoRoot,
-              prepared.repoRelativePath ?? toPosix(path.relative(repoRoot, absolutePath))
+              firstPrepared.repoRelativePath ?? toPosix(path.relative(repoRoot, absolutePath))
             ),
             repoRoot,
             path: toPosix(path.relative(rootDir, absolutePath)),
-            changeType: existing ? "modified" : "added",
+            changeType: existing.length ? "modified" : "added",
             detectedAt: new Date().toISOString(),
-            sourceId: existing?.sourceId,
-            sourceKind: prepared.sourceKind
+            sourceId: existing[0]?.sourceId,
+            sourceKind: firstPrepared.sourceKind
           });
-          if (existing?.sourceId) {
-            staleSourceIds.add(existing.sourceId);
+          for (const manifest of existing) {
+            staleSourceIds.add(manifest.sourceId);
           }
         }
         progress.tick();
         continue;
       }
 
-      const result = await persistPreparedInput(rootDir, prepared, paths);
-      if (result.isNew) {
-        imported.push(result.manifest);
-      } else if (result.wasUpdated) {
-        updated.push(result.manifest);
-      }
+      const result = await persistPreparedInputs(rootDir, absolutePath, preparedInputs, paths);
+      imported.push(...result.created);
+      updated.push(...result.updated);
+      removed.push(...result.removed);
       progress.tick();
     }
     progress.finish(`repo=${toPosix(path.relative(rootDir, repoRoot)) || "."}`);
@@ -1782,12 +1918,12 @@ export async function syncTrackedReposForWatch(
   };
 }
 
-async function prepareFileInput(
+async function prepareFileInputs(
   rootDir: string,
   absoluteInput: string,
   repoRoot?: string,
   sourceClass?: SourceClass
-): Promise<PreparedInput> {
+): Promise<PreparedInput[]> {
   const payloadBytes = await fs.readFile(absoluteInput);
   const mimeType = guessMimeType(absoluteInput);
   const sourceKind = inferKind(mimeType, absoluteInput);
@@ -1825,6 +1961,94 @@ async function prepareFileInput(
     title = extracted.artifact.metadata?.title?.trim() || title;
     extractedText = extracted.extractedText;
     extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "csv") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractCsvText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "xlsx") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractXlsxText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "pptx") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractPptxText({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "epub") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractEpubChapters({ mimeType, bytes: payloadBytes, fileName: absoluteInput });
+    title = extracted.title?.trim() || title;
+    const groupId = sourceGroupIdFor({
+      title,
+      originType: "file",
+      originalPath: toPosix(absoluteInput)
+    });
+    if (extracted.chapters.length) {
+      return extracted.chapters.map((chapter, index) =>
+        finalizePreparedInput({
+          title: `${title} - ${chapter.title}`,
+          originType: "file",
+          sourceKind: "epub",
+          sourceClass,
+          originalPath: toPosix(absoluteInput),
+          repoRelativePath: repoRelativePathFor(absoluteInput, repoRoot),
+          mimeType: "text/markdown",
+          storedExtension: ".md",
+          payloadBytes: Buffer.from(chapter.markdown, "utf8"),
+          extractedText: chapter.markdown,
+          extractionArtifact: {
+            extractor: "epub_text",
+            sourceKind: "epub",
+            mimeType,
+            producedAt: new Date().toISOString(),
+            metadata: {
+              ...chapter.metadata,
+              chapter_index: String(index + 1),
+              chapter_count: String(extracted.chapters.length)
+            },
+            warnings: extracted.warnings
+          },
+          extractionHash: buildExtractionHash(chapter.markdown, {
+            extractor: "epub_text",
+            sourceKind: "epub",
+            mimeType,
+            producedAt: new Date().toISOString(),
+            metadata: {
+              ...chapter.metadata,
+              chapter_index: String(index + 1),
+              chapter_count: String(extracted.chapters.length)
+            },
+            warnings: extracted.warnings
+          }),
+          sourceGroupId: groupId,
+          sourceGroupTitle: title,
+          sourcePartKey: chapter.partKey,
+          partIndex: index + 1,
+          partCount: extracted.chapters.length,
+          partTitle: chapter.title,
+          details: {
+            book_title: title,
+            chapter_title: chapter.title,
+            chapter_index: String(index + 1),
+            chapter_count: String(extracted.chapters.length),
+            ...(extracted.author ? { author: extracted.author } : {})
+          }
+        })
+      );
+    }
+    extractedText = undefined;
+    extractionArtifact = {
+      extractor: "epub_text",
+      sourceKind: "epub",
+      mimeType,
+      producedAt: new Date().toISOString(),
+      warnings: extracted.warnings ?? ["EPUB extraction completed but produced no chapter content."]
+    };
   } else if (sourceKind === "image") {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
     const extracted = await extractImageWithVision(rootDir, {
@@ -1839,24 +2063,40 @@ async function prepareFileInput(
     title = path.basename(absoluteInput, path.extname(absoluteInput));
   }
 
-  return finalizePreparedInput({
-    title,
-    originType: "file",
-    sourceKind,
-    sourceClass,
-    language,
-    originalPath: toPosix(absoluteInput),
-    repoRelativePath: repoRelativePathFor(absoluteInput, repoRoot),
-    mimeType,
-    storedExtension,
-    payloadBytes,
-    extractedText,
-    extractionArtifact,
-    extractionHash: buildExtractionHash(extractedText, extractionArtifact)
-  });
+  return [
+    finalizePreparedInput({
+      title,
+      originType: "file",
+      sourceKind,
+      sourceClass,
+      language,
+      originalPath: toPosix(absoluteInput),
+      repoRelativePath: repoRelativePathFor(absoluteInput, repoRoot),
+      mimeType,
+      storedExtension,
+      payloadBytes,
+      extractedText,
+      extractionArtifact,
+      extractionHash: buildExtractionHash(extractedText, extractionArtifact),
+      details: extractionArtifact?.metadata
+    })
+  ];
 }
 
-async function prepareUrlInput(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput> {
+async function prepareFileInput(
+  rootDir: string,
+  absoluteInput: string,
+  repoRoot?: string,
+  sourceClass?: SourceClass
+): Promise<PreparedInput> {
+  const prepared = await prepareFileInputs(rootDir, absoluteInput, repoRoot, sourceClass);
+  if (!prepared.length) {
+    throw new Error(`No ingestable sources were extracted from ${absoluteInput}.`);
+  }
+  return prepared[0];
+}
+
+async function prepareUrlInputs(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput[]> {
   await validateUrlSafety(input);
   const response = await fetch(input);
   if (!response.ok) {
@@ -1963,6 +2203,88 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
       title = extracted.artifact.metadata?.title?.trim() || title;
       extractedText = extracted.extractedText;
       extractionArtifact = extracted.artifact;
+    } else if (sourceKind === "csv") {
+      const extracted = await extractCsvText({ mimeType, bytes: payloadBytes, fileName: inputUrl.pathname });
+      title = extracted.title?.trim() || title;
+      extractedText = extracted.extractedText;
+      extractionArtifact = extracted.artifact;
+    } else if (sourceKind === "xlsx") {
+      const extracted = await extractXlsxText({ mimeType, bytes: payloadBytes, fileName: inputUrl.pathname });
+      title = extracted.title?.trim() || title;
+      extractedText = extracted.extractedText;
+      extractionArtifact = extracted.artifact;
+    } else if (sourceKind === "pptx") {
+      const extracted = await extractPptxText({ mimeType, bytes: payloadBytes, fileName: inputUrl.pathname });
+      title = extracted.title?.trim() || title;
+      extractedText = extracted.extractedText;
+      extractionArtifact = extracted.artifact;
+    } else if (sourceKind === "epub") {
+      const extracted = await extractEpubChapters({ mimeType, bytes: payloadBytes, fileName: inputUrl.pathname });
+      title = extracted.title?.trim() || title;
+      const groupId = sourceGroupIdFor({
+        title,
+        originType: "url",
+        url: finalUrl
+      });
+      if (extracted.chapters.length) {
+        return extracted.chapters.map((chapter, index) =>
+          finalizePreparedInput({
+            title: `${title} - ${chapter.title}`,
+            originType: "url",
+            sourceKind: "epub",
+            url: finalUrl,
+            mimeType: "text/markdown",
+            storedExtension: ".md",
+            payloadBytes: Buffer.from(chapter.markdown, "utf8"),
+            extractedText: chapter.markdown,
+            extractionArtifact: {
+              extractor: "epub_text",
+              sourceKind: "epub",
+              mimeType,
+              producedAt: new Date().toISOString(),
+              metadata: {
+                ...chapter.metadata,
+                chapter_index: String(index + 1),
+                chapter_count: String(extracted.chapters.length)
+              },
+              warnings: extracted.warnings
+            },
+            extractionHash: buildExtractionHash(chapter.markdown, {
+              extractor: "epub_text",
+              sourceKind: "epub",
+              mimeType,
+              producedAt: new Date().toISOString(),
+              metadata: {
+                ...chapter.metadata,
+                chapter_index: String(index + 1),
+                chapter_count: String(extracted.chapters.length)
+              },
+              warnings: extracted.warnings
+            }),
+            sourceGroupId: groupId,
+            sourceGroupTitle: title,
+            sourcePartKey: chapter.partKey,
+            partIndex: index + 1,
+            partCount: extracted.chapters.length,
+            partTitle: chapter.title,
+            details: {
+              book_title: title,
+              chapter_title: chapter.title,
+              chapter_index: String(index + 1),
+              chapter_count: String(extracted.chapters.length),
+              ...(extracted.author ? { author: extracted.author } : {})
+            },
+            logDetails
+          })
+        );
+      }
+      extractionArtifact = {
+        extractor: "epub_text",
+        sourceKind: "epub",
+        mimeType,
+        producedAt: new Date().toISOString(),
+        warnings: extracted.warnings ?? ["EPUB extraction completed but produced no chapter content."]
+      };
     } else if (sourceKind === "image") {
       const extracted = await extractImageWithVision(rootDir, {
         title,
@@ -1975,22 +2297,33 @@ async function prepareUrlInput(rootDir: string, input: string, options: Normaliz
     }
   }
 
-  return finalizePreparedInput({
-    title,
-    originType: "url",
-    sourceKind,
-    language,
-    url: finalUrl,
-    mimeType,
-    storedExtension,
-    payloadBytes,
-    extractedText,
-    extractionArtifact,
-    extractionHash: buildExtractionHash(extractedText, extractionArtifact),
-    attachments,
-    contentHash,
-    logDetails
-  });
+  return [
+    finalizePreparedInput({
+      title,
+      originType: "url",
+      sourceKind,
+      language,
+      url: finalUrl,
+      mimeType,
+      storedExtension,
+      payloadBytes,
+      extractedText,
+      extractionArtifact,
+      extractionHash: buildExtractionHash(extractedText, extractionArtifact),
+      attachments,
+      contentHash,
+      details: extractionArtifact?.metadata,
+      logDetails
+    })
+  ];
+}
+
+async function prepareUrlInput(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput> {
+  const prepared = await prepareUrlInputs(rootDir, input, options);
+  if (!prepared.length) {
+    throw new Error(`No ingestable sources were extracted from ${input}.`);
+  }
+  return prepared[0];
 }
 
 async function collectInboxAttachmentRefs(inputDir: string, files: string[]): Promise<Map<string, InboxAttachmentRef[]>> {
@@ -2148,14 +2481,10 @@ async function prepareInboxHtmlInput(absolutePath: string, attachmentRefs: Inbox
 }
 
 function isSupportedInboxKind(sourceKind: SourceManifest["sourceKind"]): boolean {
-  return ["markdown", "text", "html", "pdf", "docx", "image"].includes(sourceKind);
+  return ["markdown", "text", "html", "pdf", "docx", "epub", "csv", "xlsx", "pptx", "image"].includes(sourceKind);
 }
 
-export async function ingestInputDetailed(
-  rootDir: string,
-  input: string,
-  options?: IngestOptions
-): Promise<{ manifest: SourceManifest; isNew: boolean; wasUpdated: boolean }> {
+export async function ingestInputDetailed(rootDir: string, input: string, options?: IngestOptions): Promise<InputIngestResult> {
   const { paths } = await initWorkspace(rootDir);
   const normalizedOptions = normalizeIngestOptions(options);
   const absoluteInput = path.resolve(rootDir, input);
@@ -2164,14 +2493,19 @@ export async function ingestInputDetailed(
       ? normalizedOptions.repoRoot
       : await findNearestGitRoot(absoluteInput).then((value) => value ?? path.dirname(absoluteInput));
   const prepared = isHttpUrl(input)
-    ? await prepareUrlInput(rootDir, input, normalizedOptions)
-    : await prepareFileInput(rootDir, absoluteInput, repoRoot);
+    ? await prepareUrlInputs(rootDir, input, normalizedOptions)
+    : await prepareFileInputs(rootDir, absoluteInput, repoRoot);
 
-  return await persistPreparedInput(rootDir, prepared, paths);
+  return await persistPreparedInputs(rootDir, input, prepared, paths);
 }
 
 export async function ingestInput(rootDir: string, input: string, options?: IngestOptions): Promise<SourceManifest> {
-  return (await ingestInputDetailed(rootDir, input, options)).manifest;
+  const result = await ingestInputDetailed(rootDir, input, options);
+  const manifest = [...result.created, ...result.updated, ...result.unchanged][0];
+  if (!manifest) {
+    throw new Error(`No source manifests were created or updated for ${input}.`);
+  }
+  return manifest;
 }
 
 export async function addInput(rootDir: string, input: string, options: AddOptions = {}): Promise<AddResult> {
@@ -2281,13 +2615,20 @@ export async function ingestDirectory(rootDir: string, inputDir: string, options
 
   for (const absolutePath of files) {
     const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
-    const prepared = await prepareFileInput(rootDir, absolutePath, repoRoot, sourceClassForRelativePath(relativePath, normalizedOptions));
-    const result = await persistPreparedInput(rootDir, prepared, paths);
-    if (result.isNew) {
-      imported.push(result.manifest);
-    } else if (result.wasUpdated) {
-      updated.push(result.manifest);
-    } else {
+    const preparedInputs = await prepareFileInputs(
+      rootDir,
+      absolutePath,
+      repoRoot,
+      sourceClassForRelativePath(relativePath, normalizedOptions)
+    );
+    const result = await persistPreparedInputs(rootDir, absolutePath, preparedInputs, paths);
+    if (result.created.length) {
+      imported.push(...result.created);
+    }
+    if (result.updated.length) {
+      updated.push(...result.updated);
+    }
+    if (!result.created.length && !result.updated.length && !result.removed.length) {
       skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "duplicate_content" });
     }
     progress.tick();
@@ -2353,14 +2694,14 @@ export async function importInbox(rootDir: string, inputDir?: string): Promise<I
           ? await prepareInboxHtmlInput(absolutePath, refsBySource.get(absolutePath) ?? [])
           : await prepareFileInput(rootDir, absolutePath);
 
-    const result = await persistPreparedInput(rootDir, prepared, paths);
-    if (!result.isNew) {
+    const result = await persistPreparedInputs(rootDir, absolutePath, [prepared], paths);
+    if (!result.created.length) {
       skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "duplicate_content" });
       continue;
     }
 
-    attachmentCount += result.manifest.attachments?.length ?? 0;
-    imported.push(result.manifest);
+    attachmentCount += result.created.reduce((total, manifest) => total + (manifest.attachments?.length ?? 0), 0);
+    imported.push(...result.created);
   }
 
   await appendLogEntry(rootDir, "inbox_import", toPosix(path.relative(rootDir, effectiveInputDir)) || ".", [

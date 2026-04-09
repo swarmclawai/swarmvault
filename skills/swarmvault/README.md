@@ -1,6 +1,6 @@
 # SwarmVault Skill
 
-Use the SwarmVault skill when you want a local-first knowledge vault that compiles files, URLs, code, and research captures into durable markdown pages, a searchable graph, and reviewable outputs on disk.
+Use the SwarmVault skill when you want a local-first knowledge vault that compiles books, articles, notes, datasets, spreadsheets, slide decks, screenshots, URLs, code, and research captures into durable markdown pages, a searchable graph, and reviewable outputs on disk.
 
 SwarmVault is inspired by Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist, then extended into a local toolchain with graph/search artifacts, review flows, automation, and optional provider-backed synthesis.
 
@@ -38,6 +38,7 @@ npm install -g @swarmvaultai/cli@latest
 - The repo already contains `swarmvault.config.json` or `swarmvault.schema.md`.
 - You want markdown wiki pages, graph artifacts, local search, approvals, candidates, and MCP exposure from the same workspace.
 - You want a save-first compile/query/review loop for source collections, codebases, or research material.
+- You want one workflow for mixed non-code material such as EPUBs, CSV/TSV files, XLSX workbooks, and PPTX decks.
 
 ## Quickstart
 
@@ -57,6 +58,8 @@ For very large graphs, `swarmvault graph serve` and `swarmvault graph export --h
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation.
 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
+
+Supported non-code ingest includes `.pdf`, `.docx`, `.epub`, `.csv`, `.tsv`, `.xlsx`, `.pptx`, images, markdown/text notes, browser clips, and research URLs captured through `swarmvault add`.
 
 ## What The Skill Package Includes
 

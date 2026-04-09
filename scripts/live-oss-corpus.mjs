@@ -142,7 +142,14 @@ try {
         (await runInstalledCliCommand(`${repo.id}-ingest`, ingestArgs, { cwd: vaultDir, logsDir: repoLogsDir, timeoutMs: DEFAULT_TIMEOUT_MS }))
           .stdout
       );
-      assert.ok(Array.isArray(ingest.imported) || typeof ingest.sourceId === "string", "ingest did not return a manifest payload");
+      assert.ok(
+        Array.isArray(ingest.imported) ||
+          Array.isArray(ingest.created) ||
+          Array.isArray(ingest.updated) ||
+          Array.isArray(ingest.unchanged) ||
+          typeof ingest.sourceId === "string",
+        "ingest did not return a manifest payload"
+      );
 
       console.log(`[oss-corpus][${repo.id}] compile`);
       const compile = JSON.parse(

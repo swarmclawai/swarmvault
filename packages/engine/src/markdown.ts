@@ -190,9 +190,21 @@ export function buildSourcePage(
     `# ${analysis.title}`,
     "",
     `Source ID: \`${manifest.sourceId}\``,
+    `Source Kind: \`${manifest.sourceKind}\``,
     manifest.url ? `Source URL: ${manifest.url}` : `Source Path: \`${manifest.originalPath ?? manifest.storedPath}\``,
     ...(manifest.sourceType ? [`Source Type: \`${manifest.sourceType}\``, ""] : [""]),
     ...(manifest.sourceClass ? [`Source Class: \`${manifest.sourceClass}\``, ""] : []),
+    ...(manifest.sourceGroupTitle ? [`Source Group: ${manifest.sourceGroupTitle}`] : []),
+    ...(manifest.partTitle ? [`Part: ${manifest.partIndex ?? "?"}/${manifest.partCount ?? "?"} - ${manifest.partTitle}`] : []),
+    ...(manifest.details && Object.keys(manifest.details).length
+      ? [
+          "",
+          "## Source Details",
+          "",
+          ...Object.entries(manifest.details).map(([key, value]) => `- ${key.replace(/_/g, " ")}: ${value}`),
+          ""
+        ]
+      : []),
     "",
     "## Summary",
     "",

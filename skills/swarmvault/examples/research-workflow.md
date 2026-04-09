@@ -1,6 +1,6 @@
 # Research Workflow Example
 
-Use this when the user is collecting papers, articles, PDFs, screenshots, or other mixed research sources into one vault.
+Use this when the user is collecting papers, articles, books, datasets, slide decks, screenshots, or other mixed research sources into one vault.
 
 ## Commands
 
@@ -9,6 +9,10 @@ swarmvault init
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault add 10.1145/1234567.1234568
 swarmvault ingest ./paper.pdf
+swarmvault ingest ./book.epub
+swarmvault ingest ./results.csv
+swarmvault ingest ./analysis.xlsx
+swarmvault ingest ./deck.pptx
 swarmvault inbox import ./capture-bundle
 swarmvault compile
 swarmvault query "What are the main claims and conflicts?"
@@ -18,7 +22,7 @@ swarmvault explore "What should I read next?" --steps 3
 ## What To Check
 
 - `raw/sources/` contains normalized markdown captures for `add`
-- `state/extracts/` contains PDF/image extraction sidecars when relevant
+- `state/extracts/` contains PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, or image extraction sidecars when relevant
 - `wiki/graph/report.md` surfaces contradictions, surprise links, and benchmark data
 - `wiki/outputs/` contains saved query and explore outputs
 

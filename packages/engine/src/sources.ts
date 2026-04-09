@@ -419,12 +419,11 @@ async function syncCrawlSource(
   let updatedCount = 0;
   for (const pageUrl of crawl.pages) {
     const persisted = await ingestInputDetailed(rootDir, pageUrl);
-    currentSourceIds.push(persisted.manifest.sourceId);
-    if (persisted.isNew) {
-      importedCount += 1;
-    } else if (persisted.wasUpdated) {
-      updatedCount += 1;
-    }
+    currentSourceIds.push(...persisted.created.map((manifest) => manifest.sourceId));
+    currentSourceIds.push(...persisted.updated.map((manifest) => manifest.sourceId));
+    currentSourceIds.push(...persisted.unchanged.map((manifest) => manifest.sourceId));
+    importedCount += persisted.created.length;
+    updatedCount += persisted.updated.length;
   }
   let removedCount = 0;
   for (const sourceId of previousSourceIds) {

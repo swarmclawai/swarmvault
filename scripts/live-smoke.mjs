@@ -18,6 +18,8 @@ const fixturesDir = path.join(repoRoot, "smoke", "fixtures");
 const tinyMatrixFixtureDir = path.join(fixturesDir, "tiny-matrix");
 const packageJsonPath = path.join(repoRoot, "packages", "cli", "package.json");
 const requireFromScript = createRequire(import.meta.url);
+const requireFromEnginePackage = createRequire(path.join(repoRoot, "packages", "engine", "package.json"));
+const { zipSync } = requireFromEnginePackage("fflate");
 
 await loadEnvFile(path.join(workspaceRoot, ".env.local"));
 await loadEnvFile(path.join(repoRoot, ".env.local"));
@@ -58,6 +60,16 @@ const MINIMAL_DOCX = Buffer.from(
   "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",
   "base64"
 );
+
+function manifestsFromIngestSummary(summary) {
+  return [...(summary.created ?? []), ...(summary.updated ?? []), ...(summary.unchanged ?? [])];
+}
+
+function primaryManifestFromIngestSummary(summary) {
+  const manifests = manifestsFromIngestSummary(summary);
+  assert.ok(manifests.length > 0, "ingest did not return any manifests");
+  return manifests[0];
+}
 
 await fs.mkdir(logsDir, { recursive: true });
 await fs.mkdir(npmCacheDir, { recursive: true });
@@ -128,7 +140,7 @@ try {
   }
 
   await runStep("baseline-ingest-compile", async () => {
-    const manifest = await runCliJson(["ingest", path.join(fixturesDir, "source.md")]);
+    const manifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", path.join(fixturesDir, "source.md")]));
     assert.ok(typeof manifest.sourceId === "string" && manifest.sourceId.length > 0, "ingest did not return a sourceId");
     const compile = await runCliJson(["compile"]);
     assert.ok(compile.sourceCount >= 1, "compile did not report any sources");
@@ -406,7 +418,7 @@ try {
 
         const fixtureEnv = { SWARMVAULT_ALLOW_PRIVATE_URLS: "1" };
 
-        const htmlManifest = await runCliJson(["ingest", `${server.baseUrl}/article`], { env: fixtureEnv });
+        const htmlManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", `${server.baseUrl}/article`], { env: fixtureEnv }));
         assert.equal(htmlManifest.attachments.length, 2, "expected HTML URL ingest to localize both remote images");
         const htmlStored = await fs.readFile(path.join(workspaceDir, htmlManifest.storedPath), "utf8");
         for (const attachment of htmlManifest.attachments) {
@@ -416,7 +428,9 @@ try {
         }
         assert.ok(!htmlStored.includes(`${server.baseUrl}/images/absolute.png`), "HTML ingest left a remote absolute asset reference");
 
-        const markdownManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md`], { env: fixtureEnv });
+        const markdownManifest = primaryManifestFromIngestSummary(
+          await runCliJson(["ingest", `${server.baseUrl}/notes.md`], { env: fixtureEnv })
+        );
         assert.equal(markdownManifest.attachments.length, 1, "expected markdown URL ingest to localize one remote image");
         const markdownStored = await fs.readFile(path.join(workspaceDir, markdownManifest.storedPath), "utf8");
         const markdownAsset = markdownManifest.attachments[0];
@@ -426,16 +440,16 @@ try {
           "markdown URL ingest did not rewrite to a local asset path"
         );
 
-        const skippedManifest = await runCliJson(["ingest", `${server.baseUrl}/large.md`, "--max-asset-size", "8"], {
-          env: fixtureEnv
-        });
+        const skippedManifest = primaryManifestFromIngestSummary(
+          await runCliJson(["ingest", `${server.baseUrl}/large.md`, "--max-asset-size", "8"], { env: fixtureEnv })
+        );
         assert.ok(!skippedManifest.attachments?.length, "oversized asset should not have been attached");
         const skippedStored = await fs.readFile(path.join(workspaceDir, skippedManifest.storedPath), "utf8");
         assert.ok(skippedStored.includes("./images/large.png"), "oversized asset should leave the original markdown reference intact");
 
-        const disabledManifest = await runCliJson(["ingest", `${server.baseUrl}/notes.md?no-assets=1`, "--no-include-assets"], {
-          env: fixtureEnv
-        });
+        const disabledManifest = primaryManifestFromIngestSummary(
+          await runCliJson(["ingest", `${server.baseUrl}/notes.md?no-assets=1`, "--no-include-assets"], { env: fixtureEnv })
+        );
         assert.ok(!disabledManifest.attachments?.length, "--no-include-assets should skip remote asset downloads");
         const disabledStored = await fs.readFile(path.join(workspaceDir, disabledManifest.storedPath), "utf8");
         assert.ok(disabledStored.includes("./images/diagram.png"), "--no-include-assets should leave the original markdown reference intact");
@@ -529,30 +543,65 @@ try {
       await fs.writeFile(path.join(workspaceDir, "diagram.png"), MINIMAL_PNG);
       await fs.writeFile(path.join(workspaceDir, "paper.pdf"), createSimplePdf("SwarmVault PDF extraction keeps documents searchable."));
       await fs.writeFile(path.join(workspaceDir, "brief.docx"), MINIMAL_DOCX);
+      await fs.writeFile(path.join(workspaceDir, "dataset.csv"), ["Metric,Value", "Users,12", "Errors,1"].join("\n"), "utf8");
+      await fs.writeFile(path.join(workspaceDir, "dataset.tsv"), ["Week\tSignups", "Week 1\t4", "Week 2\t8"].join("\n"), "utf8");
+      await fs.writeFile(path.join(workspaceDir, "workbook.xlsx"), await createSimpleXlsx());
+      await fs.writeFile(path.join(workspaceDir, "deck.pptx"), createSimplePptx());
+      await fs.writeFile(path.join(workspaceDir, "book.epub"), createSimpleEpub());
 
-      const imageManifest = await runCliJson(["ingest", "diagram.png"]);
-      const pdfManifest = await runCliJson(["ingest", "paper.pdf"]);
-      const docxManifest = await runCliJson(["ingest", "brief.docx"]);
+      const imageManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", "diagram.png"]));
+      const pdfManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", "paper.pdf"]));
+      const docxManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", "brief.docx"]));
+      const csvManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", "dataset.csv"]));
+      const tsvManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", "dataset.tsv"]));
+      const xlsxManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", "workbook.xlsx"]));
+      const pptxManifest = primaryManifestFromIngestSummary(await runCliJson(["ingest", "deck.pptx"]));
+      const epubSummary = await runCliJson(["ingest", "book.epub"]);
+      const epubManifests = manifestsFromIngestSummary(epubSummary);
       assert.ok(imageManifest.extractedMetadataPath, "image ingest did not record extraction metadata");
       assert.ok(imageManifest.extractedTextPath, "image ingest did not write extracted markdown");
       assert.ok(pdfManifest.extractedMetadataPath, "pdf ingest did not record extraction metadata");
       assert.ok(pdfManifest.extractedTextPath, "pdf ingest did not write extracted markdown");
       assert.ok(docxManifest.extractedMetadataPath, "docx ingest did not record extraction metadata");
       assert.ok(docxManifest.extractedTextPath, "docx ingest did not write extracted markdown");
+      assert.ok(csvManifest.extractedTextPath, "csv ingest did not write extracted markdown");
+      assert.ok(tsvManifest.extractedTextPath, "tsv ingest did not write extracted markdown");
+      assert.ok(xlsxManifest.extractedTextPath, "xlsx ingest did not write extracted markdown");
+      assert.ok(pptxManifest.extractedTextPath, "pptx ingest did not write extracted markdown");
+      assert.equal(epubManifests.length, 2, "epub ingest did not split into chapter manifests");
 
       const imageArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, imageManifest.extractedMetadataPath), "utf8"));
       const pdfArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pdfManifest.extractedMetadataPath), "utf8"));
       const docxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, docxManifest.extractedMetadataPath), "utf8"));
+      const csvArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, csvManifest.extractedMetadataPath), "utf8"));
+      const xlsxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, xlsxManifest.extractedMetadataPath), "utf8"));
+      const pptxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pptxManifest.extractedMetadataPath), "utf8"));
       assert.equal(imageArtifact.extractor, "image_vision", "image extraction did not use the vision extractor");
       assert.equal(pdfArtifact.extractor, "pdf_text", "pdf extraction did not use the pdf extractor");
       assert.equal(pdfArtifact.pageCount, 1, "pdf extraction did not record the page count");
       assert.equal(docxArtifact.extractor, "docx_text", "docx extraction did not use the docx extractor");
       assert.equal(docxArtifact.metadata?.title, "Tiny DOCX Source", "docx extraction did not preserve core title metadata");
+      assert.equal(csvArtifact.extractor, "csv_text", "csv extraction did not use the csv extractor");
+      assert.equal(csvArtifact.metadata?.format, "csv", "csv extraction did not preserve the dataset format");
+      assert.equal(xlsxArtifact.extractor, "xlsx_text", "xlsx extraction did not use the xlsx extractor");
+      assert.equal(xlsxArtifact.metadata?.sheet_count, "2", "xlsx extraction did not preserve sheet count");
+      assert.equal(pptxArtifact.extractor, "pptx_text", "pptx extraction did not use the pptx extractor");
+      assert.equal(pptxArtifact.metadata?.slide_count, "1", "pptx extraction did not preserve slide count");
 
       const pdfExtract = await fs.readFile(path.join(workspaceDir, pdfManifest.extractedTextPath), "utf8");
       assert.ok(pdfExtract.includes("SwarmVault PDF extraction"), "pdf extraction did not preserve document text");
       const docxExtract = await fs.readFile(path.join(workspaceDir, docxManifest.extractedTextPath), "utf8");
       assert.ok(docxExtract.includes("Local DOCX files should extract readable text before analysis."), "docx extraction did not preserve document text");
+      const csvExtract = await fs.readFile(path.join(workspaceDir, csvManifest.extractedTextPath), "utf8");
+      const tsvExtract = await fs.readFile(path.join(workspaceDir, tsvManifest.extractedTextPath), "utf8");
+      const xlsxExtract = await fs.readFile(path.join(workspaceDir, xlsxManifest.extractedTextPath), "utf8");
+      const pptxExtract = await fs.readFile(path.join(workspaceDir, pptxManifest.extractedTextPath), "utf8");
+      const epubExtract = await fs.readFile(path.join(workspaceDir, epubManifests[0].extractedTextPath), "utf8");
+      assert.ok(csvExtract.includes("Format: CSV"), "csv extraction did not preserve dataset structure");
+      assert.ok(tsvExtract.includes("Format: TSV"), "tsv extraction did not preserve dataset structure");
+      assert.ok(xlsxExtract.includes("## Sheet: Overview"), "xlsx extraction did not preserve sheet previews");
+      assert.ok(pptxExtract.includes("Speaker notes stay searchable too."), "pptx extraction did not preserve notes");
+      assert.ok(epubExtract.includes("EPUB chapters should stay searchable."), "epub extraction did not preserve chapter text");
 
       await runCliJson(["compile"]);
       const imageAnalysis = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "analyses", `${imageManifest.sourceId}.json`), "utf8"));
@@ -563,6 +612,11 @@ try {
       const repoDir = path.join(workspaceDir, "tiny-matrix");
       await fs.cp(tinyMatrixFixtureDir, repoDir, { recursive: true });
       await fs.writeFile(path.join(repoDir, "docs", "brief.docx"), MINIMAL_DOCX);
+      await fs.writeFile(path.join(repoDir, "docs", "dataset.csv"), ["Metric,Value", "Users,12", "Errors,1"].join("\n"), "utf8");
+      await fs.writeFile(path.join(repoDir, "docs", "dataset.tsv"), ["Week\tSignups", "Week 1\t4", "Week 2\t8"].join("\n"), "utf8");
+      await fs.writeFile(path.join(repoDir, "docs", "workbook.xlsx"), await createSimpleXlsx());
+      await fs.writeFile(path.join(repoDir, "docs", "deck.pptx"), createSimplePptx());
+      await fs.writeFile(path.join(repoDir, "docs", "book.epub"), createSimpleEpub());
 
       const ingest = await runCliJson(["ingest", repoDir, "--repo-root", repoDir]);
       assert.ok(Array.isArray(ingest.imported) && ingest.imported.length >= 10, "tiny matrix did not import the expected sources");
@@ -578,10 +632,9 @@ try {
       for (const sourceKind of ["markdown", "text", "html", "pdf", "image", "code"]) {
         assert.ok(sourceKinds.has(sourceKind), `tiny matrix missing source kind ${sourceKind}`);
       }
-      assert.ok(
-        manifests.some((manifest) => manifest.sourceKind === "docx"),
-        "heuristic lane did not preserve any docx source manifest"
-      );
+      for (const sourceKind of ["docx", "epub", "csv", "xlsx", "pptx"]) {
+        assert.ok(manifests.some((manifest) => manifest.sourceKind === sourceKind), `heuristic lane did not preserve any ${sourceKind} source manifest`);
+      }
 
       const codeIndex = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "code-index.json"), "utf8"));
       const tinySourceIds = new Set(tinyManifests.map((manifest) => manifest.sourceId));
@@ -618,6 +671,13 @@ try {
       const htmlExtract = await fs.readFile(path.join(workspaceDir, htmlManifest.extractedTextPath), "utf8");
       assert.ok(htmlExtract.includes("Local HTML files should extract readable text before analysis."), "tiny matrix html extract was empty");
 
+      const csvManifest = manifests.find((manifest) => manifest.originalPath?.endsWith("/dataset.csv"));
+      const csvExtract = await fs.readFile(path.join(workspaceDir, csvManifest.extractedTextPath), "utf8");
+      assert.ok(csvExtract.includes("Format: CSV"), "tiny matrix csv extract did not preserve table structure");
+      const tsvManifest = manifests.find((manifest) => manifest.originalPath?.endsWith("/dataset.tsv"));
+      const tsvExtract = await fs.readFile(path.join(workspaceDir, tsvManifest.extractedTextPath), "utf8");
+      assert.ok(tsvExtract.includes("Format: TSV"), "tiny matrix tsv extract did not preserve table structure");
+
       const rstManifest = tinyManifests.find((manifest) => manifest.repoRelativePath === "docs/guide.rst");
       assert.equal(rstManifest?.mimeType, "text/x-rst", "tiny matrix rst file did not keep the expected mime type");
       const rstExtract = await fs.readFile(path.join(workspaceDir, rstManifest.extractedTextPath), "utf8");
@@ -629,6 +689,14 @@ try {
       const docxManifest = manifests.find((manifest) => manifest.sourceKind === "docx");
       const docxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, docxManifest.extractedMetadataPath), "utf8"));
       assert.equal(docxArtifact.extractor, "docx_text", "tiny matrix docx did not use docx_text extraction");
+      const xlsxManifest = manifests.find((manifest) => manifest.sourceKind === "xlsx");
+      const xlsxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, xlsxManifest.extractedMetadataPath), "utf8"));
+      assert.equal(xlsxArtifact.extractor, "xlsx_text", "tiny matrix xlsx did not use xlsx_text extraction");
+      const pptxManifest = manifests.find((manifest) => manifest.sourceKind === "pptx");
+      const pptxArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, pptxManifest.extractedMetadataPath), "utf8"));
+      assert.equal(pptxArtifact.extractor, "pptx_text", "tiny matrix pptx did not use pptx_text extraction");
+      const epubManifests = manifests.filter((manifest) => manifest.sourceKind === "epub");
+      assert.equal(epubManifests.length, 2, "tiny matrix epub did not split into chapter manifests");
       const htmlSourcePagePath = path.join(workspaceDir, "wiki", "sources", `${htmlManifest.sourceId}.md`);
       const htmlSourcePage = await fs.readFile(htmlSourcePagePath, "utf8");
       assert.ok(htmlSourcePage.includes("Tiny HTML Source"), "tiny matrix source page did not include html title");
@@ -1392,7 +1460,7 @@ try {
 
         const workspaceInfo = await client.callTool({ name: "workspace_info", arguments: {} });
         const workspaceJson = JSON.parse(readToolText(workspaceInfo));
-        assert.equal(workspaceJson.rootDir, workspaceDir, "workspace_info rootDir mismatch");
+        assert.equal(await fs.realpath(workspaceJson.rootDir), await fs.realpath(workspaceDir), "workspace_info rootDir mismatch");
 
         const searchResults = await client.callTool({ name: "search_pages", arguments: { query: "renderWidget", limit: 5 } });
         const searchJson = JSON.parse(readToolText(searchResults));
@@ -1433,12 +1501,16 @@ try {
       assert.equal(copilot.agent, "copilot", "install command returned wrong copilot agent");
       assert.equal(aider.agent, "aider", "install command returned wrong aider agent");
 
-      assert.equal(codex.target, path.join(workspaceDir, "AGENTS.md"), "codex target path mismatch");
-      assert.equal(claude.target, path.join(workspaceDir, "CLAUDE.md"), "claude target path mismatch");
-      assert.equal(opencode.target, path.join(workspaceDir, "AGENTS.md"), "opencode target path mismatch");
-      assert.equal(gemini.target, path.join(workspaceDir, "GEMINI.md"), "gemini target path mismatch");
-      assert.equal(copilot.target, path.join(workspaceDir, ".github", "copilot-instructions.md"), "copilot target path mismatch");
-      assert.equal(aider.target, path.join(workspaceDir, "CONVENTIONS.md"), "aider target path mismatch");
+      await assertSamePath(codex.target, path.join(workspaceDir, "AGENTS.md"), "codex target path mismatch");
+      await assertSamePath(claude.target, path.join(workspaceDir, "CLAUDE.md"), "claude target path mismatch");
+      await assertSamePath(opencode.target, path.join(workspaceDir, "AGENTS.md"), "opencode target path mismatch");
+      await assertSamePath(gemini.target, path.join(workspaceDir, "GEMINI.md"), "gemini target path mismatch");
+      await assertSamePath(
+        copilot.target,
+        path.join(workspaceDir, ".github", "copilot-instructions.md"),
+        "copilot target path mismatch"
+      );
+      await assertSamePath(aider.target, path.join(workspaceDir, "CONVENTIONS.md"), "aider target path mismatch");
 
       await assertExists(path.join(workspaceDir, "AGENTS.md"));
       await assertExists(path.join(workspaceDir, "CLAUDE.md"));
@@ -1467,11 +1539,18 @@ try {
       assert.ok(geminiContent.includes("# SwarmVault Rules"), "GEMINI.md missing managed rules");
       assert.ok(copilotContent.includes("# SwarmVault Repository Instructions"), "copilot instructions missing managed rules");
       assert.ok(conventionsContent.includes("# SwarmVault Conventions"), "CONVENTIONS.md missing managed rules");
-      assert.ok(Array.isArray(claude.targets) && claude.targets.includes(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js")));
-      assert.ok(Array.isArray(opencode.targets) && opencode.targets.includes(path.join(workspaceDir, ".opencode", "plugins", "swarmvault-graph-first.js")));
-      assert.ok(Array.isArray(gemini.targets) && gemini.targets.includes(path.join(workspaceDir, ".gemini", "settings.json")));
-      assert.ok(Array.isArray(copilot.targets) && copilot.targets.includes(path.join(workspaceDir, "AGENTS.md")));
-      assert.ok(Array.isArray(aider.targets) && aider.targets.includes(path.join(workspaceDir, ".aider.conf.yml")));
+      assert.ok(
+        Array.isArray(claude.targets) && (await targetListIncludesPath(claude.targets, path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js")))
+      );
+      assert.ok(
+        Array.isArray(opencode.targets) &&
+          (await targetListIncludesPath(opencode.targets, path.join(workspaceDir, ".opencode", "plugins", "swarmvault-graph-first.js")))
+      );
+      assert.ok(
+        Array.isArray(gemini.targets) && (await targetListIncludesPath(gemini.targets, path.join(workspaceDir, ".gemini", "settings.json")))
+      );
+      assert.ok(Array.isArray(copilot.targets) && (await targetListIncludesPath(copilot.targets, path.join(workspaceDir, "AGENTS.md"))));
+      assert.ok(Array.isArray(aider.targets) && (await targetListIncludesPath(aider.targets, path.join(workspaceDir, ".aider.conf.yml"))));
     });
 
     await runStep("agent-clis", async () => {
@@ -1750,6 +1829,163 @@ function createSimplePdf(text) {
   return Buffer.from(pdf, "utf8");
 }
 
+async function createSimpleXlsx() {
+  const XLSX = requireFromEnginePackage("xlsx");
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([
+      ["Metric", "Value"],
+      ["Users", 12],
+      ["Errors", 1]
+    ]),
+    "Overview"
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([
+      ["Week", "Signups"],
+      ["Week 1", 4],
+      ["Week 2", 8]
+    ]),
+    "Trends"
+  );
+  workbook.Props = { Title: "Tiny Workbook" };
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+}
+
+function createSimplePptx() {
+  return Buffer.from(
+    zipSync({
+      "[Content_Types].xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+          '<Default Extension="xml" ContentType="application/xml"/>',
+          '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>',
+          '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>',
+          '<Override PartName="/ppt/notesSlides/notesSlide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>',
+          '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>',
+          "</Types>"
+        ].join(""),
+        "utf8"
+      ),
+      "_rels/.rels": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>',
+          '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>',
+          "</Relationships>"
+        ].join(""),
+        "utf8"
+      ),
+      "docProps/core.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+          "<dc:title>Tiny Slide Deck</dc:title>",
+          "<dc:creator>SwarmVault Tests</dc:creator>",
+          "</cp:coreProperties>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/presentation.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
+          "<p:sldIdLst><p:sldId id=\"256\" r:id=\"rId1\"/></p:sldIdLst>",
+          "</p:presentation>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/_rels/presentation.xml.rels": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>',
+          "</Relationships>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/slides/slide1.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">',
+          "<p:cSld><p:spTree><p:sp><p:txBody>",
+          "<a:p><a:r><a:t>Tiny Slide Deck</a:t></a:r></a:p>",
+          "<a:p><a:r><a:t>Queue-backed workflows stay readable.</a:t></a:r></a:p>",
+          "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/slides/_rels/slide1.xml.rels": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/>',
+          "</Relationships>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/notesSlides/notesSlide1.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">',
+          "<p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Speaker notes stay searchable too.</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld>",
+          "</p:notes>"
+        ].join(""),
+        "utf8"
+      )
+    })
+  );
+}
+
+function createSimpleEpub() {
+  return Buffer.from(
+    zipSync({
+      mimetype: Buffer.from("application/epub+zip", "utf8"),
+      "META-INF/container.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">',
+          '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>',
+          "</container>"
+        ].join(""),
+        "utf8"
+      ),
+      "OEBPS/nav.xhtml": Buffer.from(
+        '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body><nav><h1>Table of Contents</h1></nav></body></html>',
+        "utf8"
+      ),
+      "OEBPS/content.opf": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">',
+          '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Tiny EPUB</dc:title><dc:creator>SwarmVault Tests</dc:creator></metadata>',
+          "<manifest>",
+          '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+          '<item id="chapter-1" href="chapter-1.xhtml" media-type="application/xhtml+xml"/>',
+          '<item id="chapter-2" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>',
+          "</manifest>",
+          '<spine><itemref idref="chapter-1"/><itemref idref="chapter-2"/></spine>',
+          "</package>"
+        ].join(""),
+        "utf8"
+      ),
+      "OEBPS/chapter-1.xhtml": Buffer.from(
+        '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body><h1>First Chapter</h1><p>EPUB chapters should stay searchable.</p></body></html>',
+        "utf8"
+      ),
+      "OEBPS/chapter-2.xhtml": Buffer.from(
+        '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Second Chapter</h1><p>Books belong in everyday vaults too.</p></body></html>',
+        "utf8"
+      )
+    })
+  );
+}
+
 function buildOverviewFixtureGraph() {
   const nodes = Array.from({ length: 5_100 }, (_, index) => ({
     id: `node-${index}`,
@@ -2022,6 +2258,20 @@ async function copyInboxBundle() {
 
 async function assertExists(targetPath) {
   await fs.access(targetPath);
+}
+
+async function canonicalPath(targetPath) {
+  return await fs.realpath(targetPath).catch(() => path.resolve(targetPath));
+}
+
+async function assertSamePath(actualPath, expectedPath, message) {
+  assert.equal(await canonicalPath(actualPath), await canonicalPath(expectedPath), message);
+}
+
+async function targetListIncludesPath(targets, expectedPath) {
+  const expected = await canonicalPath(expectedPath);
+  const resolvedTargets = await Promise.all((targets ?? []).map((target) => canonicalPath(target)));
+  return resolvedTargets.includes(expected);
 }
 
 async function assertMissing(targetPath) {

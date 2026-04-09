@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Broadened non-code ingest so SwarmVault now treats books, datasets, spreadsheets, and slide decks as first-class sources with library-backed EPUB, CSV/TSV, XLSX, and PPTX extraction instead of repo/code-only workflows
+- Added grouped multi-part ingest support and a uniform single-input summary envelope so one source file can expand into multiple manifests safely, including chapter-split EPUB ingestion with stable group metadata and stale-part pruning
+- Expanded source-page rendering, searchable extracted text, validation fixtures, installed-package heuristic smoke, localized README parity, ClawHub skill docs, and site copy for mainstream knowledge-work sources rather than code-first messaging
+
 ## 0.2.2
 
 - Added frontmatter-aware markdown semantic hashing so compile and analysis caches ignore operational frontmatter churn while still invalidating on title, summary, aliases, tags, authors, publication, canonical URL, and source-type changes

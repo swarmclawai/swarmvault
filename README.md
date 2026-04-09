@@ -8,7 +8,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**A local-first knowledge compiler for AI agents.** Turn raw files, URLs, and code into a persistent knowledge vault. Instead of losing work inside chat history, you get a markdown wiki, a knowledge graph, local search, and reviewable artifacts that stay on disk.
+**A local-first knowledge compiler for AI agents.** Turn books, articles, notes, datasets, slide decks, screenshots, URLs, and code into a persistent knowledge vault. Instead of losing work inside chat history, you get a markdown wiki, a knowledge graph, local search, and reviewable artifacts that stay on disk.
 
 Documentation on the website is currently English-first. If wording drifts between translations, [README.md](README.md) is the canonical source.
 
@@ -162,13 +162,17 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 | Input | Extensions / Sources | Extraction |
 |-------|---------------------|------------|
-| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | AST via tree-sitter + module resolution |
 | PDF | `.pdf` | Local text extraction |
 | DOCX | `.docx` | Local extraction with metadata |
+| EPUB books | `.epub` | Local chapter-split HTML-to-markdown extraction |
+| Datasets | `.csv .tsv` | Local tabular summary with bounded preview |
+| Spreadsheets | `.xlsx` | Local workbook and sheet preview extraction |
+| Slide decks | `.pptx` | Local slide and speaker-note extraction |
 | HTML | `.html`, URLs | Readability + Turndown to markdown |
 | Images | `.png .jpg .webp` | Vision provider (when configured) |
 | Research | arXiv, DOI, articles, X/Twitter | Normalized markdown via `swarmvault add` |
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
+| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | AST via tree-sitter + module resolution |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 | Managed sources | local directories, public GitHub repo roots, docs hubs | Registry-backed sync via `swarmvault source add` |
 

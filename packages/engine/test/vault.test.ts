@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { zipSync } from "fflate";
 import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
 import { semanticGraphMatches } from "../src/embeddings.js";
@@ -21,6 +22,7 @@ import {
   importInbox,
   ingestDirectory,
   ingestInput,
+  ingestInputDetailed,
   initVault,
   installAgent,
   installGitHooks,
@@ -216,6 +218,177 @@ const MINIMAL_DOCX = Buffer.from(
   "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",
   "base64"
 );
+
+async function createSimpleXlsx(): Promise<Buffer> {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+  const overview = XLSX.utils.aoa_to_sheet([
+    ["Metric", "Value"],
+    ["Users", 12],
+    ["Status", "stable"]
+  ]);
+  const trends = XLSX.utils.aoa_to_sheet([
+    ["Week", "Signups"],
+    ["Week 1", 4],
+    ["Week 2", 8]
+  ]);
+  XLSX.utils.book_append_sheet(workbook, overview, "Overview");
+  XLSX.utils.book_append_sheet(workbook, trends, "Trends");
+  workbook.Props = { Title: "Tiny Workbook" };
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+function createSimplePptx(): Buffer {
+  return Buffer.from(
+    zipSync({
+      "[Content_Types].xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+          '<Default Extension="xml" ContentType="application/xml"/>',
+          '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>',
+          '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>',
+          '<Override PartName="/ppt/notesSlides/notesSlide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>',
+          '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>',
+          "</Types>"
+        ].join(""),
+        "utf8"
+      ),
+      "_rels/.rels": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>',
+          '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>',
+          "</Relationships>"
+        ].join(""),
+        "utf8"
+      ),
+      "docProps/core.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/">',
+          "<dc:title>Tiny Slide Deck</dc:title>",
+          "<dc:creator>SwarmVault Tests</dc:creator>",
+          "</cp:coreProperties>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/presentation.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
+          '<p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>',
+          "</p:presentation>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/_rels/presentation.xml.rels": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>',
+          "</Relationships>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/slides/slide1.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">',
+          "<p:cSld><p:spTree>",
+          "<p:sp><p:txBody><a:p><a:r><a:t>Tiny Slide Deck</a:t></a:r></a:p><a:p><a:r><a:t>Queue-backed deployments stay understandable.</a:t></a:r></a:p></p:txBody></p:sp>",
+          "</p:spTree></p:cSld>",
+          "</p:sld>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/slides/_rels/slide1.xml.rels": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/>',
+          "</Relationships>"
+        ].join(""),
+        "utf8"
+      ),
+      "ppt/notesSlides/notesSlide1.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+          '<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">',
+          "<p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Speaker notes mention the queue between API and worker.</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld>",
+          "</p:notes>"
+        ].join(""),
+        "utf8"
+      )
+    })
+  );
+}
+
+function createSimpleEpub(chapters: Array<{ fileName: string; title: string; body: string }>): Buffer {
+  const manifestItems = chapters
+    .map((chapter, index) => `<item id="chapter-${index + 1}" href="${chapter.fileName}" media-type="application/xhtml+xml"/>`)
+    .join("");
+  const spineItems = chapters.map((_, index) => `<itemref idref="chapter-${index + 1}"/>`).join("");
+  const chapterEntries = Object.fromEntries(
+    chapters.map((chapter) => [
+      `OEBPS/${chapter.fileName}`,
+      Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<html xmlns="http://www.w3.org/1999/xhtml"><head>',
+          `<title>${chapter.title}</title>`,
+          "</head><body>",
+          `<h1>${chapter.title}</h1>`,
+          `<p>${chapter.body}</p>`,
+          "</body></html>"
+        ].join(""),
+        "utf8"
+      )
+    ])
+  );
+
+  return Buffer.from(
+    zipSync({
+      mimetype: Buffer.from("application/epub+zip", "utf8"),
+      "META-INF/container.xml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">',
+          '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>',
+          "</container>"
+        ].join(""),
+        "utf8"
+      ),
+      "OEBPS/nav.xhtml": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<html xmlns="http://www.w3.org/1999/xhtml"><body><nav><h1>Table of Contents</h1></nav></body></html>'
+        ].join(""),
+        "utf8"
+      ),
+      "OEBPS/content.opf": Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">',
+          '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">',
+          "<dc:title>Tiny EPUB</dc:title>",
+          "<dc:creator>SwarmVault Tests</dc:creator>",
+          "</metadata>",
+          "<manifest>",
+          '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+          manifestItems,
+          "</manifest>",
+          `<spine>${spineItems}</spine>`,
+          "</package>"
+        ].join(""),
+        "utf8"
+      ),
+      ...chapterEntries
+    })
+  );
+}
 
 function attachmentRelativePath(sourceId: string, storedAttachmentPath: string): string {
   return storedAttachmentPath.replace(new RegExp(`^raw/assets/${sourceId}/`), "");
@@ -525,6 +698,140 @@ describe("swarmvault workflow", () => {
     ) as SourceAnalysis;
     expect(analysis.summary).toContain("Local DOCX files should extract readable text before analysis.");
     expect(analysis.extractionHash).toBe(manifest.extractionHash);
+  });
+
+  it("extracts CSV and TSV datasets into bounded table summaries", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(path.join(rootDir, "metrics.csv"), ["Metric,Value,Status", "Users,12,stable", "Errors,1,watch"].join("\n"), "utf8");
+    await fs.writeFile(path.join(rootDir, "milestones.tsv"), ["Week\tSignups", "Week 1\t4", "Week 2\t8"].join("\n"), "utf8");
+
+    const csvManifest = await ingestInput(rootDir, "metrics.csv");
+    const tsvManifest = await ingestInput(rootDir, "milestones.tsv");
+
+    expect(csvManifest.sourceKind).toBe("csv");
+    expect(tsvManifest.sourceKind).toBe("csv");
+    expect(csvManifest.extractedTextPath).toBeTruthy();
+    expect(tsvManifest.extractedTextPath).toBeTruthy();
+
+    const csvExtract = await fs.readFile(path.join(rootDir, csvManifest.extractedTextPath as string), "utf8");
+    const tsvExtract = await fs.readFile(path.join(rootDir, tsvManifest.extractedTextPath as string), "utf8");
+    expect(csvExtract).toContain("Format: CSV");
+    expect(csvExtract).toContain("| Metric | Value | Status |");
+    expect(csvExtract).toContain("- Value: numeric");
+    expect(tsvExtract).toContain("Format: TSV");
+    expect(tsvExtract).toContain("| Week | Signups |");
+
+    const csvArtifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, csvManifest.extractedMetadataPath as string), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(csvArtifact.extractor).toBe("csv_text");
+    expect(csvArtifact.metadata?.format).toBe("csv");
+    expect(csvArtifact.metadata?.row_count).toBe("2");
+
+    await compileVault(rootDir);
+    const searchResults = await searchVault(rootDir, "Signups", 5);
+    expect(searchResults.some((result) => result.pageId === `source:${tsvManifest.sourceId}`)).toBe(true);
+  });
+
+  it("extracts XLSX workbooks into searchable sheet summaries", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(path.join(rootDir, "metrics.xlsx"), await createSimpleXlsx());
+
+    const manifest = await ingestInput(rootDir, "metrics.xlsx");
+    expect(manifest.sourceKind).toBe("xlsx");
+    expect(manifest.title).toBe("Tiny Workbook");
+    expect(manifest.extractedTextPath).toBeTruthy();
+    expect(manifest.extractedMetadataPath).toBeTruthy();
+
+    const extractedText = await fs.readFile(path.join(rootDir, manifest.extractedTextPath as string), "utf8");
+    expect(extractedText).toContain("# Tiny Workbook");
+    expect(extractedText).toContain("## Sheet: Overview");
+    expect(extractedText).toContain("Sheet Names: Overview, Trends");
+
+    const artifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, manifest.extractedMetadataPath as string), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(artifact.extractor).toBe("xlsx_text");
+    expect(artifact.metadata?.sheet_count).toBe("2");
+
+    await compileVault(rootDir);
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    expect(analysis.summary).toContain("Tiny Workbook");
+  });
+
+  it("extracts PPTX slides and speaker notes into sidecars", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(path.join(rootDir, "deck.pptx"), createSimplePptx());
+
+    const manifest = await ingestInput(rootDir, "deck.pptx");
+    expect(manifest.sourceKind).toBe("pptx");
+    expect(manifest.title).toBe("Tiny Slide Deck");
+    expect(manifest.extractedTextPath).toBeTruthy();
+    expect(manifest.extractedMetadataPath).toBeTruthy();
+
+    const extractedText = await fs.readFile(path.join(rootDir, manifest.extractedTextPath as string), "utf8");
+    expect(extractedText).toContain("Slides: 1");
+    expect(extractedText).toContain("Queue-backed deployments stay understandable.");
+    expect(extractedText).toContain("Speaker notes mention the queue between API and worker.");
+
+    const artifact = JSON.parse(
+      await fs.readFile(path.join(rootDir, manifest.extractedMetadataPath as string), "utf8")
+    ) as SourceExtractionArtifact;
+    expect(artifact.extractor).toBe("pptx_text");
+    expect(artifact.metadata?.slide_count).toBe("1");
+    expect(artifact.metadata?.title).toBe("Tiny Slide Deck");
+  });
+
+  it("splits EPUBs into chapter manifests and removes stale parts on re-ingest", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const epubPath = path.join(rootDir, "book.epub");
+    await fs.writeFile(
+      epubPath,
+      createSimpleEpub([
+        { fileName: "chapter-1.xhtml", title: "First Chapter", body: "Local-first wikis should keep chapter structure." },
+        { fileName: "chapter-2.xhtml", title: "Second Chapter", body: "Graph summaries should stay readable for non-code research." }
+      ])
+    );
+
+    const firstIngest = await ingestInputDetailed(rootDir, "book.epub");
+    expect(firstIngest.created).toHaveLength(2);
+    expect(firstIngest.removed).toHaveLength(0);
+    const chapterManifest = firstIngest.created[0]!;
+    expect(chapterManifest.sourceKind).toBe("epub");
+    expect(chapterManifest.sourceGroupId).toBeTruthy();
+    expect(chapterManifest.sourceGroupTitle).toBe("Tiny EPUB");
+    expect(chapterManifest.partCount).toBe(2);
+    expect(chapterManifest.partTitle).toBeTruthy();
+    expect(chapterManifest.details?.book_title).toBe("Tiny EPUB");
+
+    await compileVault(rootDir);
+    const sourcePage = await fs.readFile(path.join(rootDir, "wiki", "sources", `${chapterManifest.sourceId}.md`), "utf8");
+    expect(sourcePage).toContain("Source Group: Tiny EPUB");
+    expect(sourcePage).toContain("Part: 1/2 - First Chapter");
+    const searchResults = await searchVault(rootDir, "Second Chapter", 5);
+    expect(searchResults.some((result) => result.path.startsWith("sources/"))).toBe(true);
+
+    await fs.writeFile(
+      epubPath,
+      createSimpleEpub([{ fileName: "chapter-1.xhtml", title: "Only Chapter", body: "Re-ingest should prune removed chapter manifests." }])
+    );
+
+    const secondIngest = await ingestInputDetailed(rootDir, "book.epub");
+    expect(secondIngest.created).toHaveLength(0);
+    expect(secondIngest.updated).toHaveLength(1);
+    expect(secondIngest.removed).toHaveLength(1);
+    expect(secondIngest.updated[0]?.partCount).toBe(1);
+    expect(secondIngest.updated[0]?.partTitle).toBe("Only Chapter");
   });
 
   it("treats .rst files as first-class text sources with normalized extracted text", async () => {

@@ -26,7 +26,7 @@ SwarmVault is save-first. The files on disk are the product.
 - `state/graph.json` - compiled graph artifact
 - `state/search.sqlite` - local full-text index
 - `state/code-index.json` - repo-aware symbol/import index
-- `state/extracts/` - extraction markdown and JSON sidecars for PDF/image/doc sources
+- `state/extracts/` - extraction markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, and image sources
 - `state/approvals/` - review bundles from `compile --approve`
 - `state/benchmark.json` - latest benchmark/trust artifact
 - `state/watch/` - pending semantic refresh and watch status artifacts
