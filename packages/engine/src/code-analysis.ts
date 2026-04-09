@@ -2137,20 +2137,61 @@ async function readNearestGoModulePath(startPath: string, cache: Map<string, str
   }
 }
 
-function rustModuleAlias(repoRelativePath: string): string | undefined {
-  const withoutExt = stripCodeExtension(normalizeAlias(repoRelativePath));
-  // A Rust crate root lives at `src/lib.rs` or `src/main.rs`, so the segment after the
-  // right-most `src/` is the module path relative to the crate. Only falling back on
-  // `^src/` would misclassify files in monorepos where the crate lives at, for example,
-  // `packages/engine/src/lib.rs` — those should still alias as `crate`, not
-  // `crate::packages::engine::src::lib`.
-  const srcIdx = withoutExt.lastIndexOf("/src/");
-  const withinCrate = srcIdx >= 0 ? withoutExt.slice(srcIdx + "/src/".length) : withoutExt.replace(/^src\//, "");
-  const trimmed = withinCrate.replace(/\/mod$/i, "");
-  if (!trimmed || trimmed === "lib" || trimmed === "main") {
-    return "crate";
+// Return every plausible `crate::X::Y` alias for a Rust file path. Rust projects live
+// in three common layouts and we cannot tell from the path alone which one applies
+// without reading Cargo.toml:
+//
+//   1. Standard crate:   src/lib.rs → alias `crate::...`
+//   2. Nested crate:     some/where/src/lib.rs → alias starts at the rightmost /src/
+//   3. Non-src crate:    ripgrep's `crates/core/flags/*` where Cargo.toml at the
+//                        workspace root points `[[bin]]` at `crates/core/main.rs`
+//
+// Rather than parse Cargo.toml, record every progressively-stripped ancestor variant.
+// A `filterRustCandidatesToSameCrate` pass at resolution time keeps the matches that
+// share the consumer file's crate root, which prevents the broader alias set from
+// causing cross-crate collisions.
+function rustModuleAliases(repoRelativePath: string): string[] {
+  const withoutExt = stripCodeExtension(normalizeAlias(repoRelativePath)).replace(/\/mod$/i, "");
+  if (!withoutExt) {
+    return [];
   }
-  return `crate::${trimmed.replace(/\//g, "::")}`;
+
+  const result: string[] = [];
+  const push = (moduleTail: string) => {
+    const trimmed = moduleTail.replace(/^\/+|\/+$/g, "");
+    if (!trimmed || trimmed === "lib" || trimmed === "main") {
+      result.push("crate");
+      return;
+    }
+    // Drop a trailing `/lib` or `/main` so `foo/bar/lib` becomes `crate::foo::bar`.
+    const rootStripped = trimmed.replace(/\/(?:lib|main)$/i, "");
+    if (rootStripped !== trimmed && rootStripped) {
+      result.push(`crate::${rootStripped.replace(/\//g, "::")}`);
+    }
+    result.push(`crate::${trimmed.replace(/\//g, "::")}`);
+  };
+
+  // 1. If the path contains `/src/`, the segment after the right-most `/src/` is the
+  //    canonical crate-relative module path. This is the common case.
+  const srcIdx = withoutExt.lastIndexOf("/src/");
+  if (srcIdx >= 0) {
+    push(withoutExt.slice(srcIdx + "/src/".length));
+  }
+
+  // 2. Strip the `src/` prefix if the path starts with it (top-level crate).
+  if (withoutExt.startsWith("src/")) {
+    push(withoutExt.slice("src/".length));
+  }
+
+  // 3. Record progressively-stripped ancestor variants so non-standard layouts match.
+  //    This is what catches ripgrep-style repos where Cargo.toml's `[[bin]]` points at
+  //    a non-src path like `crates/core/main.rs`.
+  const segments = withoutExt.split("/").filter(Boolean);
+  for (let start = 0; start < segments.length; start += 1) {
+    push(segments.slice(start).join("/"));
+  }
+
+  return uniqueBy(result.filter(Boolean), (item) => item);
 }
 
 function candidateExtensionsFor(language: CodeLanguage): string[] {
@@ -2232,7 +2273,9 @@ export async function buildCodeIndex(rootDir: string, manifests: SourceManifest[
         break;
       case "rust":
         if (repoRelativePath) {
-          recordAlias(aliases, rustModuleAlias(repoRelativePath));
+          for (const alias of rustModuleAliases(repoRelativePath)) {
+            recordAlias(aliases, alias);
+          }
         }
         break;
       case "go": {
@@ -2357,6 +2400,13 @@ function aliasMatches(lookup: CodeIndexLookup, ...aliases: Array<string | undefi
   );
 }
 
+// Case-exact variant used for Rust, which is case-sensitive — `Error` is a type and
+// `error` is a module, so the lowercase fallback in `aliasMatches` would incorrectly
+// match `crate::Error` to a sibling `error.rs` in an unrelated crate.
+function aliasMatchesExact(lookup: CodeIndexLookup, alias: string): CodeIndexEntry[] {
+  return lookup.byAlias.get(normalizeAlias(alias)) ?? [];
+}
+
 function repoPathMatches(lookup: CodeIndexLookup, ...repoPaths: string[]): CodeIndexEntry[] {
   return uniqueBy(
     repoPaths.map((repoPath) => lookup.byRepoPath.get(normalizeAlias(repoPath))).filter((entry): entry is CodeIndexEntry => Boolean(entry)),
@@ -2376,37 +2426,164 @@ function resolvePythonRelativeAliases(repoRelativePath: string, specifier: strin
 
 function resolveRustAliases(manifest: SourceManifest, specifier: string): string[] {
   const repoRelativePath = manifest.repoRelativePath ? normalizeAlias(manifest.repoRelativePath) : "";
-  const currentAlias = repoRelativePath ? rustModuleAlias(repoRelativePath) : undefined;
-  if (!specifier.startsWith("self::") && !specifier.startsWith("super::")) {
+  if (!specifier.startsWith("self::") && !specifier.startsWith("super::") && specifier !== "self" && specifier !== "super") {
     return [specifier];
   }
-  if (!currentAlias) {
+  const candidateAliases = repoRelativePath ? rustModuleAliases(repoRelativePath) : [];
+  if (candidateAliases.length === 0) {
     return [];
   }
-  const currentParts = currentAlias
-    .replace(/^crate(?:::)?/, "")
-    .split("::")
-    .filter(Boolean);
-  if (specifier.startsWith("self::")) {
-    return [`crate${currentParts.length ? `::${currentParts.join("::")}` : ""}::${specifier.slice("self::".length)}`];
-  }
-  return [
-    `crate${currentParts.length > 1 ? `::${currentParts.slice(0, -1).join("::")}` : ""}::${specifier.slice("super::".length)}`
+  const tailAfter = specifier.startsWith("self::")
+    ? specifier.slice("self::".length)
+    : specifier.startsWith("super::")
+      ? specifier.slice("super::".length)
+      : "";
+  const superRelative = specifier.startsWith("super");
+  const expansions: string[] = [];
+  for (const currentAlias of candidateAliases) {
+    const currentParts = currentAlias
+      .replace(/^crate(?:::)?/, "")
+      .split("::")
+      .filter(Boolean);
+    if (superRelative) {
+      if (currentParts.length > 0) {
+        const parentParts = currentParts.slice(0, -1);
+        const expanded = `crate${parentParts.length ? `::${parentParts.join("::")}` : ""}${tailAfter ? `::${tailAfter}` : ""}`
+          .replace(/::+/g, "::")
+          .replace(/::$/, "");
+        expansions.push(expanded);
+      }
+      continue;
+    }
+    const expanded = `crate${currentParts.length ? `::${currentParts.join("::")}` : ""}${tailAfter ? `::${tailAfter}` : ""}`
       .replace(/::+/g, "::")
-      .replace(/::$/, "")
-  ];
+      .replace(/::$/, "");
+    expansions.push(expanded);
+  }
+  return uniqueBy(expansions, (item) => item);
+}
+
+// Longest prefix of a repo-relative path ending at the right-most `/src/`. Used to
+// scope Rust crate-rooted imports (`crate::`/`self::`/`super::`) to candidates that
+// live in the same Cargo crate, which matters in multi-crate workspaces where every
+// lib.rs aliases as `crate` and would otherwise all match at once.
+function rustCrateRootPrefix(repoRelativePath: string | undefined): string | undefined {
+  if (!repoRelativePath) {
+    return undefined;
+  }
+  const normalized = normalizeAlias(repoRelativePath);
+  const idx = normalized.lastIndexOf("/src/");
+  if (idx >= 0) {
+    return normalized.slice(0, idx + "/src/".length);
+  }
+  if (normalized.startsWith("src/")) {
+    return "src/";
+  }
+  return undefined;
+}
+
+function filterRustCandidatesToSameCrate(candidates: CodeIndexEntry[], consumerPath: string | undefined): CodeIndexEntry[] {
+  // Drop self-matches first so `self::macros` never resolves to the consumer itself.
+  const normalizedConsumer = consumerPath ? normalizeAlias(consumerPath) : "";
+  const withoutSelf = normalizedConsumer
+    ? candidates.filter((entry) => normalizeAlias(entry.repoRelativePath ?? "") !== normalizedConsumer)
+    : candidates;
+  if (withoutSelf.length <= 1) {
+    return withoutSelf;
+  }
+
+  // Standard `/src/` scoping covers Cargo's conventional layout.
+  const cratePrefix = rustCrateRootPrefix(consumerPath);
+  if (cratePrefix) {
+    const sameCrate = withoutSelf.filter((entry) => normalizeAlias(entry.repoRelativePath ?? "").startsWith(cratePrefix));
+    if (sameCrate.length > 0) {
+      return sameCrate;
+    }
+  }
+
+  // Fallback for non-standard layouts (e.g. ripgrep's `crates/core/*` files that live
+  // outside any `/src/` tree and for integration tests under `tests/`): walk up the
+  // consumer's ancestor directories and keep the narrowest set that contains at least
+  // one candidate. The closest shared ancestor is by construction the Cargo crate
+  // root for standard layouts and the enclosing module directory for the rest.
+  if (normalizedConsumer) {
+    let dir = path.posix.dirname(normalizedConsumer);
+    while (dir && dir !== "." && dir !== "/") {
+      const prefix = `${dir}/`;
+      const sameTree = withoutSelf.filter((entry) => normalizeAlias(entry.repoRelativePath ?? "").startsWith(prefix));
+      if (sameTree.length > 0) {
+        return sameTree;
+      }
+      const parent = path.posix.dirname(dir);
+      if (parent === dir) {
+        break;
+      }
+      dir = parent;
+    }
+  }
+
+  return withoutSelf;
+}
+
+// For a Rust specifier like `crate::a::b::Thing`, try matching the full path first,
+// then progressively drop the trailing segment. This resolves both the module case
+// (`crate::a::b` → `a/b.rs`) and the "trailing symbol" case (where `Thing` is a type
+// defined in `a/b.rs`) without having to guess whether the final segment is a module
+// or a symbol. Bare `crate` / `self` / `super` at the root is still looked up (so
+// `crate::SymbolName` falls back to matching the current crate's `lib.rs`), but once
+// the root keyword is checked and doesn't match, the loop stops.
+function resolveRustAliasWithStripping(alias: string, lookup: CodeIndexLookup, consumerPath: string | undefined): CodeIndexEntry[] {
+  const segments = alias.split("::");
+  while (segments.length > 0) {
+    const candidate = segments.join("::");
+    const matches = aliasMatchesExact(lookup, candidate);
+    const filtered = matches.length > 0 ? filterRustCandidatesToSameCrate(matches, consumerPath) : [];
+    if (filtered.length > 0) {
+      return filtered;
+    }
+    if (candidate === "crate" || candidate === "self" || candidate === "super") {
+      break;
+    }
+    segments.pop();
+  }
+  return [];
 }
 
 function luaSpecifierLooksLocal(specifier: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$/.test(specifier);
 }
 
-function resolveLuaModuleCandidates(specifier: string): string[] {
+function resolveLuaModuleCandidates(specifier: string, repoRelativePath?: string): string[] {
   const normalized = normalizeAlias(specifier.replace(/\./g, "/"));
   if (!normalized) {
     return [];
   }
-  return uniqueBy([`${normalized}.lua`, path.posix.join(normalized, "init.lua")], (item) => item);
+  // Lua's default `package.path` is `./?.lua;./?/init.lua`. Consumers run Lua from
+  // either the repo root or an embedded `src/` / `lua/` directory, and idiomatic
+  // `require("pkg.mod")` references resolve against whichever is on the path. Try
+  // each common "lua package root" layout — the plain form, an enclosing `src/`
+  // directory, an enclosing `lua/` directory (nvim/love convention), and any ancestor
+  // of the consumer file up to its package root.
+  const bases = new Set<string>([normalized]);
+  bases.add(`src/${normalized}`);
+  bases.add(`lua/${normalized}`);
+  if (repoRelativePath) {
+    let dir = path.posix.dirname(repoRelativePath);
+    while (dir && dir !== "." && dir !== "/") {
+      bases.add(`${dir}/${normalized}`);
+      const parent = path.posix.dirname(dir);
+      if (parent === dir) {
+        break;
+      }
+      dir = parent;
+    }
+  }
+  const candidates: string[] = [];
+  for (const base of bases) {
+    candidates.push(`${base}.lua`);
+    candidates.push(path.posix.join(base, "init.lua"));
+  }
+  return uniqueBy(candidates, (item) => item);
 }
 
 function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, lookup: CodeIndexLookup): CodeIndexEntry[] {
@@ -2441,7 +2618,7 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
         : aliasMatches(lookup, codeImport.specifier);
     case "lua":
       return luaSpecifierLooksLocal(codeImport.specifier)
-        ? repoPathMatches(lookup, ...resolveLuaModuleCandidates(codeImport.specifier))
+        ? repoPathMatches(lookup, ...resolveLuaModuleCandidates(codeImport.specifier, repoRelativePath))
         : aliasMatches(lookup, codeImport.specifier, codeImport.specifier.replace(/\./g, "/"));
     case "zig":
       return repoRelativePath && (!codeImport.isExternal || codeImport.specifier.endsWith(".zig"))
@@ -2466,8 +2643,15 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
         codeImport.specifier.replace(/\\/g, "/"),
         stripCodeExtension(codeImport.specifier.replace(/\\/g, "/"))
       );
-    case "rust":
-      return aliasMatches(lookup, codeImport.specifier, ...resolveRustAliases(manifest, codeImport.specifier));
+    case "rust": {
+      for (const alias of [codeImport.specifier, ...resolveRustAliases(manifest, codeImport.specifier)]) {
+        const matches = resolveRustAliasWithStripping(alias, lookup, repoRelativePath);
+        if (matches.length > 0) {
+          return matches;
+        }
+      }
+      return [];
+    }
     case "c":
     case "cpp":
       return repoRelativePath && !codeImport.isExternal
@@ -2479,7 +2663,12 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
 }
 
 function importLooksLocal(manifest: SourceManifest, codeImport: CodeImport, candidates: CodeIndexEntry[]): boolean {
-  if (candidates.length > 0) {
+  // A single unambiguous candidate is a strong signal that the import is local, and
+  // overrides the parser's conservative default where applicable. Anything else
+  // (including zero matches or an ambiguous multi-candidate name collision between
+  // an external gem and some unrelated internal namespace) falls through to the
+  // language-specific heuristics below.
+  if (candidates.length === 1) {
     return true;
   }
   const language = manifest.language ?? inferCodeLanguage(manifest.originalPath ?? manifest.storedPath, manifest.mimeType);

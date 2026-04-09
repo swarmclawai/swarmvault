@@ -192,7 +192,6 @@ export function buildBenchmarkArtifact(input: {
     reductionRatio,
     sampleQuestions: input.questions,
     perQuestion,
-    questionResults: perQuestion,
     summary
   };
 }

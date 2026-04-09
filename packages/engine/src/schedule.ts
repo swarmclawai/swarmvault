@@ -263,7 +263,12 @@ export async function serveSchedules(rootDir: string, pollMs = 30_000): Promise<
     }
     running = true;
     try {
-      const schedules = await listSchedules(rootDir);
+      let schedules: Awaited<ReturnType<typeof listSchedules>> = [];
+      try {
+        schedules = await listSchedules(rootDir);
+      } catch (error) {
+        console.error(`[swarmvault-schedule] failed to list schedules: ${error instanceof Error ? error.message : String(error)}`);
+      }
       const due = schedules
         .filter((item) => item.enabled)
         .filter((item) => !item.nextRunAt || Date.parse(item.nextRunAt) <= Date.now())
@@ -272,7 +277,15 @@ export async function serveSchedules(rootDir: string, pollMs = 30_000): Promise<
         if (closed) {
           break;
         }
-        await runSchedule(rootDir, schedule.jobId);
+        // Isolate per-job failures so a single bad schedule cannot crash the
+        // entire loop. runSchedule already records error state on the job
+        // itself when it returns a ScheduleRun with { status: "error" }, but
+        // if it throws before getting there we still need to continue.
+        try {
+          await runSchedule(rootDir, schedule.jobId);
+        } catch (error) {
+          console.error(`[swarmvault-schedule] job ${schedule.jobId} crashed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     } finally {
       running = false;

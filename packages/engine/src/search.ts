@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
+import { tokenize } from "./tokenize.js";
 import type { GraphPage, PageKind, PageStatus, SearchResult, SourceCaptureType, SourceClass, SourceManifest } from "./types.js";
 import { ensureDir } from "./utils.js";
 
@@ -65,12 +66,7 @@ function getDatabaseSync(): DatabaseSyncCtor {
 }
 
 function toFtsQuery(query: string): string {
-  const tokens =
-    query
-      .toLowerCase()
-      .match(/[a-z0-9]{2,}/g)
-      ?.filter(Boolean) ?? [];
-  return tokens.join(" OR ");
+  return tokenize(query).join(" OR ");
 }
 
 function normalizeKind(value: unknown): PageKind | undefined {

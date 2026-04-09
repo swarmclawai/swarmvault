@@ -31,6 +31,7 @@ import {
   isSlackExportDirectory
 } from "./extraction.js";
 import { appendLogEntry } from "./logs.js";
+import { firstMarkdownHeading } from "./markdown-ast.js";
 import { classifyRepoPath, normalizeExtractClasses } from "./source-classification.js";
 import { readManagedSourcesIfPresent } from "./source-registry.js";
 import type {
@@ -270,8 +271,7 @@ function titleFromText(fallback: string, content: string, filePath?: string): st
       return rstTitle;
     }
   }
-  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  return heading || fallback;
+  return firstMarkdownHeading(content) ?? fallback;
 }
 
 function guessMimeType(target: string): string {
@@ -499,8 +499,7 @@ function normalizeRstExtractedText(content: string): string {
 
 function titleFromRst(fallback: string, content: string): string {
   const normalized = normalizeRstExtractedText(content);
-  const heading = normalized.match(/^#+\s+(.+)$/m)?.[1]?.trim();
-  return heading || fallback;
+  return firstMarkdownHeading(normalized) ?? fallback;
 }
 
 function extractedTextForPlainSource(filePath: string, sourceKind: SourceManifest["sourceKind"], content: string): string {

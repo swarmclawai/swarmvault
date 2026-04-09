@@ -5,6 +5,7 @@ import { initWorkspace } from "./config.js";
 import { importInbox, listTrackedRepoRoots, syncTrackedReposForWatch } from "./ingest.js";
 import { appendWatchRun, recordSession } from "./logs.js";
 import type { WatchController, WatchOptions, WatchStatusResult } from "./types.js";
+import { isPathWithin } from "./utils.js";
 import { compileVault, lintVault } from "./vault.js";
 import {
   markPagesStaleForSources,
@@ -33,11 +34,6 @@ type WatchCycleResult = {
   changedPages: string[];
   lintFindingCount?: number;
 };
-
-function withinRoot(rootPath: string, targetPath: string): boolean {
-  const relative = path.relative(rootPath, targetPath);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
 
 function hasIgnoredRepoSegment(baseDir: string, targetPath: string): boolean {
   const relativePath = path.relative(baseDir, targetPath);
@@ -228,12 +224,13 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
     ignored: (targetPath) => {
       const absolutePath = path.resolve(targetPath);
       const primaryTarget =
-        watchTargets.filter((watchTarget) => withinRoot(watchTarget, absolutePath)).sort((left, right) => right.length - left.length)[0] ??
-        null;
+        watchTargets
+          .filter((watchTarget) => isPathWithin(watchTarget, absolutePath))
+          .sort((left, right) => right.length - left.length)[0] ?? null;
       if (!primaryTarget) {
         return false;
       }
-      if (primaryTarget !== inboxWatchRoot && ignoredRoots.some((ignoreRoot) => withinRoot(ignoreRoot, absolutePath))) {
+      if (primaryTarget !== inboxWatchRoot && ignoredRoots.some((ignoreRoot) => isPathWithin(ignoreRoot, absolutePath))) {
         return true;
       }
       return hasIgnoredRepoSegment(primaryTarget, absolutePath);
@@ -433,7 +430,7 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
   const reasonForPath = (targetPath: string) => {
     const baseDir =
       watchTargets
-        .filter((watchTarget) => withinRoot(watchTarget, path.resolve(targetPath)))
+        .filter((watchTarget) => isPathWithin(watchTarget, path.resolve(targetPath)))
         .sort((left, right) => right.length - left.length)[0] ?? paths.inboxDir;
     return path.relative(baseDir, targetPath) || ".";
   };

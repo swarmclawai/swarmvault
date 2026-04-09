@@ -2138,6 +2138,19 @@ describe("swarmvault workflow", () => {
     const sessionsResource = await client.readResource({ uri: "swarmvault://sessions" });
     expect((sessionsResource.contents[0] as { text: string }).text).toContain("compile");
 
+    // A failing tool handler (e.g. get_node with an unknown target) must not
+    // crash the server. The safeHandler wrapper should return an MCP error
+    // response and the session should stay alive for subsequent tool calls.
+    const unresolved = await client.callTool({ name: "get_node", arguments: { target: "definitely-not-in-the-graph" } });
+    expect(unresolved.isError).toBe(true);
+    const unresolvedContent = unresolved.content as ToolContent;
+    expect(unresolvedContent[0]?.text).toMatch(/could not resolve/i);
+
+    // After the failing call the server should still answer healthy tools.
+    const postFailureInfo = await client.callTool({ name: "workspace_info", arguments: {} });
+    const postFailureContent = postFailureInfo.content as ToolContent;
+    expect(JSON.parse(postFailureContent[0]?.text ?? "{}").rootDir).toBe(rootDir);
+
     await client.close();
     await server.close();
   });
