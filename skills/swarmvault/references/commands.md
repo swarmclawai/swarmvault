@@ -4,7 +4,7 @@
 
 ```bash
 swarmvault init
-swarmvault init --obsidian
+swarmvault init --obsidian --profile personal-research
 swarmvault --version
 ```
 
@@ -12,13 +12,14 @@ swarmvault --version
 
 ```bash
 swarmvault source add https://github.com/karpathy/micrograd
-swarmvault source add ./exports/customer-call.srt --review
+swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source list
 swarmvault source reload --all
 swarmvault source review <source-id>
+swarmvault source guide <source-id>
 swarmvault source delete <source-id>
 swarmvault ingest <path-or-url>
-swarmvault ingest <path-or-url> --review
+swarmvault ingest <path-or-url> --guide
 swarmvault ingest <directory> --repo-root .
 swarmvault add <url-or-doi-or-arxiv-id>
 swarmvault inbox import <path>

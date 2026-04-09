@@ -226,7 +226,59 @@ export function defaultVaultConfig(): VaultConfig {
   };
 }
 
-export function defaultVaultSchema(): string {
+export function defaultVaultSchema(profile: "default" | "personal-research" = "default"): string {
+  if (profile === "personal-research") {
+    return [
+      "# SwarmVault Schema",
+      "",
+      "Edit this file to teach SwarmVault how this research vault should be organized and maintained.",
+      "",
+      "## Vault Purpose",
+      "",
+      "- Track a personal research domain, reading program, or evolving thesis.",
+      "- Prefer source-grounded summaries that help you revisit what mattered and what changed your mind.",
+      "",
+      "## Working Style",
+      "",
+      "- Favor one-source-at-a-time guided ingest and explicit review before treating a claim as canonical.",
+      "- Preserve uncertainty, contradictions, and open questions instead of forcing synthesis too early.",
+      "- Save useful summaries, briefs, and source guides back into the wiki so they become durable context.",
+      "",
+      "## Naming Conventions",
+      "",
+      "- Prefer stable, descriptive page titles.",
+      "- Keep concept, thesis, and entity names specific to the subject area.",
+      "- Use source pages for grounded notes, concept/entity pages for accumulated understanding, and outputs for guided integration artifacts.",
+      "",
+      "## Page Structure Rules",
+      "",
+      "- Source pages should stay grounded in the original material.",
+      "- Concept and entity pages should aggregate source-backed claims instead of inventing new ones.",
+      "- Summaries should call out what is new, what is reinforcing, and what is conflicting.",
+      "- Preserve contradictions instead of smoothing them away.",
+      "",
+      "## Categories",
+      "",
+      "- List domain-specific concept categories here.",
+      "- Add thesis pages, recurring themes, or reading tracks that should act as canonical hubs.",
+      "",
+      "## Relationship Types",
+      "",
+      "- Mentions",
+      "- Supports",
+      "- Contradicts",
+      "- Builds On",
+      "- Questions",
+      "",
+      "## Dashboard Priorities",
+      "",
+      "- Recent source guides should surface active reading and ingestion progress.",
+      "- Open questions should stay visible until resolved or explicitly archived.",
+      "- Contradictions and follow-up sources should be easy to scan from dashboards.",
+      ""
+    ].join("\n");
+  }
+
   return [
     "# SwarmVault Schema",
     "",
@@ -353,7 +405,10 @@ export async function loadVaultConfig(rootDir: string): Promise<{ config: VaultC
   };
 }
 
-export async function initWorkspace(rootDir: string): Promise<{ config: VaultConfig; paths: ResolvedPaths }> {
+export async function initWorkspace(
+  rootDir: string,
+  options: { profile?: "default" | "personal-research" } = {}
+): Promise<{ config: VaultConfig; paths: ResolvedPaths }> {
   const configPath = await findConfigPath(rootDir);
   const schemaPath = await findSchemaPath(rootDir);
   const config = (await fileExists(configPath)) ? (await loadVaultConfig(rootDir)).config : defaultVaultConfig();
@@ -389,7 +444,7 @@ export async function initWorkspace(rootDir: string): Promise<{ config: VaultCon
 
   if (!(await fileExists(primarySchemaPath))) {
     await ensureDir(path.dirname(primarySchemaPath));
-    await fs.writeFile(primarySchemaPath, defaultVaultSchema(), "utf8");
+    await fs.writeFile(primarySchemaPath, defaultVaultSchema(options.profile ?? "default"), "utf8");
   }
 
   return { config, paths };

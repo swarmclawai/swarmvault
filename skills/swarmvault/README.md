@@ -18,7 +18,7 @@ Install the CLI it depends on:
 npm install -g @swarmvaultai/cli
 swarmvault --version
 swarmvault source add https://github.com/karpathy/micrograd
-swarmvault ingest ./meeting.srt --review
+swarmvault ingest ./meeting.srt --guide
 ```
 
 Requirements:
@@ -44,8 +44,8 @@ npm install -g @swarmvaultai/cli@latest
 ## Quickstart
 
 ```bash
-swarmvault init --obsidian
-swarmvault source add ./exports/customer-call.srt --review
+swarmvault init --obsidian --profile personal-research
+swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
@@ -82,7 +82,7 @@ The published ClawHub package is intentionally text-only in this release.
 2. Treat `swarmvault.schema.md` as the vault contract before serious compile or query work.
 3. Use `swarmvault source add` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Add one-off material with `swarmvault ingest`, `swarmvault add`, or `swarmvault inbox import`.
-5. Use `swarmvault ingest --review`, `swarmvault source add --review`, or `swarmvault source review <id>` when you want a source-scoped review page and approval bundle before changing canonical pages.
+5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, or `swarmvault source guide <id>` when you want the stronger guided-ingest bundle before changing canonical pages.
 6. Compile with `swarmvault compile` or `swarmvault compile --approve`.
 7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search.
 8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable.
@@ -94,7 +94,8 @@ The published ClawHub package is intentionally text-only in this release.
 - `wiki/` for compiled source, concept, entity, code, graph, and output pages
 - `wiki/outputs/source-briefs/` for recurring-source onboarding briefs
 - `wiki/outputs/source-reviews/` for staged source-scoped review artifacts
-- `wiki/dashboards/` for recent sources, timeline, contradictions, and open questions
+- `wiki/outputs/source-guides/` for guided source integration artifacts
+- `wiki/dashboards/` for recent sources, reading log, timeline, source guides, research map, contradictions, and open questions
 - `wiki/candidates/` for staged concept/entity pages
 - `state/graph.json` for the compiled graph
 - `state/search.sqlite` for local search

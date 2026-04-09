@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Added guided-ingest workflows with `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, and `swarmvault source guide <id>`, all built on the existing approval system with labeled guided bundles instead of a separate review subsystem
+- Added `swarmvault init --profile personal-research`, a more opinionated research-oriented starter schema, and new vault guidance that steers one-source-at-a-time integration, evolving summaries, open questions, and thesis tracking
+- Added integration-oriented source guide artifacts under `wiki/outputs/source-guides/` plus new markdown-first dashboards for reading progress, guided-source activity, and research-map navigation
+- Expanded deterministic tests, packaged live-smoke coverage, and release docs for guided ingest so the tarball- and npm-installed CLI now prove guide bundle staging, dashboard generation, and source-led approval labeling end to end
+
 ## 0.4.0
 
 - Added first-class personal-knowledge ingest for transcripts (`.srt`, `.vtt`), Slack exports, email (`.eml`, `.mbox`), and calendar files (`.ics`) using parser- and library-backed extraction instead of code-first heuristics

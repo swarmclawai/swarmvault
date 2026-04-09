@@ -56,13 +56,13 @@ Expected shape:
 
 Prompt:
 
-> Ingest this transcript or export file, stage a review, and tell me what dashboard pages I should open first.
+> Ingest this transcript or export file, run the guided workflow, and tell me what dashboard pages I should open first.
 
 Expected shape:
 
-- uses `swarmvault ingest --review`, `swarmvault source add --review`, or `swarmvault source review`
-- points at `wiki/outputs/source-reviews/`
-- points at `wiki/dashboards/timeline.md` or `wiki/dashboards/recent-sources.md`
+- uses `swarmvault ingest --guide`, `swarmvault source add --guide`, or `swarmvault source guide`
+- points at `wiki/outputs/source-guides/`
+- points at `wiki/dashboards/source-guides.md`, `wiki/dashboards/timeline.md`, or `wiki/dashboards/reading-log.md`
 - treats the approval queue as part of the workflow instead of silently overwriting canonical pages
 
 ## Graph prompt

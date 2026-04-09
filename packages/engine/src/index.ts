@@ -22,6 +22,8 @@ export { loadVaultSchema, loadVaultSchemas } from "./schema.js";
 export {
   addManagedSource,
   deleteManagedSource,
+  guideManagedSource,
+  guideSourceScope,
   listManagedSourceRecords,
   reloadManagedSources,
   reviewManagedSource,

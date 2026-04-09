@@ -55,10 +55,10 @@ my-vault/
 ![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
 
 ```bash
-swarmvault init --obsidian
+swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
-swarmvault ingest ./meeting.srt --review
+swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -123,10 +123,11 @@ For local semantic graph query without API keys, use an embedding-capable local 
 The fastest way to make SwarmVault useful is the managed-source flow:
 
 ```bash
-swarmvault source add ./exports/customer-call.srt --review
+swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source list
+swarmvault source guide file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
@@ -199,9 +200,9 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 
-**Guided source review** - `ingest --review`, `source add --review`, and `source review <id>` generate source-scoped review pages under `wiki/outputs/source-reviews/` and stage approval bundles before the canonical wiki changes.
+**Guided ingest** - `ingest --guide`, `source add --guide`, `source reload --guide`, and `source guide <id>` generate source briefs, source reviews, and integration-oriented source guide pages under `wiki/outputs/source-guides/`, then stage approval bundles before you accept canonical updates.
 
-**Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a timeline, contradictions, and open questions. The pages work as plain markdown and get better when opened in Obsidian with Dataview.
+**Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source guides, a research map, contradictions, and open questions. The pages work as plain markdown and get better when opened in Obsidian with Dataview.
 
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
@@ -211,7 +212,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Automation** - watch mode, git hooks, recurring schedules, and inbox import keep the vault current without manual intervention.
 
-**Managed sources** - `swarmvault source add|list|reload|delete` turns recurring files, directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json`, source briefs under `wiki/outputs/source-briefs/`, and optional source reviews under `wiki/outputs/source-reviews/`.
+**Managed sources** - `swarmvault source add|list|reload|review|guide|delete` turns recurring files, directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json`, source briefs under `wiki/outputs/source-briefs/`, and guided integration artifacts under `wiki/outputs/source-guides/`.
 
 **External graph sinks** - export to HTML, SVG, GraphML, and Cypher, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
 

@@ -55,10 +55,10 @@ my-vault/
 ![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
 
 ```bash
-swarmvault init --obsidian
+swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
-swarmvault ingest ./meeting.srt --review
+swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -123,10 +123,11 @@ swarmvault graph push neo4j --dry-run
 最容易感受到 SwarmVault 价值的方式，是使用 managed-source 工作流：
 
 ```bash
-swarmvault source add ./exports/customer-call.srt --review
+swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source list
+swarmvault source guide file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
@@ -195,9 +196,9 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
-**引导式来源审查** - `ingest --review`、`source add --review` 和 `source review <id>` 会在 `wiki/outputs/source-reviews/` 下生成来源级审查页，并在真正更新规范 wiki 之前先进入 approval bundle。
+**引导式 ingest** - `ingest --guide`、`source add --guide`、`source reload --guide` 和 `source guide <id>` 会生成 source brief、source review 与面向整合的 source guide 页面，写入 `wiki/outputs/source-guides/`，并在你接受之前先通过 approval bundle 阶段化。
 
-**知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、timeline、contradictions 和 open questions 页面。即使只是普通 Markdown 也可直接使用，在 Obsidian + Dataview 中会更强。
+**知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source guides、research map、contradictions 和 open questions 页面。即使只是普通 Markdown 也可直接使用，在 Obsidian + Dataview 中会更强。
 
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
@@ -207,7 +208,7 @@ clawhub install swarmvault
 
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 
-**托管来源** - `swarmvault source add|list|reload|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，可选的来源审查页写入 `wiki/outputs/source-reviews/`。
+**托管来源** - `swarmvault source add|list|reload|review|guide|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，引导式整合产物写入 `wiki/outputs/source-guides/`。
 
 **外部图谱输出** - 可导出为 HTML、SVG、GraphML、Cypher，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
 

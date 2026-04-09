@@ -60,10 +60,12 @@ import {
 import { rebuildSearchIndex, searchPages } from "./search.js";
 import { aggregateManifestSourceClass } from "./source-classification.js";
 import type {
+  ApprovalBundleType,
   ApprovalChangeType,
   ApprovalDetail,
   ApprovalEntry,
   ApprovalEntryDetail,
+  ApprovalEntryLabel,
   ApprovalManifest,
   ApprovalSummary,
   BenchmarkArtifact,
@@ -819,6 +821,8 @@ function approvalSummary(manifest: ApprovalManifest): ApprovalSummary {
   return {
     approvalId: manifest.approvalId,
     createdAt: manifest.createdAt,
+    bundleType: manifest.bundleType,
+    title: manifest.title,
     entryCount: manifest.entries.length,
     pendingCount: manifest.entries.filter((entry) => entry.status === "pending").length,
     acceptedCount: manifest.entries.filter((entry) => entry.status === "accepted").length,
@@ -972,6 +976,9 @@ async function buildDashboardRecords(
   const sourcePages = graph.pages.filter((page) => page.kind === "source");
   const reviewPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-reviews/"));
   const briefPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-briefs/"));
+  const guidePages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-guides/"));
+  const conceptPages = graph.pages.filter((page) => page.kind === "concept" && page.status !== "candidate").slice(0, 16);
+  const entityPages = graph.pages.filter((page) => page.kind === "entity" && page.status !== "candidate").slice(0, 16);
   const manifests = graph.sources;
   const manifestBySourceId = new Map(manifests.map((manifest) => [manifest.sourceId, manifest] as const));
   const timelineManifests = manifests
@@ -983,6 +990,19 @@ async function buildDashboardRecords(
   const openQuestions = uniqueStrings(
     analyses.flatMap((analysis) => analysis.questions.map((question) => `${analysis.title}: ${question}`))
   ).slice(0, 20);
+  const stagedGuideBundles = (
+    await Promise.all(
+      (
+        await fs.readdir(paths.approvalsDir, { withFileTypes: true }).catch(() => [])
+      )
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => await readJsonFile<ApprovalManifest>(approvalManifestPath(paths, entry.name)))
+    )
+  )
+    .filter((manifest): manifest is ApprovalManifest => Boolean(manifest))
+    .filter((manifest) => manifest.bundleType === "guided_source")
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 12);
 
   const dashboards: Array<{ relativePath: string; title: string; content: (metadata: ManagedPageMetadata) => string }> = [
     {
@@ -994,7 +1014,10 @@ async function buildDashboardRecords(
             "# Dashboards",
             "",
             "- [[dashboards/recent-sources|Recent Sources]]",
+            "- [[dashboards/reading-log|Reading Log]]",
             "- [[dashboards/timeline|Timeline]]",
+            "- [[dashboards/source-guides|Source Guides]]",
+            "- [[dashboards/research-map|Research Map]]",
             "- [[dashboards/contradictions|Contradictions]]",
             "- [[dashboards/open-questions|Open Questions]]",
             "",
@@ -1071,6 +1094,52 @@ async function buildDashboardRecords(
         )
     },
     {
+      relativePath: "dashboards/reading-log.md",
+      title: "Reading Log",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Reading Log",
+            "",
+            ...(timelineManifests.length
+              ? timelineManifests.map((manifest) => {
+                  const occurredAt = manifestDetailValue(manifest, "occurred_at") ?? manifest.updatedAt;
+                  const participants = manifestDetailValue(manifest, "participants");
+                  return `- ${occurredAt}: ${manifest.title}${participants ? ` (${participants})` : ""}`;
+                })
+              : recentSourcePages.map((page) => `- ${page.updatedAt}: [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)),
+            "",
+            "```dataview",
+            "TABLE occurred_at, source_type, participants, container_title",
+            'FROM "sources"',
+            "SORT occurred_at desc",
+            "LIMIT 25",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:reading-log",
+            kind: "index",
+            title: "Reading Log",
+            tags: ["index", "dashboard", "reading-log"],
+            source_ids: timelineManifests.map((manifest) => manifest.sourceId),
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: timelineManifests.map((manifest) => manifest.sourceId),
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
       relativePath: "dashboards/timeline.md",
       title: "Timeline",
       content: (metadata) =>
@@ -1117,6 +1186,127 @@ async function buildDashboardRecords(
         )
     },
     {
+      relativePath: "dashboards/source-guides.md",
+      title: "Source Guides",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Source Guides",
+            "",
+            ...(guidePages.length
+              ? guidePages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+              : ["- No accepted source guides yet."]),
+            "",
+            "## Pending Guided Bundles",
+            "",
+            ...(stagedGuideBundles.length
+              ? stagedGuideBundles.map(
+                  (bundle) =>
+                    `- ${bundle.createdAt}: \`${bundle.approvalId}\`${bundle.title ? ` ${bundle.title}` : ""} (${bundle.entries.length} staged entr${bundle.entries.length === 1 ? "y" : "ies"})`
+                )
+              : ["- No staged guided bundles right now."]),
+            "",
+            "```dataview",
+            'LIST FROM "outputs/source-guides"',
+            "SORT file.mtime desc",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:source-guides",
+            kind: "index",
+            title: "Source Guides",
+            tags: ["index", "dashboard", "source-guides"],
+            source_ids: uniqueStrings([
+              ...guidePages.flatMap((page) => page.sourceIds),
+              ...stagedGuideBundles.flatMap((bundle) => bundle.entries.flatMap((entry) => entry.sourceIds))
+            ]),
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: uniqueStrings([
+              ...guidePages.flatMap((page) => page.sourceIds),
+              ...stagedGuideBundles.flatMap((bundle) => bundle.entries.flatMap((entry) => entry.sourceIds))
+            ]),
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
+      relativePath: "dashboards/research-map.md",
+      title: "Research Map",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Research Map",
+            "",
+            "## Canonical Concept Pages",
+            "",
+            ...(conceptPages.length
+              ? conceptPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+              : ["- No concept pages yet."]),
+            "",
+            "## Canonical Entity Pages",
+            "",
+            ...(entityPages.length
+              ? entityPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+              : ["- No entity pages yet."]),
+            "",
+            "## Recently Guided Sources",
+            "",
+            ...(guidePages.length
+              ? guidePages.slice(0, 8).map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+              : ["- No accepted source guides yet."]),
+            ...(report?.suggestedQuestions?.length
+              ? ["", "## Suggested Questions", "", ...report.suggestedQuestions.slice(0, 8).map((question) => `- ${question}`)]
+              : []),
+            "",
+            "```dataview",
+            'TABLE file.folder, file.mtime FROM "concepts" OR "entities"',
+            "SORT file.mtime desc",
+            "LIMIT 30",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:research-map",
+            kind: "index",
+            title: "Research Map",
+            tags: ["index", "dashboard", "research-map"],
+            source_ids: uniqueStrings([
+              ...conceptPages.flatMap((page) => page.sourceIds),
+              ...entityPages.flatMap((page) => page.sourceIds),
+              ...guidePages.flatMap((page) => page.sourceIds)
+            ]),
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: uniqueStrings([
+              ...conceptPages.flatMap((page) => page.sourceIds),
+              ...entityPages.flatMap((page) => page.sourceIds),
+              ...guidePages.flatMap((page) => page.sourceIds)
+            ]),
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
       relativePath: "dashboards/contradictions.md",
       title: "Contradictions",
       content: (metadata) =>
@@ -1132,16 +1322,18 @@ async function buildDashboardRecords(
                 })
               : ["- No contradictions are currently flagged."]),
             "",
-            ...(reviewPages.length || briefPages.length
+            ...(reviewPages.length || briefPages.length || guidePages.length
               ? [
                   "## Related Reviews",
                   "",
-                  ...[...reviewPages, ...briefPages].slice(0, 12).map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`),
+                  ...[...guidePages, ...reviewPages, ...briefPages]
+                    .slice(0, 12)
+                    .map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`),
                   ""
                 ]
               : []),
             "```dataview",
-            'LIST FROM "outputs/source-reviews"',
+            'LIST FROM "outputs/source-reviews" OR "outputs/source-guides"',
             "SORT file.mtime desc",
             "```",
             ""
@@ -1179,7 +1371,7 @@ async function buildDashboardRecords(
             ...(openQuestions.length ? openQuestions.map((question) => `- ${question}`) : ["- No open questions are currently extracted."]),
             "",
             "```dataview",
-            'LIST FROM "outputs/source-briefs" OR "outputs/source-reviews"',
+            'LIST FROM "outputs/source-briefs" OR "outputs/source-reviews" OR "outputs/source-guides"',
             "SORT file.mtime desc",
             "```",
             ""
@@ -2151,7 +2343,8 @@ async function buildApprovalEntries(
   changedFiles: Array<{ relativePath: string; content: string }>,
   deletedPaths: string[],
   previousGraph: GraphArtifact | null,
-  graph: GraphArtifact
+  graph: GraphArtifact,
+  labelsByPath: Map<string, ApprovalEntryLabel> = new Map()
 ): Promise<ApprovalEntry[]> {
   const previousPagesById = new Map((previousGraph?.pages ?? []).map((page) => [page.id, page]));
   const previousPagesByPath = new Map((previousGraph?.pages ?? []).map((page) => [page.path, page]));
@@ -2175,7 +2368,8 @@ async function buildApprovalEntries(
         status: "pending",
         sourceIds: nextPage.sourceIds,
         nextPath: nextPage.path,
-        previousPath: previousPage.path
+        previousPath: previousPage.path,
+        label: labelsByPath.get(nextPage.path) ?? labelsByPath.get(previousPage.path)
       });
       handledDeletedPaths.add(previousPage.path);
       continue;
@@ -2189,7 +2383,8 @@ async function buildApprovalEntries(
       status: "pending",
       sourceIds: nextPage.sourceIds,
       nextPath: nextPage.path,
-      previousPath: previousPage?.path
+      previousPath: previousPage?.path,
+      label: labelsByPath.get(nextPage.path) ?? (previousPage?.path ? labelsByPath.get(previousPage.path) : undefined)
     });
   }
 
@@ -2205,7 +2400,8 @@ async function buildApprovalEntries(
       changeType: "delete",
       status: "pending",
       sourceIds: previousPage?.sourceIds ?? [],
-      previousPath: deletedPath
+      previousPath: deletedPath,
+      label: labelsByPath.get(deletedPath)
     });
   }
 
@@ -2235,6 +2431,8 @@ async function stageApprovalBundle(
   await writeApprovalManifest(paths, {
     approvalId,
     createdAt: new Date().toISOString(),
+    bundleType: "compile",
+    title: "Compile Approval",
     entries: await buildApprovalEntries(paths, changedFiles, deletedPaths, previousGraph, graph)
   });
 
@@ -3069,7 +3267,11 @@ async function persistExploreHub(
 
 async function stageOutputApprovalBundle(
   rootDir: string,
-  stagedPages: Array<{ page: GraphPage; content: string; assetFiles?: GeneratedOutputArtifacts["assetFiles"] }>
+  stagedPages: Array<{ page: GraphPage; content: string; assetFiles?: GeneratedOutputArtifacts["assetFiles"]; label?: ApprovalEntryLabel }>,
+  options: {
+    bundleType?: ApprovalBundleType;
+    title?: string;
+  } = {}
 ): Promise<{ approvalId: string; approvalDir: string }> {
   const { paths } = await loadVaultConfig(rootDir);
   const previousGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
@@ -3081,6 +3283,7 @@ async function stageOutputApprovalBundle(
       binary: typeof assetFile.content !== "string"
     })) as Array<{ relativePath: string; content: string; binary: boolean }>)
   ]);
+  const labelsByPath = new Map(stagedPages.filter((item) => item.label).map((item) => [item.page.path, item.label as ApprovalEntryLabel]));
 
   const approvalId = `schedule-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const approvalDir = path.join(paths.approvalsDir, approvalId);
@@ -3114,12 +3317,15 @@ async function stageOutputApprovalBundle(
   await writeApprovalManifest(paths, {
     approvalId,
     createdAt: new Date().toISOString(),
+    bundleType: options.bundleType ?? "generated_output",
+    title: options.title,
     entries: await buildApprovalEntries(
       paths,
       stagedPages.map((item) => ({ relativePath: item.page.path, content: item.content })),
       [],
       previousGraph ?? null,
-      graph
+      graph,
+      labelsByPath
     )
   });
 
@@ -3128,9 +3334,13 @@ async function stageOutputApprovalBundle(
 
 export async function stageGeneratedOutputPages(
   rootDir: string,
-  stagedPages: Array<{ page: GraphPage; content: string; assetFiles?: GeneratedOutputArtifacts["assetFiles"] }>
+  stagedPages: Array<{ page: GraphPage; content: string; assetFiles?: GeneratedOutputArtifacts["assetFiles"]; label?: ApprovalEntryLabel }>,
+  options: {
+    bundleType?: ApprovalBundleType;
+    title?: string;
+  } = {}
 ): Promise<{ approvalId: string; approvalDir: string }> {
-  return await stageOutputApprovalBundle(rootDir, stagedPages);
+  return await stageOutputApprovalBundle(rootDir, stagedPages, options);
 }
 
 async function executeQuery(rootDir: string, question: string, format: OutputFormat): Promise<QueryExecutionResult> {
@@ -3773,22 +3983,35 @@ async function ensureObsidianWorkspace(rootDir: string): Promise<void> {
 }
 
 export async function initVault(rootDir: string, options: InitOptions = {}): Promise<void> {
-  const { paths } = await initWorkspace(rootDir);
+  const profile = options.profile ?? "default";
+  const { paths } = await initWorkspace(rootDir, { profile });
   await installConfiguredAgents(rootDir);
   const insightsIndexPath = path.join(paths.wikiDir, "insights", "index.md");
   const now = new Date().toISOString();
   await writeFileIfChanged(
     insightsIndexPath,
     matter.stringify(
-      [
-        "# Insights",
-        "",
-        "Human-authored notes live here.",
-        "",
-        "- SwarmVault can read these pages during compile and query.",
-        "- SwarmVault does not rewrite files inside `wiki/insights/` after initialization.",
-        ""
-      ].join("\n"),
+      (profile === "personal-research"
+        ? [
+            "# Insights",
+            "",
+            "Human-authored research notes live here.",
+            "",
+            "- Use this folder for thesis notes, reading reflections, synthesis drafts, and decisions you want to keep explicitly human-authored.",
+            "- Guided ingest can propose updates elsewhere, but SwarmVault does not rewrite files inside `wiki/insights/` after initialization.",
+            "- Treat these pages as the human judgment layer for your vault.",
+            ""
+          ]
+        : [
+            "# Insights",
+            "",
+            "Human-authored notes live here.",
+            "",
+            "- SwarmVault can read these pages during compile and query.",
+            "- SwarmVault does not rewrite files inside `wiki/insights/` after initialization.",
+            ""
+          ]
+      ).join("\n"),
       {
         page_id: "insights:index",
         kind: "index",
@@ -3859,6 +4082,43 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
   );
   if (options.obsidian) {
     await ensureObsidianWorkspace(rootDir);
+  }
+
+  if (profile === "personal-research") {
+    await writeFileIfChanged(
+      path.join(paths.wikiDir, "insights", "research-playbook.md"),
+      matter.stringify(
+        [
+          "# Personal Research Playbook",
+          "",
+          "- Add one source at a time with `swarmvault ingest <input> --guide` or `swarmvault source add <input> --guide`.",
+          "- Review `wiki/outputs/source-briefs/`, `wiki/outputs/source-reviews/`, and `wiki/outputs/source-guides/` before accepting staged updates.",
+          "- Keep unresolved questions visible in `wiki/dashboards/open-questions.md`.",
+          "- Use `swarmvault review list` and `swarmvault review show --diff` to decide what becomes canonical.",
+          ""
+        ].join("\n"),
+        {
+          page_id: "insights:research-playbook",
+          kind: "insight",
+          title: "Personal Research Playbook",
+          tags: ["insight", "research", "playbook"],
+          source_ids: [],
+          project_ids: [],
+          node_ids: [],
+          freshness: "fresh",
+          status: "active",
+          confidence: 1,
+          created_at: now,
+          updated_at: now,
+          compiled_from: [],
+          managed_by: "human",
+          backlinks: [],
+          schema_hash: "",
+          source_hashes: {},
+          source_semantic_hashes: {}
+        }
+      )
+    );
   }
 }
 

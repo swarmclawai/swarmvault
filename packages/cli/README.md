@@ -22,9 +22,10 @@ Installed commands:
 ```bash
 mkdir my-vault
 cd my-vault
-swarmvault init --obsidian
+swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
+swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source list
 swarmvault source reload --all
 sed -n '1,120p' swarmvault.schema.md
@@ -50,7 +51,7 @@ swarmvault graph push neo4j --dry-run
 
 ## Commands
 
-### `swarmvault init [--obsidian]`
+### `swarmvault init [--obsidian] [--profile personal-research]`
 
 Create a workspace with:
 
@@ -67,19 +68,23 @@ Create a workspace with:
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
-### `swarmvault source add|list|reload|delete`
+### `swarmvault source add|list|reload|review|guide|delete`
 
 Manage recurring source roots through a registry-backed workflow.
 
 - `source add <input>` supports local directories, public GitHub repo root URLs such as `https://github.com/karpathy/micrograd`, and docs/wiki/help/reference/tutorial hubs
 - by default `source add` registers the source, syncs it into the vault, runs one compile, and writes a source brief to `wiki/outputs/source-briefs/<source-id>.md`
+- add `--guide` when you want a source brief, source review, source guide, and approval bundle for one-source-at-a-time integration
 - `source list` shows every managed source with its kind, status, and current brief path
 - `source reload [id]` re-syncs one source, or use `--all` to refresh everything in the registry and compile once
+- `source review <id>` stages a lighter source-scoped review artifact
+- `source guide <id>` stages the stronger guided-ingest bundle for that source scope
 - `source delete <id>` unregisters the source and removes transient sync state under `state/sources/<id>/`, but leaves canonical `raw/`, `wiki/`, and saved output artifacts intact
 
 Useful flags:
 
 - `--all`
+- `--guide`
 - `--no-compile`
 - `--no-brief`
 - `--max-pages <n>`
@@ -97,6 +102,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - use `source add` instead when the same local directory, public GitHub repo root, or docs hub should stay registered and reloadable
 - URL ingest still localizes remote image references by default
 - local file ingest supports markdown, text, reStructuredText, HTML, PDF, DOCX, images, and code
+- add `--guide` when you want a source brief, source review, source guide, and approval bundle after ingest
 - code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell
 
 Useful flags:

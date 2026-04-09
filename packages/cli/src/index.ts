@@ -16,6 +16,8 @@ import {
   exportGraphHtml,
   getGitHookStatus,
   getWatchStatus,
+  guideManagedSource,
+  guideSourceScope,
   importInbox,
   ingestDirectory,
   ingestInputDetailed,
@@ -63,9 +65,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.4.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.5.0";
   } catch {
-    return "0.4.0";
+    return "0.5.0";
   }
 }
 
@@ -73,6 +75,38 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sourceScopeFromManifests(
+  input: string,
+  manifests: Array<{
+    sourceId: string;
+    title: string;
+    sourceKind: string;
+    sourceGroupId?: string;
+    sourceGroupTitle?: string;
+  }>
+): { id: string; title: string; sourceIds: string[]; kind?: string } | null {
+  if (!manifests.length) {
+    return null;
+  }
+  const primary = manifests[0];
+  return {
+    id: primary?.sourceGroupId ?? primary?.sourceId ?? slugForCli(input),
+    title: primary?.sourceGroupTitle ?? primary?.title ?? input,
+    sourceIds: manifests.map((manifest) => manifest.sourceId),
+    kind: primary?.sourceKind
+  };
+}
+
+function slugForCli(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "source"
+  );
 }
 
 function isJson(): boolean {
@@ -123,10 +157,16 @@ program
   .command("init")
   .description("Initialize a SwarmVault workspace in the current directory.")
   .option("--obsidian", "Generate a minimal .obsidian workspace alongside the vault", false)
-  .action(async (options: { obsidian?: boolean }) => {
-    await initVault(process.cwd(), { obsidian: options.obsidian ?? false });
+  .addOption(new Option("--profile <profile>", "Starter workspace profile").choices(["default", "personal-research"]))
+  .action(async (options: { obsidian?: boolean; profile?: "default" | "personal-research" }) => {
+    await initVault(process.cwd(), { obsidian: options.obsidian ?? false, profile: options.profile });
     if (isJson()) {
-      emitJson({ status: "initialized", rootDir: process.cwd(), obsidian: options.obsidian ?? false });
+      emitJson({
+        status: "initialized",
+        rootDir: process.cwd(),
+        obsidian: options.obsidian ?? false,
+        profile: options.profile ?? "default"
+      });
     } else {
       log("Initialized SwarmVault workspace.");
     }
@@ -137,6 +177,7 @@ program
   .description("Ingest a local file path, directory path, or URL into the raw SwarmVault workspace.")
   .argument("<input>", "Local file path, directory path, or URL")
   .option("--review", "Stage a source review artifact after ingest and compile", false)
+  .option("--guide", "Stage a guided source integration bundle after ingest and compile", false)
   .option("--include-assets", "Download remote image assets when ingesting URLs", true)
   .option("--no-include-assets", "Skip downloading remote image assets when ingesting URLs")
   .option("--max-asset-size <bytes>", "Maximum number of bytes to fetch for a single remote image asset")
@@ -163,6 +204,7 @@ program
         includeGenerated?: boolean;
         gitignore?: boolean;
         review?: boolean;
+        guide?: boolean;
       }
     ) => {
       const maxAssetSize =
@@ -196,10 +238,9 @@ program
           )
         : null;
       if (directoryResult) {
-        const review =
-          options.review && (directoryResult.imported.length || directoryResult.updated.length)
+        const scope =
+          options.review || options.guide
             ? await (async () => {
-                await compileVault(process.cwd(), {});
                 const pathModule = await import("node:path");
                 const absoluteInput = pathModule.resolve(process.cwd(), input);
                 const sourceIds = (await listManifests(process.cwd()))
@@ -212,16 +253,32 @@ program
                   })
                   .map((manifest) => manifest.sourceId);
                 return sourceIds.length
-                  ? await reviewSourceScope(process.cwd(), {
+                  ? {
                       id: `directory-${absoluteInput.split(pathModule.sep).pop() ?? "source"}`,
                       title: absoluteInput.split(pathModule.sep).pop() ?? absoluteInput,
-                      sourceIds
-                    })
+                      sourceIds,
+                      kind: "directory"
+                    }
                   : undefined;
               })()
             : undefined;
+        const shouldStage = Boolean(scope && (directoryResult.imported.length || directoryResult.updated.length));
+        const review =
+          shouldStage && options.review && !options.guide
+            ? await (async () => {
+                await compileVault(process.cwd(), {});
+                return await reviewSourceScope(process.cwd(), scope!);
+              })()
+            : undefined;
+        const guide =
+          shouldStage && options.guide
+            ? await (async () => {
+                await compileVault(process.cwd(), {});
+                return await guideSourceScope(process.cwd(), scope!);
+              })()
+            : undefined;
         if (isJson()) {
-          emitJson(review ? { ingest: directoryResult, review } : directoryResult);
+          emitJson(guide ? { ingest: directoryResult, guide } : review ? { ingest: directoryResult, review } : directoryResult);
         } else {
           log(
             `Imported ${directoryResult.imported.length} file(s), updated ${directoryResult.updated.length}, skipped ${directoryResult.skipped.length}.`
@@ -229,31 +286,30 @@ program
           if (review) {
             log(`Staged source review at ${review.reviewPath}.`);
           }
+          if (guide) {
+            log(`Staged source guide at ${guide.guidePath}.`);
+          }
         }
         return;
       }
       const ingest = await ingestInputDetailed(process.cwd(), input, commonOptions);
+      const scope = sourceScopeFromManifests(input, [...ingest.created, ...ingest.updated, ...ingest.unchanged]);
       const review =
-        options.review && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
+        options.review && !options.guide && scope && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
           ? await (async () => {
               await compileVault(process.cwd(), {});
-              const scopeSourceIds = [...ingest.created, ...ingest.updated, ...ingest.unchanged].map((manifest) => manifest.sourceId);
-              return await reviewSourceScope(process.cwd(), {
-                id:
-                  ingest.created[0]?.sourceGroupId ??
-                  ingest.updated[0]?.sourceGroupId ??
-                  ingest.unchanged[0]?.sourceGroupId ??
-                  scopeSourceIds[0]!,
-                title:
-                  [...ingest.created, ...ingest.updated, ...ingest.unchanged][0]?.sourceGroupTitle ??
-                  [...ingest.created, ...ingest.updated, ...ingest.unchanged][0]?.title ??
-                  input,
-                sourceIds: scopeSourceIds
-              });
+              return await reviewSourceScope(process.cwd(), scope);
+            })()
+          : undefined;
+      const guide =
+        options.guide && scope && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
+          ? await (async () => {
+              await compileVault(process.cwd(), {});
+              return await guideSourceScope(process.cwd(), scope);
             })()
           : undefined;
       if (isJson()) {
-        emitJson(review ? { ingest, review } : ingest);
+        emitJson(guide ? { ingest, guide } : review ? { ingest, review } : ingest);
       } else {
         const primary = [...ingest.created, ...ingest.updated, ...ingest.unchanged][0];
         if (ingest.created.length + ingest.updated.length + ingest.removed.length <= 1 && primary) {
@@ -265,6 +321,9 @@ program
         }
         if (review) {
           log(`Staged source review at ${review.reviewPath}.`);
+        }
+        if (guide) {
+          log(`Staged source guide at ${guide.guidePath}.`);
         }
       }
     }
@@ -297,14 +356,19 @@ source
   .option("--no-compile", "Register and sync without compiling the vault")
   .option("--no-brief", "Skip source brief generation after sync")
   .option("--review", "Stage a source review artifact after sync and compile", false)
+  .option("--guide", "Stage a guided source integration bundle after sync and compile", false)
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
   .action(
-    async (input: string, options: { compile?: boolean; brief?: boolean; review?: boolean; maxPages?: string; maxDepth?: string }) => {
+    async (
+      input: string,
+      options: { compile?: boolean; brief?: boolean; review?: boolean; guide?: boolean; maxPages?: string; maxDepth?: string }
+    ) => {
       const result = await addManagedSource(process.cwd(), input, {
         compile: options.compile,
         brief: options.brief,
         review: options.review,
+        guide: options.guide,
         maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
         maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
       });
@@ -315,7 +379,8 @@ source
           `Registered ${result.source.kind} source ${result.source.id}. Status: ${result.source.status}.` +
             `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
             `${result.briefGenerated ? ` Brief: ${result.source.briefPath}` : ""}` +
-            `${result.review ? ` Review: ${result.review.reviewPath}` : ""}`
+            `${result.review ? ` Review: ${result.review.reviewPath}` : ""}` +
+            `${result.guide ? ` Guide: ${result.guide.guidePath}` : ""}`
         );
       }
     }
@@ -344,18 +409,30 @@ source
   .option("--all", "Reload all managed sources", false)
   .option("--no-compile", "Re-sync without compiling the vault")
   .option("--no-brief", "Skip source brief generation after sync")
+  .option("--review", "Stage a source review artifact after sync and compile", false)
+  .option("--guide", "Stage a guided source integration bundle after sync and compile", false)
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
   .action(
     async (
       id: string | undefined,
-      options: { all?: boolean; compile?: boolean; brief?: boolean; maxPages?: string; maxDepth?: string }
+      options: {
+        all?: boolean;
+        compile?: boolean;
+        brief?: boolean;
+        review?: boolean;
+        guide?: boolean;
+        maxPages?: string;
+        maxDepth?: string;
+      }
     ) => {
       const result = await reloadManagedSources(process.cwd(), {
         id,
         all: options.all ?? false,
         compile: options.compile,
         brief: options.brief,
+        review: options.review,
+        guide: options.guide,
         maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
         maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
       });
@@ -365,7 +442,9 @@ source
         log(
           `Reloaded ${result.sources.length} source(s).` +
             `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
-            `${result.briefPaths.length ? ` Briefs: ${result.briefPaths.length}.` : ""}`
+            `${result.briefPaths.length ? ` Briefs: ${result.briefPaths.length}.` : ""}` +
+            `${result.reviews.length ? ` Reviews: ${result.reviews.length}.` : ""}` +
+            `${result.guides.length ? ` Guides: ${result.guides.length}.` : ""}`
         );
       }
     }
@@ -394,6 +473,19 @@ source
       emitJson(result);
     } else {
       log(`Staged source review at ${result.reviewPath}.`);
+    }
+  });
+
+source
+  .command("guide")
+  .description("Stage a guided source integration bundle for a managed source id or raw source id.")
+  .argument("<id>", "Managed source id or raw source id")
+  .action(async (id: string) => {
+    const result = await guideManagedSource(process.cwd(), id);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Staged source guide at ${result.guidePath}.`);
     }
   });
 
@@ -717,7 +809,7 @@ review
     }
     for (const approval of approvals) {
       log(
-        `${approval.approvalId} pending=${approval.pendingCount} accepted=${approval.acceptedCount} rejected=${approval.rejectedCount} created=${approval.createdAt}`
+        `${approval.approvalId}${approval.bundleType ? ` [${approval.bundleType}]` : ""}${approval.title ? ` ${approval.title}` : ""} pending=${approval.pendingCount} accepted=${approval.acceptedCount} rejected=${approval.rejectedCount} created=${approval.createdAt}`
       );
     }
   });
@@ -733,9 +825,13 @@ review
       emitJson(approval);
       return;
     }
-    log(`${approval.approvalId} pending=${approval.pendingCount} accepted=${approval.acceptedCount} rejected=${approval.rejectedCount}`);
+    log(
+      `${approval.approvalId}${approval.bundleType ? ` [${approval.bundleType}]` : ""}${approval.title ? ` ${approval.title}` : ""} pending=${approval.pendingCount} accepted=${approval.acceptedCount} rejected=${approval.rejectedCount}`
+    );
     for (const entry of approval.entries) {
-      log(`- ${entry.status} ${entry.changeType} ${entry.pageId} ${entry.nextPath ?? entry.previousPath ?? ""}`.trim());
+      log(
+        `- ${entry.status} ${entry.changeType}${entry.label ? ` [${entry.label}]` : ""} ${entry.pageId} ${entry.nextPath ?? entry.previousPath ?? ""}`.trim()
+      );
       if (entry.changeSummary) log(`  Summary: ${entry.changeSummary}`);
       if (entry.diff) {
         log("");

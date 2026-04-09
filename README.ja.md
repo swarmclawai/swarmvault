@@ -55,10 +55,10 @@ my-vault/
 ![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
 
 ```bash
-swarmvault init --obsidian
+swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
-swarmvault ingest ./meeting.srt --review
+swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -123,10 +123,11 @@ API キーなしでローカルの semantic graph query を使いたい場合は
 SwarmVault をすぐ役立てる最短経路は、managed-source ワークフローです:
 
 ```bash
-swarmvault source add ./exports/customer-call.srt --review
+swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source list
+swarmvault source guide file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
@@ -195,9 +196,9 @@ clawhub install swarmvault
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
-**ガイド付きソースレビュー** - `ingest --review`、`source add --review`、`source review <id>` は `wiki/outputs/source-reviews/` にソース単位のレビュー頁を生成し、正規 wiki へ反映する前に approval bundle を段階化します。
+**ガイド付き ingest** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` は source brief、source review、統合志向の source guide 頁を生成し、`wiki/outputs/source-guides/` に対応する成果物を残しつつ、受け入れる前に approval bundle として段階化します。
 
-**知識ダッシュボード** - `wiki/dashboards/` には recent sources、timeline、contradictions、open questions が出力されます。通常の Markdown として読めて、Obsidian + Dataview ではさらに便利になります。
+**知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source guides、research map、contradictions、open questions が出力されます。通常の Markdown として読めて、Obsidian + Dataview ではさらに便利になります。
 
 **任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 
@@ -207,7 +208,7 @@ clawhub install swarmvault
 
 **Automation** - watch mode、git hooks、定期実行、inbox import により、ボルトを手動更新なしで最新に保てます。
 
-**Managed sources** - `swarmvault source add|list|reload|delete` により、繰り返し使うローカルファイル、ディレクトリ、公開 GitHub リポジトリ、docs サイトを名前付き同期ソースとして管理できます。レジストリは `state/sources.json`、ソース別ブリーフは `wiki/outputs/source-briefs/`、必要ならソースレビューは `wiki/outputs/source-reviews/` に保存されます。
+**Managed sources** - `swarmvault source add|list|reload|review|guide|delete` により、繰り返し使うローカルファイル、ディレクトリ、公開 GitHub リポジトリ、docs サイトを名前付き同期ソースとして管理できます。レジストリは `state/sources.json`、ソース別ブリーフは `wiki/outputs/source-briefs/`、ガイド付き統合成果物は `wiki/outputs/source-guides/` に保存されます。
 
 **外部グラフ連携** - HTML、SVG、GraphML、Cypher にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
 

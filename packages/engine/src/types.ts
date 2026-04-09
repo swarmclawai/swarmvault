@@ -46,6 +46,8 @@ export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
+export type ApprovalBundleType = "compile" | "generated_output" | "source_review" | "guided_source";
+export type ApprovalEntryLabel = "source-brief" | "source-review" | "source-guide" | "guided-update";
 export type SourceKind =
   | "markdown"
   | "text"
@@ -675,17 +677,22 @@ export interface ApprovalEntry {
   sourceIds: string[];
   nextPath?: string;
   previousPath?: string;
+  label?: ApprovalEntryLabel;
 }
 
 export interface ApprovalManifest {
   approvalId: string;
   createdAt: string;
+  bundleType?: ApprovalBundleType;
+  title?: string;
   entries: ApprovalEntry[];
 }
 
 export interface ApprovalSummary {
   approvalId: string;
   createdAt: string;
+  bundleType?: ApprovalBundleType;
+  title?: string;
   entryCount: number;
   pendingCount: number;
   acceptedCount: number;
@@ -724,6 +731,7 @@ export interface CompileOptions {
 
 export interface InitOptions {
   obsidian?: boolean;
+  profile?: "default" | "personal-research";
 }
 
 export interface CompileResult {
@@ -878,6 +886,7 @@ export interface ManagedSourceAddOptions {
   compile?: boolean;
   brief?: boolean;
   review?: boolean;
+  guide?: boolean;
   maxPages?: number;
   maxDepth?: number;
 }
@@ -892,6 +901,7 @@ export interface ManagedSourceAddResult {
   compile?: CompileResult;
   briefGenerated: boolean;
   review?: SourceReviewResult;
+  guide?: SourceGuideResult;
 }
 
 export interface ManagedSourceReloadResult {
@@ -899,6 +909,7 @@ export interface ManagedSourceReloadResult {
   compile?: CompileResult;
   briefPaths: string[];
   reviews: SourceReviewResult[];
+  guides: SourceGuideResult[];
 }
 
 export interface ManagedSourceDeleteResult {
@@ -909,6 +920,18 @@ export interface SourceReviewResult {
   sourceId: string;
   pageId: string;
   reviewPath: string;
+  staged: boolean;
+  approvalId?: string;
+  approvalDir?: string;
+}
+
+export interface SourceGuideResult {
+  sourceId: string;
+  pageId: string;
+  guidePath: string;
+  reviewPageId: string;
+  reviewPath: string;
+  briefPath?: string;
   staged: boolean;
   approvalId?: string;
   approvalDir?: string;

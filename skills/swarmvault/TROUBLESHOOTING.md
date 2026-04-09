@@ -29,19 +29,21 @@ For local semantic graph query, `embeddingProvider` must point at an embedding-c
 
 ## Source reviews or dashboards did not appear
 
-If you expected a source-scoped review page, use one of these flows:
+If you expected a source-scoped guide or review page, use one of these flows:
 
 ```bash
-swarmvault ingest <input> --review
-swarmvault source add <input> --review
-swarmvault source review <source-id>
+swarmvault ingest <input> --guide
+swarmvault source add <input> --guide
+swarmvault source guide <source-id>
 ```
 
 Then verify:
 
-- `wiki/outputs/source-reviews/`
+- `wiki/outputs/source-briefs/`
+- `wiki/outputs/source-guides/`
 - `wiki/dashboards/index.md`
 - `wiki/dashboards/timeline.md`
+- `wiki/dashboards/source-guides.md`
 - `state/approvals/`
 
 ## `wiki/graph/report.md` or search artifacts are missing

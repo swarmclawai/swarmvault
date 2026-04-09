@@ -20,6 +20,7 @@ import type {
   ManagedSourceStatus,
   ManagedSourceSyncCounts,
   SourceAnalysis,
+  SourceGuideResult,
   SourceManifest,
   SourceReviewResult
 } from "./types.js";
@@ -570,7 +571,7 @@ async function loadSourceAnalyses(rootDir: string, sourceIds: string[]): Promise
 }
 
 function renderDeterministicSourceBrief(input: {
-  source: ManagedSourceRecord;
+  source: SourceScope;
   sourcePages: GraphArtifact["pages"];
   graph: GraphArtifact;
   analyses: SourceAnalysis[];
@@ -659,7 +660,7 @@ function renderDeterministicSourceBrief(input: {
   ].join("\n");
 }
 
-async function generateSourceBriefMarkdown(rootDir: string, source: ManagedSourceRecord): Promise<string | null> {
+async function generateSourceBriefMarkdownForScope(rootDir: string, source: SourceScope): Promise<string | null> {
   const { paths } = await loadVaultConfig(rootDir);
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   if (!graph) {
@@ -703,7 +704,7 @@ async function generateSourceBriefMarkdown(rootDir: string, source: ManagedSourc
       ),
       prompt: [
         `Source title: ${source.title}`,
-        `Source kind: ${source.kind}`,
+        `Source kind: ${source.kind ?? "source"}`,
         `Tracked source ids: ${source.sourceIds.join(", ") || "none"}`,
         "",
         "Pages:",
@@ -722,12 +723,12 @@ async function generateSourceBriefMarkdown(rootDir: string, source: ManagedSourc
   }
 }
 
-async function writeSourceBrief(rootDir: string, source: ManagedSourceRecord): Promise<string | null> {
+async function writeSourceBriefForScope(rootDir: string, source: SourceScope): Promise<string | null> {
   if (!source.sourceIds.length) {
     return null;
   }
   const { paths } = await loadVaultConfig(rootDir);
-  const markdown = await generateSourceBriefMarkdown(rootDir, source);
+  const markdown = await generateSourceBriefMarkdownForScope(rootDir, source);
   if (!markdown) {
     return null;
   }
@@ -766,6 +767,10 @@ async function writeSourceBrief(rootDir: string, source: ManagedSourceRecord): P
   return absolutePath;
 }
 
+async function writeSourceBrief(rootDir: string, source: ManagedSourceRecord): Promise<string | null> {
+  return await writeSourceBriefForScope(rootDir, scopeFromManagedSource(source));
+}
+
 async function generateBriefsForSources(rootDir: string, sources: ManagedSourceRecord[]): Promise<Map<string, string>> {
   const briefPaths = new Map<string, string>();
   for (const source of sources) {
@@ -780,14 +785,16 @@ async function generateBriefsForSources(rootDir: string, sources: ManagedSourceR
   return briefPaths;
 }
 
-type SourceReviewScope = {
+type SourceScope = {
   id: string;
   title: string;
   sourceIds: string[];
+  kind?: string;
+  briefPath?: string;
 };
 
 function renderDeterministicSourceReview(input: {
-  scope: SourceReviewScope;
+  scope: SourceScope;
   sourcePages: GraphArtifact["pages"];
   graph: GraphArtifact;
   analyses: SourceAnalysis[];
@@ -845,7 +852,7 @@ function renderDeterministicSourceReview(input: {
   ].join("\n");
 }
 
-async function generateSourceReviewMarkdown(rootDir: string, scope: SourceReviewScope): Promise<string | null> {
+async function generateSourceReviewMarkdown(rootDir: string, scope: SourceScope): Promise<string | null> {
   const { paths } = await loadVaultConfig(rootDir);
   let graph = await readJsonFile<GraphArtifact>(paths.graphPath);
   if (!graph) {
@@ -913,7 +920,10 @@ async function generateSourceReviewMarkdown(rootDir: string, scope: SourceReview
   }
 }
 
-async function stageSourceReviewForScope(rootDir: string, scope: SourceReviewScope): Promise<SourceReviewResult> {
+async function buildSourceReviewStagedPage(
+  rootDir: string,
+  scope: SourceScope
+): Promise<{ page: GraphArtifact["pages"][number]; content: string }> {
   const { paths } = await loadVaultConfig(rootDir);
   const markdown = await generateSourceReviewMarkdown(rootDir, scope);
   if (!markdown) {
@@ -948,7 +958,220 @@ async function stageSourceReviewForScope(rootDir: string, scope: SourceReviewSco
       confidence: 0.79
     }
   });
-  const approval = await stageGeneratedOutputPages(rootDir, [{ page: output.page, content: output.content }]);
+  return { page: output.page, content: output.content };
+}
+
+function classifySourceGuidePageBuckets(sourcePages: GraphArtifact["pages"], scopeSourceIds: string[]) {
+  const scopeSet = new Set(scopeSourceIds);
+  const canonicalPages = sourcePages
+    .filter((page) => page.kind === "source" || page.kind === "concept" || page.kind === "entity")
+    .slice(0, 12);
+  const newPages = canonicalPages.filter((page) => page.sourceIds.every((sourceId) => scopeSet.has(sourceId))).slice(0, 6);
+  const reinforcingPages = canonicalPages.filter((page) => page.sourceIds.some((sourceId) => !scopeSet.has(sourceId))).slice(0, 6);
+  return { canonicalPages, newPages, reinforcingPages };
+}
+
+function renderDeterministicSourceGuide(input: {
+  scope: SourceScope;
+  sourcePages: GraphArtifact["pages"];
+  analyses: SourceAnalysis[];
+  report: Awaited<ReturnType<typeof readGraphReport>>;
+}): string {
+  const { canonicalPages, newPages, reinforcingPages } = classifySourceGuidePageBuckets(input.sourcePages, input.scope.sourceIds);
+  const modulePages = input.sourcePages.filter((page) => page.kind === "module").slice(0, 6);
+  const takeaways = uniqueStrings(
+    input.analyses
+      .flatMap((analysis) => [
+        analysis.summary,
+        ...analysis.concepts.map((concept) => concept.description),
+        ...analysis.entities.map((entity) => entity.description)
+      ])
+      .filter(Boolean)
+      .map((value) => normalizeWhitespace(value))
+  )
+    .slice(0, 7)
+    .map((value) => truncate(value, 180));
+  const questions = uniqueStrings(input.analyses.flatMap((analysis) => analysis.questions)).slice(0, 6);
+  const contradictions =
+    input.report?.contradictions.filter(
+      (contradiction) => input.scope.sourceIds.includes(contradiction.sourceIdA) || input.scope.sourceIds.includes(contradiction.sourceIdB)
+    ) ?? [];
+
+  return [
+    `# Source Guide: ${input.scope.title}`,
+    "",
+    "## What This Source Is",
+    "",
+    takeaways.length ? takeaways[0] : `${input.scope.title} has been compiled into the vault and is ready for guided review.`,
+    "",
+    "## Key Takeaways",
+    "",
+    ...(takeaways.length ? takeaways.map((takeaway) => `- ${takeaway}`) : ["- No takeaways are available until the source is compiled."]),
+    "",
+    "## Proposed Canonical Pages To Update",
+    "",
+    ...(canonicalPages.length
+      ? canonicalPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+      : ["- No likely canonical pages were identified yet."]),
+    "",
+    "## New, Reinforcing, And Conflicting Claims",
+    "",
+    ...(newPages.length
+      ? ["New or source-local pages:", ...newPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`), ""]
+      : []),
+    ...(reinforcingPages.length
+      ? ["Reinforcing existing pages:", ...reinforcingPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`), ""]
+      : []),
+    ...(contradictions.length
+      ? ["Conflicts to judge:", ...contradictions.map((contradiction) => `- ${contradiction.claimA} / ${contradiction.claimB}`), ""]
+      : ["Conflicts to judge:", "- No contradictions are currently flagged for this source scope.", ""]),
+    "## What Should Probably Stay Out For Now",
+    "",
+    ...(modulePages.length
+      ? ["- Avoid promoting narrow implementation details unless they matter to your thesis or recurring questions."]
+      : ["- Avoid promoting incidental details that are not yet supported by multiple sources or clear research goals."]),
+    ...(contradictions.length ? ["- Keep contested claims provisional until you review the conflicting evidence side by side."] : []),
+    "",
+    "## Needs Human Judgment",
+    "",
+    ...(questions.length
+      ? questions.map((question) => `- ${question}`)
+      : ["- Decide which proposed canonical pages deserve durable summary updates."]),
+    "",
+    "## Suggested Follow-up Questions",
+    "",
+    ...(questions.length
+      ? questions.map((question) => `- ${question}`)
+      : ["- What changed in your understanding after reading this source?"]),
+    ""
+  ].join("\n");
+}
+
+async function generateSourceGuideMarkdown(rootDir: string, scope: SourceScope): Promise<string | null> {
+  const { paths } = await loadVaultConfig(rootDir);
+  let graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  if (!graph) {
+    await compileVault(rootDir, {});
+    graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  }
+  if (!graph) {
+    return null;
+  }
+
+  const sourcePages = scopedSourcePages(graph, scope.sourceIds);
+  const analyses = await loadSourceAnalyses(rootDir, scope.sourceIds);
+  const report = await readGraphReport(rootDir);
+  const fallback = renderDeterministicSourceGuide({
+    scope,
+    sourcePages,
+    analyses,
+    report
+  });
+
+  const provider = await getProviderForTask(rootDir, "queryProvider");
+  if (provider.type === "heuristic") {
+    return fallback;
+  }
+
+  try {
+    const schemas = await loadVaultSchemas(rootDir);
+    const { canonicalPages, newPages, reinforcingPages } = classifySourceGuidePageBuckets(sourcePages, scope.sourceIds);
+    const pageContext = sourcePages
+      .slice(0, 12)
+      .map((page) => `- ${page.title} (${page.kind}) -> ${page.path}`)
+      .join("\n");
+    const analysisContext = analyses
+      .slice(0, 8)
+      .map(
+        (analysis) =>
+          `# ${analysis.title}\nSummary: ${analysis.summary}\nQuestions: ${analysis.questions.join(" | ") || "none"}\nConcepts: ${
+            analysis.concepts.map((concept) => concept.name).join(", ") || "none"
+          }\nEntities: ${analysis.entities.map((entity) => entity.name).join(", ") || "none"}`
+      )
+      .join("\n\n---\n\n");
+    const response = await provider.generateText({
+      system: buildSchemaPrompt(
+        schemas.effective.global,
+        "Write a concise markdown source guide with sections: What This Source Is, Key Takeaways, Proposed Canonical Pages To Update, New Reinforcing And Conflicting Claims, What Should Probably Stay Out For Now, Needs Human Judgment, Suggested Follow-up Questions. Focus on helping a human integrate one source into an evolving research wiki."
+      ),
+      prompt: [
+        `Source scope: ${scope.title}`,
+        `Scope id: ${scope.id}`,
+        `Tracked source ids: ${scope.sourceIds.join(", ") || "none"}`,
+        `Current brief path: ${scope.briefPath ?? "none"}`,
+        "",
+        "Likely canonical pages:",
+        canonicalPages.length ? canonicalPages.map((page) => `- ${page.title} -> ${page.path}`).join("\n") : "- none",
+        "",
+        "Likely source-local pages:",
+        newPages.length ? newPages.map((page) => `- ${page.title} -> ${page.path}`).join("\n") : "- none",
+        "",
+        "Likely reinforcing pages:",
+        reinforcingPages.length ? reinforcingPages.map((page) => `- ${page.title} -> ${page.path}`).join("\n") : "- none",
+        "",
+        "Pages:",
+        pageContext || "- none",
+        "",
+        "Analyses:",
+        analysisContext || "No analysis context available.",
+        "",
+        "Deterministic fallback draft:",
+        fallback
+      ].join("\n")
+    });
+    return response.text?.trim() ? response.text.trim() : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function buildSourceGuideStagedPage(
+  rootDir: string,
+  scope: SourceScope
+): Promise<{ page: GraphArtifact["pages"][number]; content: string }> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const markdown = await generateSourceGuideMarkdown(rootDir, scope);
+  if (!markdown) {
+    throw new Error(`Could not generate a source guide for ${scope.id}.`);
+  }
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const relatedPages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
+  const relatedPageIds = relatedPages.slice(0, 18).map((page) => page.id);
+  const relatedNodeIds = graph ? scopedNodeIds(graph, scope.sourceIds).slice(0, 28) : [];
+  const projectIds = uniqueStrings(relatedPages.flatMap((page) => page.projectIds));
+  const now = new Date().toISOString();
+  const output = buildOutputPage({
+    title: `Source Guide: ${scope.title}`,
+    question: `Guide ${scope.title}`,
+    answer: markdown,
+    citations: scope.sourceIds,
+    schemaHash: graph?.generatedAt ?? "",
+    outputFormat: "report",
+    relatedPageIds,
+    relatedNodeIds,
+    relatedSourceIds: scope.sourceIds,
+    projectIds,
+    extraTags: ["source-guide", "guided-ingest"],
+    origin: "query",
+    slug: `source-guides/${scope.id}`,
+    metadata: {
+      status: "draft",
+      createdAt: now,
+      updatedAt: now,
+      compiledFrom: scope.sourceIds,
+      managedBy: "system",
+      confidence: 0.8
+    }
+  });
+  return { page: output.page, content: output.content };
+}
+
+async function stageSourceReviewForScope(rootDir: string, scope: SourceScope): Promise<SourceReviewResult> {
+  const output = await buildSourceReviewStagedPage(rootDir, scope);
+  const approval = await stageGeneratedOutputPages(rootDir, [{ page: output.page, content: output.content, label: "source-review" }], {
+    bundleType: "source_review",
+    title: `Source Review: ${scope.title}`
+  });
   return {
     sourceId: scope.id,
     pageId: output.page.id,
@@ -959,16 +1182,57 @@ async function stageSourceReviewForScope(rootDir: string, scope: SourceReviewSco
   };
 }
 
-function scopeFromManagedSource(source: ManagedSourceRecord): SourceReviewScope {
+async function stageSourceGuideForScope(rootDir: string, scope: SourceScope): Promise<SourceGuideResult> {
+  const briefPath = scope.briefPath ?? (await writeSourceBriefForScope(rootDir, scope)) ?? undefined;
+  if (briefPath) {
+    await refreshVaultAfterOutputSave(rootDir);
+  }
+  const reviewOutput = await buildSourceReviewStagedPage(rootDir, scope);
+  const guideOutput = await buildSourceGuideStagedPage(rootDir, {
+    ...scope,
+    briefPath
+  });
+  const approval = await stageGeneratedOutputPages(
+    rootDir,
+    [
+      { page: reviewOutput.page, content: reviewOutput.content, label: "source-review" },
+      { page: guideOutput.page, content: guideOutput.content, label: "source-guide" }
+    ],
+    {
+      bundleType: "guided_source",
+      title: `Guided Source: ${scope.title}`
+    }
+  );
+  await refreshVaultAfterOutputSave(rootDir);
   return {
-    id: source.id,
-    title: source.title,
-    sourceIds: source.sourceIds
+    sourceId: scope.id,
+    pageId: guideOutput.page.id,
+    guidePath: path.join(approval.approvalDir, "wiki", guideOutput.page.path),
+    reviewPageId: reviewOutput.page.id,
+    reviewPath: path.join(approval.approvalDir, "wiki", reviewOutput.page.path),
+    briefPath,
+    staged: true,
+    approvalId: approval.approvalId,
+    approvalDir: approval.approvalDir
   };
 }
 
-export async function reviewSourceScope(rootDir: string, scope: SourceReviewScope): Promise<SourceReviewResult> {
+function scopeFromManagedSource(source: ManagedSourceRecord): SourceScope {
+  return {
+    id: source.id,
+    title: source.title,
+    sourceIds: source.sourceIds,
+    kind: source.kind,
+    briefPath: source.briefPath
+  };
+}
+
+export async function reviewSourceScope(rootDir: string, scope: SourceScope): Promise<SourceReviewResult> {
   return await stageSourceReviewForScope(rootDir, scope);
+}
+
+export async function guideSourceScope(rootDir: string, scope: SourceScope): Promise<SourceGuideResult> {
+  return await stageSourceGuideForScope(rootDir, scope);
 }
 
 export async function reviewManagedSource(rootDir: string, id: string): Promise<SourceReviewResult> {
@@ -981,14 +1245,43 @@ export async function reviewManagedSource(rootDir: string, id: string): Promise<
     return await stageSourceReviewForScope(rootDir, scopeFromManagedSource(managedSource));
   }
 
-  const manifest = (await listManifests(rootDir)).find((candidate) => candidate.sourceId === id);
+  const manifests = await listManifests(rootDir);
+  const manifest = manifests.find((candidate) => candidate.sourceId === id);
   if (!manifest) {
     throw new Error(`Managed source or source id not found: ${id}`);
   }
   return await stageSourceReviewForScope(rootDir, {
-    id: manifest.sourceId,
-    title: manifest.title,
-    sourceIds: [manifest.sourceId]
+    id: manifest.sourceGroupId ?? manifest.sourceId,
+    title: manifest.sourceGroupTitle ?? manifest.title,
+    sourceIds: manifest.sourceGroupId
+      ? manifests.filter((candidate) => candidate.sourceGroupId === manifest.sourceGroupId).map((candidate) => candidate.sourceId)
+      : [manifest.sourceId],
+    kind: manifest.sourceKind
+  });
+}
+
+export async function guideManagedSource(rootDir: string, id: string): Promise<SourceGuideResult> {
+  const managedSources = await loadManagedSources(rootDir);
+  const managedSource = managedSources.find((source) => source.id === id);
+  if (managedSource) {
+    if (!(await loadVaultConfig(rootDir).then(({ paths }) => fileExists(paths.graphPath)))) {
+      await compileVault(rootDir, {});
+    }
+    return await stageSourceGuideForScope(rootDir, scopeFromManagedSource(managedSource));
+  }
+
+  const manifests = await listManifests(rootDir);
+  const manifest = manifests.find((candidate) => candidate.sourceId === id);
+  if (!manifest) {
+    throw new Error(`Managed source or source id not found: ${id}`);
+  }
+  return await stageSourceGuideForScope(rootDir, {
+    id: manifest.sourceGroupId ?? manifest.sourceId,
+    title: manifest.sourceGroupTitle ?? manifest.title,
+    sourceIds: manifest.sourceGroupId
+      ? manifests.filter((candidate) => candidate.sourceGroupId === manifest.sourceGroupId).map((candidate) => candidate.sourceId)
+      : [manifest.sourceId],
+    kind: manifest.sourceKind
   });
 }
 
@@ -1007,8 +1300,9 @@ export async function addManagedSource(
   options: ManagedSourceAddOptions = {}
 ): Promise<ManagedSourceAddResult> {
   const compileRequested = options.compile ?? true;
-  const briefRequested = options.brief ?? true;
-  const reviewRequested = options.review ?? false;
+  const guideRequested = options.guide ?? false;
+  const briefRequested = guideRequested ? true : (options.brief ?? true);
+  const reviewRequested = guideRequested ? false : (options.review ?? false);
   const sources = await loadManagedSources(rootDir);
   const resolved = await resolveManagedSourceInput(rootDir, input);
   const existing = sources.find((candidate) => matchesManagedSourceSpec(candidate, resolved));
@@ -1061,19 +1355,28 @@ export async function addManagedSource(
     reviewRequested && nextSource.status === "ready"
       ? await stageSourceReviewForScope(rootDir, scopeFromManagedSource(nextSource))
       : undefined;
+  const guide =
+    guideRequested && nextSource.status === "ready"
+      ? await stageSourceGuideForScope(rootDir, {
+          ...scopeFromManagedSource(nextSource),
+          briefPath: nextSource.briefPath
+        })
+      : undefined;
 
   return {
     source: nextSource,
     compile,
     briefGenerated,
-    review
+    review,
+    guide
   };
 }
 
 export async function reloadManagedSources(rootDir: string, options: ManagedSourceReloadOptions = {}): Promise<ManagedSourceReloadResult> {
   const compileRequested = options.compile ?? true;
-  const briefRequested = options.brief ?? true;
-  const reviewRequested = options.review ?? false;
+  const guideRequested = options.guide ?? false;
+  const briefRequested = guideRequested ? true : (options.brief ?? true);
+  const reviewRequested = guideRequested ? false : (options.review ?? false);
   const sources = await loadManagedSources(rootDir);
   const selected = options.all || !options.id ? sources : sources.filter((source) => source.id === options.id);
   if (!selected.length) {
@@ -1123,12 +1426,27 @@ export async function reloadManagedSources(rootDir: string, options: ManagedSour
           .map(async (source) => await stageSourceReviewForScope(rootDir, scopeFromManagedSource(source)))
       )
     : [];
+  const guides = guideRequested
+    ? await Promise.all(
+        nextSources
+          .filter((source) => selected.some((candidate) => candidate.id === source.id))
+          .filter((source) => source.status === "ready")
+          .map(
+            async (source) =>
+              await stageSourceGuideForScope(rootDir, {
+                ...scopeFromManagedSource(source),
+                briefPath: source.briefPath
+              })
+          )
+      )
+    : [];
 
   return {
     sources: nextSources.filter((source) => selected.some((candidate) => candidate.id === source.id)),
     compile,
     briefPaths: [...briefPaths.values()],
-    reviews
+    reviews,
+    guides
   };
 }
 
