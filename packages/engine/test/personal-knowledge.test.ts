@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { zipSync } from "fflate";
+import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   acceptApproval,
@@ -263,12 +264,16 @@ describe("personal knowledge workflows", () => {
 
     const detail = await readApproval(rootDir, added.review?.approvalId ?? "");
     expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${added.source.id}.md`)).toBe(true);
+    const managedReviewEntry = detail.entries.find((entry) => entry.nextPath === `outputs/source-reviews/${added.source.id}.md`);
+    expect(matter(managedReviewEntry?.stagedContent ?? "").data.origin).toBe("source_review");
 
     const rawSourceReview = await reviewManagedSource(rootDir, added.source.sourceIds[0]!);
     expect(rawSourceReview.approvalId).toBeTruthy();
     await fs.access(rawSourceReview.reviewPath);
     const rawDetail = await readApproval(rootDir, rawSourceReview.approvalId ?? "");
     expect(rawDetail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${added.source.sourceIds[0]}.md`)).toBe(true);
+    const rawReviewEntry = rawDetail.entries.find((entry) => entry.nextPath === `outputs/source-reviews/${added.source.sourceIds[0]}.md`);
+    expect(matter(rawReviewEntry?.stagedContent ?? "").data.origin).toBe("source_review");
   });
 
   it("creates resumable guided sessions that stage canonical updates through approvals", async () => {
@@ -303,6 +308,11 @@ describe("personal knowledge workflows", () => {
     expect(detail.entries.some((entry) => entry.label === "guided-update")).toBe(true);
     expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-guides/${awaiting.source.id}.md`)).toBe(true);
     expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${awaiting.source.id}.md`)).toBe(true);
+    const sourceGuideEntry = detail.entries.find((entry) => entry.nextPath === `outputs/source-guides/${awaiting.source.id}.md`);
+    const sourceReviewEntry = detail.entries.find((entry) => entry.nextPath === `outputs/source-reviews/${awaiting.source.id}.md`);
+    expect(matter(sourceGuideEntry?.stagedContent ?? "").data.origin).toBe("source_guide");
+    expect(matter(sourceReviewEntry?.stagedContent ?? "").data.origin).toBe("source_review");
+    expect(matter(await fs.readFile(added.sessionPath ?? "", "utf8")).data.origin).toBe("source_session");
     expect(
       detail.entries.some(
         (entry) =>

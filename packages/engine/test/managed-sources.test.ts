@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addManagedSource,
@@ -140,6 +141,8 @@ describe("managed sources", () => {
     expect(added.compile?.sourceCount ?? 0).toBeGreaterThan(0);
     expect(added.briefGenerated).toBe(true);
     await fs.access(added.source.briefPath ?? "");
+    const brief = matter(await fs.readFile(added.source.briefPath ?? "", "utf8"));
+    expect(brief.data.origin).toBe("source_brief");
 
     await fs.rm(path.join(repoDir, "notes.md"));
     await fs.writeFile(path.join(repoDir, "guide.md"), "# Guide\n\nReplacement detail.\n", "utf8");
@@ -157,6 +160,31 @@ describe("managed sources", () => {
     expect((await readManifests(rootDir)).length).toBeGreaterThan(0);
     await fs.access(path.join(rootDir, "raw"));
     await fs.access(path.join(rootDir, "wiki"));
+  });
+
+  it("clears stale sync counts when a managed file source goes missing", async () => {
+    const rootDir = await createTempWorkspace();
+    const filePath = path.join(rootDir, "call.srt");
+    await fs.writeFile(filePath, ["1", "00:00:01,000 --> 00:00:02,000", "Managed file source.", ""].join("\n"), "utf8");
+
+    await initVault(rootDir);
+    const added = await addManagedSource(rootDir, filePath);
+    expect(added.source.kind).toBe("file");
+    expect(added.source.lastSyncCounts?.importedCount).toBe(1);
+
+    await fs.rm(filePath);
+    const reloaded = await reloadManagedSources(rootDir, { id: added.source.id });
+    const missing = reloaded.sources[0];
+    expect(missing?.status).toBe("missing");
+    expect(missing?.lastSyncStatus).toBe("error");
+    expect(missing?.lastSyncCounts).toEqual({
+      scannedCount: 0,
+      importedCount: 0,
+      updatedCount: 0,
+      removedCount: 0,
+      skippedCount: 0
+    });
+    expect(missing?.lastError).toContain("File not found");
   });
 
   it("does not inherit a parent repo root outside the vault for in-vault managed directories", async () => {

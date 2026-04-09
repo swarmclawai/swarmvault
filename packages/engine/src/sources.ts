@@ -83,6 +83,16 @@ function normalizeManagedStatus(value: ManagedSourceStatus | undefined): Managed
   return value === "missing" || value === "error" ? value : "ready";
 }
 
+function emptyManagedSourceSyncCounts(): ManagedSourceSyncCounts {
+  return {
+    scannedCount: 0,
+    importedCount: 0,
+    updatedCount: 0,
+    removedCount: 0,
+    skippedCount: 0
+  };
+}
+
 function withinRoot(rootPath: string, targetPath: string): boolean {
   const relative = path.relative(rootPath, targetPath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
@@ -511,6 +521,7 @@ async function syncManagedSource(
           updatedAt: now,
           lastSyncAt: now,
           lastSyncStatus: "error",
+          lastSyncCounts: emptyManagedSourceSyncCounts(),
           lastError: `Directory not found: ${entry.path}`,
           changed: false
         };
@@ -527,6 +538,7 @@ async function syncManagedSource(
           updatedAt: now,
           lastSyncAt: now,
           lastSyncStatus: "error",
+          lastSyncCounts: emptyManagedSourceSyncCounts(),
           lastError: `File not found: ${entry.path}`,
           changed: false
         };
@@ -557,6 +569,7 @@ async function syncManagedSource(
       updatedAt: now,
       lastSyncAt: now,
       lastSyncStatus: "error",
+      lastSyncCounts: emptyManagedSourceSyncCounts(),
       lastError: error instanceof Error ? error.message : String(error),
       changed: false
     };
@@ -761,7 +774,7 @@ async function writeSourceBriefForScope(rootDir: string, source: SourceScope): P
     relatedSourceIds: source.sourceIds,
     projectIds,
     extraTags: ["source-brief"],
-    origin: "query",
+    origin: "source_brief",
     slug: `source-briefs/${source.id}`,
     metadata: {
       status: "active",
@@ -1083,7 +1096,7 @@ async function buildSourceReviewStagedPage(
     relatedSourceIds: scope.sourceIds,
     projectIds,
     extraTags: ["source-review"],
-    origin: "query",
+    origin: "source_review",
     slug: `source-reviews/${scope.id}`,
     metadata: {
       status: "draft",
@@ -1387,7 +1400,7 @@ async function buildSourceGuideStagedPage(
     relatedSourceIds: scope.sourceIds,
     projectIds,
     extraTags: ["source-guide", "guided-ingest"],
-    origin: "query",
+    origin: "source_guide",
     slug: `source-guides/${scope.id}`,
     metadata: {
       status: "draft",
@@ -1583,7 +1596,7 @@ async function buildSourceSessionSavedPage(
     relatedSourceIds: scope.sourceIds,
     projectIds,
     extraTags: ["source-session", "guided-session"],
-    origin: "query",
+    origin: "source_session",
     slug: `source-sessions/${scope.id}`,
     metadata: {
       status: "active",

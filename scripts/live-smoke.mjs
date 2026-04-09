@@ -2363,6 +2363,13 @@ async function runInstalledCliCommand(label, args, options = {}) {
   return runCommand(label, installedCli.command, [...installedCli.args, ...args], options);
 }
 
+function assertNoSqliteExperimentalWarning(stderr, label) {
+  assert.ok(
+    !stderr.includes("SQLite is an experimental feature"),
+    `command ${label} leaked the node:sqlite ExperimentalWarning to stderr`
+  );
+}
+
 async function runCommand(label, command, args, options = {}) {
   const commandIndex = state.steps.length + 1;
   const normalizedLabel = label.replace(/[^a-z0-9._-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
@@ -2421,6 +2428,7 @@ async function runCommand(label, command, args, options = {}) {
     throw new Error(`Command failed (${command} ${args.join(" ")}): exit=${exit.code ?? "null"} signal=${exit.signal ?? "none"}${timeoutSuffix}`);
   }
 
+  assertNoSqliteExperimentalWarning(stderr, label);
   return { stdout, stderr };
 }
 

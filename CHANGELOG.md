@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4
+
+- Suppressed the noisy Node 24 `node:sqlite` ExperimentalWarning during normal CLI search-index and search-query runs so installed-package users no longer get spurious stderr output on the default local path
+- Fixed managed file sources so a missing backing file now clears stale `lastSyncCounts` instead of preserving the last successful import counts while reporting `status: "missing"`
+- Corrected source-generated artifact metadata so source briefs, source reviews, source guides, and source sessions carry their real `origin` values instead of being mislabeled as generic query outputs
+- Added regression coverage for the missing-file managed-source case, the source-artifact origin metadata, and installed-package warning leakage in both the packaged smoke lane and the OSS corpus lane
+
 ## 0.6.3
 
 - Added a release-sync guard that verifies root, CLI, engine, viewer, MCP/server, and skill versions stay aligned before publish, and wired that guard into both `pnpm check` and every package `prepublishOnly` hook

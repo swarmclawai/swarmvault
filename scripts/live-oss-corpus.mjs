@@ -537,6 +537,13 @@ async function runInstalledCliCommand(label, args, options = {}) {
   return runCommand(options.logsDir, label, installedCli.command, [...installedCli.args, ...args], options);
 }
 
+function assertNoSqliteExperimentalWarning(stderr, label) {
+  assert.ok(
+    !stderr.includes("SQLite is an experimental feature"),
+    `command ${label} leaked the node:sqlite ExperimentalWarning to stderr`
+  );
+}
+
 async function runCommand(logsDir, label, command, args, options = {}) {
   await fs.mkdir(logsDir, { recursive: true });
   const safeLabel = label.replace(/[^a-z0-9._-]+/gi, "-");
@@ -585,6 +592,7 @@ async function runCommand(logsDir, label, command, args, options = {}) {
     throw new Error(`Command failed (${command} ${args.join(" ")}): exit=${exit.code ?? "null"} signal=${exit.signal ?? "none"}`);
   }
 
+  assertNoSqliteExperimentalWarning(stderr, label);
   return { stdout, stderr };
 }
 

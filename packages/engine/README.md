@@ -292,7 +292,7 @@ Compile and repo-refresh runs also keep benchmark artifacts current by default, 
 ## Notes
 
 - The engine expects Node `>=24`
-- The local search layer currently uses the built-in `node:sqlite` module, which may emit an experimental warning in Node 24
+- The local search layer uses the built-in `node:sqlite` module on Node `>=24`; current CLI releases suppress the upstream experimental warning during normal runs
 - The viewer source lives in the companion `@swarmvaultai/viewer` package, and the built assets are bundled into the engine package for CLI installs
 
 ## Links

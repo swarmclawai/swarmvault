@@ -18,8 +18,46 @@ export interface SearchQueryOptions extends SearchPageFilters {
 
 type DatabaseSyncCtor = typeof import("node:sqlite").DatabaseSync;
 
+function warningMessage(warning: string | Error): string {
+  return warning instanceof Error ? warning.message : String(warning);
+}
+
+function warningType(warning: string | Error, type?: string): string | undefined {
+  if (warning instanceof Error) {
+    return warning.name;
+  }
+  return typeof type === "string" ? type : undefined;
+}
+
+function isSqliteExperimentalWarning(warning: string | Error, type?: string): boolean {
+  return warningType(warning, type) === "ExperimentalWarning" && warningMessage(warning).includes("SQLite is an experimental feature");
+}
+
+function withSuppressedSqliteExperimentalWarning<T>(run: () => T): T {
+  const originalEmitWarning = process.emitWarning.bind(process);
+  process.emitWarning = ((warning: string | Error, options?: string | Error | Record<string, unknown>, ...args: unknown[]) => {
+    const type =
+      typeof options === "string"
+        ? options
+        : typeof (options as { type?: unknown } | undefined)?.type === "string"
+          ? ((options as { type?: string }).type ?? undefined)
+          : undefined;
+    if (isSqliteExperimentalWarning(warning, type)) {
+      return;
+    }
+    return originalEmitWarning(warning as never, options as never, ...(args as never[]));
+  }) as typeof process.emitWarning;
+  try {
+    return run();
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+}
+
 function getDatabaseSync(): DatabaseSyncCtor {
-  const builtin = process.getBuiltinModule?.("node:sqlite") as typeof import("node:sqlite") | undefined;
+  const builtin = withSuppressedSqliteExperimentalWarning(
+    () => process.getBuiltinModule?.("node:sqlite") as typeof import("node:sqlite") | undefined
+  );
   if (!builtin?.DatabaseSync) {
     throw new Error("node:sqlite is unavailable in this Node runtime.");
   }
@@ -64,7 +102,7 @@ function normalizeSourceClass(value: unknown): SourceClass | undefined {
 export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wikiDir: string): Promise<void> {
   await ensureDir(path.dirname(dbPath));
   const DatabaseSync = getDatabaseSync();
-  const db = new DatabaseSync(dbPath);
+  const db = withSuppressedSqliteExperimentalWarning(() => new DatabaseSync(dbPath));
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec(`
     DROP TABLE IF EXISTS page_search;
@@ -146,7 +184,7 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
     return [];
   }
   const DatabaseSync = getDatabaseSync();
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const db = withSuppressedSqliteExperimentalWarning(() => new DatabaseSync(dbPath, { readOnly: true }));
   const clauses = ["page_search MATCH ?"];
   const params: Array<number | string> = [ftsQuery];
 

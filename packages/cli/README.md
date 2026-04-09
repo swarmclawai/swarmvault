@@ -430,7 +430,7 @@ Deep lint web augmentation uses a separate `webSearch` config block. Example:
 - If you are running from a source checkout and `graph serve` says the viewer build is missing, run `pnpm build` in the repository first
 - If a provider claims OpenAI compatibility but fails structured generation, declare only the capabilities it actually supports
 - If `lint --deep --web` fails immediately, make sure a `webSearch` provider is configured and mapped to `tasks.deepLintProvider`
-- Node 24 may emit an experimental warning for `node:sqlite`; that is expected in the current release
+- If you still see a `node:sqlite` experimental warning on Node 24, upgrade to the latest CLI; current releases suppress that upstream warning during normal runs
 
 ## Links
 
