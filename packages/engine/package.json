@@ -41,6 +41,7 @@
   },
   "scripts": {
     "build": "test -f ../viewer/dist/index.html || pnpm --dir ../viewer build; tsup src/index.ts --format esm --dts && tsup --config tsup.hooks.config.ts && rm -rf dist/viewer && mkdir -p dist/viewer && cp -R ../viewer/dist/. dist/viewer/",
+    "pretest": "tsup --config tsup.hooks.config.ts",
     "test": "SWARMVAULT_ALLOW_PRIVATE_URLS=1 vitest run",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "node ../../scripts/check-release-sync.mjs && node ../../scripts/check-published-manifests.mjs"
