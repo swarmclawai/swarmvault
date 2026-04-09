@@ -10,6 +10,7 @@ From the OSS repo:
 
 ```bash
 pnpm install
+pnpm release:preflight
 pnpm live:smoke:heuristic
 pnpm exec playwright install chromium
 pnpm live:smoke:heuristic:browser
@@ -59,16 +60,18 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.1.14 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.6.3 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 node ./scripts/live-smoke.mjs --lane heuristic --browser-check
 node ./scripts/live-smoke.mjs --lane neo4j --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
-node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.1.26 --keep-artifacts
+node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.6.3 --keep-artifacts
 node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
 node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
 ```
 
 Use `pnpm pack` for local tarball preflight installs. Raw `npm pack` preserves workspace dependency specs in the CLI package and does not reflect the publish-time manifest rewrite.
+
+`pnpm release:preflight` is the default local release gate. It runs `check`, `test`, `build`, the site build, the skill dry-run, then validates the installed-package path with local tarballs through heuristic smoke, browser smoke, and the OSS corpus.
 
 The OSS corpus runner also validates the **installed npm package path**. It clones a pinned set of small public repositories, installs the published CLI into an isolated prefix and npm cache, and runs `init`, repo ingest, compile, benchmark, graph query, query, and graph export against those repos.
 
@@ -218,6 +221,7 @@ The live smoke workflow is separate from normal PR CI.
 
 - `workflow_dispatch` for manual runs
 - `release.published` for published package checks
+- PR CI also runs a tarball-installed packaged smoke lane so installed-path regressions are caught before release
 - nightly scheduled heuristic smoke
 
 Artifacts from failed runs are uploaded from `.live-smoke-artifacts/`.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3
+
+- Added a release-sync guard that verifies root, CLI, engine, viewer, MCP/server, and skill versions stay aligned before publish, and wired that guard into both `pnpm check` and every package `prepublishOnly` hook
+- Added a one-command `pnpm release:preflight` path that builds local tarballs and proves the installed-package workflow through heuristic smoke, browser smoke, and the OSS corpus before release
+- Expanded CI and post-release automation so pull requests run a tarball-installed packaged smoke lane, while release/manual live-smoke automation now also covers the browser-verified heuristic path and the OSS corpus
+- Clarified the live-testing scripts so published-package audits and local tarball preflight validation are clearly separated, reducing false confidence when testing unreleased changes
+
 ## 0.6.2
 
 - Added parser-backed Bash and Dart code ingestion, including tree-sitter-backed function, import, type, and call extraction wired through the existing module-page, graph, search, and code-index pipeline

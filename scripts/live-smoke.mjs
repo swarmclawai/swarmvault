@@ -50,6 +50,12 @@ const state = {
 };
 let installedCli;
 
+if (usesPublishedRegistryInstall(installSpecs)) {
+  console.log(
+    `[live-smoke] auditing the published npm package path for @swarmvaultai/cli@${version}. Use --install-spec tarballs to validate unreleased local changes.`
+  );
+}
+
 let graphServer;
 let chartPrimaryAssetPath = "";
 let widgetModulePath = "";

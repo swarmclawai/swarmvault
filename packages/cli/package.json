@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/cli",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Global CLI for SwarmVault.",
   "type": "module",
   "main": "dist/index.js",
@@ -40,10 +40,11 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "node ../../scripts/check-release-sync.mjs && node ../../scripts/check-published-manifests.mjs"
   },
   "dependencies": {
-    "@swarmvaultai/engine": "0.6.2",
+    "@swarmvaultai/engine": "0.6.3",
     "commander": "^14.0.1"
   },
   "devDependencies": {

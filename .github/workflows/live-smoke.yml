@@ -63,6 +63,85 @@ jobs:
           path: .live-smoke-artifacts/
           if-no-files-found: ignore
 
+  heuristic-browser:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.lane == 'all' || github.event.inputs.lane == 'heuristic'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v4
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install chromium
+
+      - name: Resolve published version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json','utf8')).version")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run heuristic live smoke with browser check
+        run: pnpm live:smoke:heuristic:browser -- --version "$SWARMVAULT_LIVE_SMOKE_VERSION"
+
+      - name: Upload heuristic browser smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-smoke-heuristic-browser
+          path: .live-smoke-artifacts/
+          if-no-files-found: ignore
+
+  oss-corpus:
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.lane == 'all')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: pnpm/action-setup@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve published version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "SWARMVAULT_LIVE_SMOKE_VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/cli/package.json','utf8')).version")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run OSS corpus against the published package
+        run: pnpm live:oss:corpus -- --version "$SWARMVAULT_LIVE_SMOKE_VERSION"
+
+      - name: Upload OSS corpus artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-oss-corpus
+          path: .oss-corpus-artifacts/
+          if-no-files-found: ignore
+
   openai:
     if: |
       (github.event_name != 'schedule') &&

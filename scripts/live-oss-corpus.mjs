@@ -63,6 +63,12 @@ const state = {
 
 let installedCli;
 
+if (usesPublishedRegistryInstall(installSpecs)) {
+  console.log(
+    `[oss-corpus] auditing the published npm package path for @swarmvaultai/cli@${version}. Use --install-spec tarballs to validate unreleased local changes.`
+  );
+}
+
 await fs.mkdir(artifactDir, { recursive: true });
 await fs.mkdir(npmCacheDir, { recursive: true });
 await fs.mkdir(reposRootDir, { recursive: true });
@@ -346,6 +352,18 @@ function parseArgs(argv) {
     }
   }
   return parsed;
+}
+
+function usesPublishedRegistryInstall(specs) {
+  return specs.every((spec) => {
+    if (spec.startsWith("file:") || spec.endsWith(".tgz")) {
+      return false;
+    }
+    if (path.isAbsolute(spec)) {
+      return false;
+    }
+    return spec.startsWith("@swarmvaultai/cli@");
+  });
 }
 
 async function loadEnvFile(filePath) {

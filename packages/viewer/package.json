@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/viewer",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Graph viewer package for SwarmVault graph artifacts.",
   "type": "module",
   "main": "dist/lib.js",
@@ -42,7 +42,8 @@
     "build:lib": "tsup src/lib.ts --format esm --dts --out-dir dist --clean",
     "build:app": "vite build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "node ../../scripts/check-release-sync.mjs && node ../../scripts/check-published-manifests.mjs"
   },
   "dependencies": {
     "cytoscape": "^3.33.1",
