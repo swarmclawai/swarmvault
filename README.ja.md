@@ -217,7 +217,7 @@ clawhub install swarmvault
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest と軽量な `.rst` 見出し正規化 |
 | 設定 / データ | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | key/value スキーマヒント付きの構造化プレビュー |
 | 開発者マニフェスト | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` など | コンテンツスニッフベースのテキスト ingest —— 一般的な開発設定ファイルが暗黙的に捨てられることはありません |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .hpp .hh .h .php .rb .ps1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`、および `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang を持つ拡張子なしスクリプト | tree-sitter ベースの AST とモジュール解決 |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`、および `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang を持つ拡張子なしスクリプト | tree-sitter ベースの AST とモジュール解決 |
 | Browser clips | inbox bundles | `inbox import` によるアセット書き換え済み Markdown |
 | Managed sources | ローカルディレクトリ、公開 GitHub リポジトリ root URL、docs ハブ URL | `swarmvault source add` によるレジストリ同期 |
 

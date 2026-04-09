@@ -117,7 +117,7 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `source add` against a deterministic local docs fixture over HTTP and verify crawl sync plus source-brief output
 - ingest a mixed personal-research fixture with transcripts, Slack export, email, and calendar material, then verify dashboard generation, source-guide staging, and approval labeling
 - ingest and compile a markdown fixture
-- ingest the tiny local fixture matrix under `smoke/fixtures/tiny-matrix/` and verify every shipped code language plus local `markdown`, `text`, `html`, `pdf`, `docx`, `image`, and `code` source kinds
+- ingest the tiny local fixture matrix under `smoke/fixtures/tiny-matrix/` and verify the core code-language baseline plus local `markdown`, `text`, `pdf`, `docx`, `epub`, `csv`, `xlsx`, `pptx`, `image`, `code`, `jupyter`, `odt`, `odp`, `ods`, `data`, `bibtex`, `rtf`, `org`, and `asciidoc` source kinds
 - ingest remote HTML and markdown fixtures over HTTP and verify remote image localization into `raw/assets/`
 - import inbox markdown and HTML bundles with linked local assets
 - run `query`
@@ -228,4 +228,4 @@ Artifacts from failed runs are uploaded from `.live-smoke-artifacts/`.
 
 The OSS corpus runner is an extended validation lane. It should run before release candidate signoff and again against the live published npm package when a release materially changes repo ingest, graph quality, or query/report behavior.
 
-The tiny fixture matrix is the complementary fast gate: it is fully controlled, cheap to run, and should catch regressions across every shipped code language and local file kind before larger corpus runs do.
+The tiny fixture matrix is the complementary fast gate: it is fully controlled, cheap to run, and should catch regressions across the core code-language baseline plus the local file kinds it explicitly covers before larger corpus runs do.

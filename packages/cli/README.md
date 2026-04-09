@@ -107,9 +107,9 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
 - use `source add` instead when the same local directory, public GitHub repo root, or docs hub should stay registered and reloadable
 - URL ingest still localizes remote image references by default
-- local file ingest supports markdown, text, reStructuredText, HTML, PDF, DOCX, images, and code
+- local file and archive ingest supports markdown, text, reStructuredText, HTML, PDF, Word, RTF, OpenDocument, EPUB, CSV/TSV, Excel, PowerPoint, Jupyter notebooks, BibTeX, Org-mode, AsciiDoc, transcripts, Slack exports, email, calendar, structured config/data, developer manifests, images, and code
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
-- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell
+- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, and Vue single-file components
 
 Useful flags:
 

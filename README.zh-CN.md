@@ -217,7 +217,7 @@ clawhub install swarmvault
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
 | 配置 / 数据 | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | 结构化预览，带 key/value schema 提示 |
 | 开发清单文件 | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` 等 | 基于内容嗅探的文本 ingest —— 常见开发配置不会被静默丢弃 |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .hpp .hh .h .php .rb .ps1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 基于 tree-sitter 的 AST 与模块解析 |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 基于 tree-sitter 的 AST 与模块解析 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 | Managed sources | 本地目录、公开 GitHub 仓库根 URL、文档中心 URL | 通过 `swarmvault source add` 的 registry 同步 |
 
