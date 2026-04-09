@@ -614,6 +614,9 @@ describe("swarmvault workflow", () => {
     expect(compile.pageCount).toBeGreaterThan(0);
     const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
     const parsedSourcePage = matter(await fs.readFile(sourcePagePath, "utf8"));
+    expect(parsedSourcePage.data.title).toBe("Local-First SwarmVault");
+    expect(parsedSourcePage.content).toContain("# Local-First SwarmVault");
+    expect(parsedSourcePage.content).not.toContain("# Local-First SwarmVault SwarmVault keeps raw sources immutable");
     expect(parsedSourcePage.data.status).toBe("active");
     expect(parsedSourcePage.data.managed_by).toBe("system");
     expect(parsedSourcePage.data.created_at).toBeTruthy();

@@ -153,6 +153,13 @@ try {
     await assertExists(path.join(workspaceDir, "state", "graph.json"));
     await assertExists(path.join(workspaceDir, "state", "search.sqlite"));
     await assertExists(path.join(workspaceDir, "wiki", "index.md"));
+    const sourcePage = await fs.readFile(path.join(workspaceDir, "wiki", "sources", `${manifest.sourceId}.md`), "utf8");
+    assert.ok(sourcePage.includes("title: Durable Research Vaults"), "markdown source page did not keep the manifest title");
+    assert.ok(sourcePage.includes("# Durable Research Vaults"), "markdown source page did not keep a clean heading");
+    assert.ok(
+      !sourcePage.includes("# Durable Research Vaults SwarmVault turns raw sources into durable markdown"),
+      "markdown source page title leaked the body text into the heading"
+    );
   });
 
   if (lane === "neo4j") {
@@ -1205,16 +1212,16 @@ try {
 
       const semanticQuery = await runCliJson(["graph", "query", "compounding memory"]);
       assert.ok(
-        Array.isArray(semanticQuery.matches) &&
-          semanticQuery.matches.some(
-            (match) =>
-              (match.type === "node" || match.type === "page") &&
-              (match.id.startsWith("source:semantic-alpha-") || match.id.startsWith("source:semantic-beta-"))
-          ) &&
-          Array.isArray(semanticQuery.seedNodeIds) &&
+        Array.isArray(semanticQuery.seedNodeIds) &&
           semanticQuery.seedNodeIds.some(
             (nodeId) => nodeId.startsWith("source:semantic-alpha-") || nodeId.startsWith("source:semantic-beta-")
-          ),
+          ) &&
+          Array.isArray(semanticQuery.pageIds) &&
+          semanticQuery.pageIds.some(
+            (pageId) => pageId.startsWith("source:semantic-alpha-") || pageId.startsWith("source:semantic-beta-")
+          ) &&
+          Array.isArray(semanticQuery.visitedEdgeIds) &&
+          semanticQuery.visitedEdgeIds.some((edgeId) => edgeId.startsWith("similar-embed:")),
         "semantic graph query did not seed from embedding-backed source matches"
       );
     });

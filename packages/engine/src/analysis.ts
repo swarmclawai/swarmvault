@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { z } from "zod";
 import { analyzeCodeSource } from "./code-analysis.js";
 import { readExtractionArtifact } from "./ingest.js";
@@ -76,23 +77,20 @@ const STOPWORDS = new Set([
   "your"
 ]);
 
-const MANIFEST_TITLE_SOURCE_KINDS = new Set<SourceManifest["sourceKind"]>([
-  "transcript",
-  "chat_export",
-  "email",
-  "calendar",
-  "epub",
-  "csv",
-  "xlsx",
-  "pptx"
-]);
-
 const HEURISTIC_SECTION_SOURCE_KINDS = new Map<SourceManifest["sourceKind"], string>([
   ["transcript", "Transcript"],
   ["chat_export", "Messages"],
   ["email", "Message"],
   ["calendar", "Description"]
 ]);
+
+type MarkdownNode = {
+  type: string;
+  depth?: number;
+  value?: string;
+  alt?: string;
+  children?: MarkdownNode[];
+};
 
 function extractTopTerms(text: string, count: number): string[] {
   const frequency = new Map<string, number>();
@@ -127,33 +125,98 @@ function detectPolarity(text: string): Polarity {
   return "neutral";
 }
 
-function deriveTitle(manifest: SourceManifest, text: string): string {
-  const heading = text.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  return heading || manifest.title;
+function parseMarkdownNodes(text: string): MarkdownNode[] {
+  try {
+    const root = fromMarkdown(text) as { children?: MarkdownNode[] };
+    return Array.isArray(root.children) ? root.children : [];
+  } catch {
+    return [];
+  }
 }
 
-function extractMarkdownSection(text: string, heading: string): string {
-  const marker = `## ${heading}`;
-  const start = text.indexOf(marker);
-  if (start === -1) {
-    return text;
+function markdownNodeText(node: MarkdownNode): string {
+  if (node.type === "text" || node.type === "inlineCode" || node.type === "code") {
+    return normalizeWhitespace(node.value ?? "");
   }
-  const after = text.slice(start + marker.length).trim();
-  const nextSection = after.match(/\n##\s+/);
-  return (nextSection?.index !== undefined ? after.slice(0, nextSection.index) : after).trim() || text;
+  if (node.type === "image") {
+    return normalizeWhitespace(node.alt ?? "");
+  }
+  if (node.type === "break" || node.type === "thematicBreak") {
+    return " ";
+  }
+  return normalizeWhitespace((node.children ?? []).map((child) => markdownNodeText(child)).join(" "));
+}
+
+function markdownNodesText(nodes: MarkdownNode[]): string {
+  return normalizeWhitespace(nodes.map((node) => markdownNodeText(node)).join("\n"));
+}
+
+function stripLeadingTitleNodes(nodes: MarkdownNode[], title: string): MarkdownNode[] {
+  const normalizedTitle = normalizeWhitespace(title);
+  if (!normalizedTitle || !nodes.length) {
+    return nodes;
+  }
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (!node) {
+      continue;
+    }
+    const nodeText = markdownNodeText(node);
+    if (node.type === "heading" && node.depth === 1 && nodeText === normalizedTitle) {
+      return nodes.slice(index + 1);
+    }
+    if (node.type === "paragraph" && nodeText === normalizedTitle) {
+      return nodes.slice(index + 1);
+    }
+    return nodes;
+  }
+  return nodes;
+}
+
+function markdownSectionNodes(nodes: MarkdownNode[], heading: string): MarkdownNode[] {
+  const normalizedHeading = normalizeWhitespace(heading);
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node?.type !== "heading" || node.depth !== 2) {
+      continue;
+    }
+    if (markdownNodeText(node) !== normalizedHeading) {
+      continue;
+    }
+    const sectionNodes: MarkdownNode[] = [];
+    for (let cursor = index + 1; cursor < nodes.length; cursor += 1) {
+      const candidate = nodes[cursor];
+      if (candidate?.type === "heading" && typeof candidate.depth === "number" && candidate.depth <= 2) {
+        break;
+      }
+      if (candidate) {
+        sectionNodes.push(candidate);
+      }
+    }
+    return sectionNodes;
+  }
+  return [];
 }
 
 function textForHeuristicAnalysis(manifest: SourceManifest, text: string): string {
-  const section = HEURISTIC_SECTION_SOURCE_KINDS.get(manifest.sourceKind);
-  return section ? extractMarkdownSection(text, section) : text;
+  const nodes = parseMarkdownNodes(text);
+  if (!nodes.length) {
+    return normalizeWhitespace(text);
+  }
+  const sectionHeading = HEURISTIC_SECTION_SOURCE_KINDS.get(manifest.sourceKind);
+  const scopedNodes = sectionHeading ? markdownSectionNodes(nodes, sectionHeading) : nodes;
+  const relevantNodes = scopedNodes.length ? scopedNodes : nodes;
+  const contentNodes = stripLeadingTitleNodes(relevantNodes, manifest.title);
+  const normalized = markdownNodesText(contentNodes.length ? contentNodes : relevantNodes);
+  return normalized || normalizeWhitespace(text);
 }
 
 function normalizeAnalysisTitle(manifest: SourceManifest, candidate: string): string {
-  const normalized = normalizeWhitespace(candidate.replace(/^#+\s+/, ""));
-  if (!normalized) {
+  if (manifest.sourceKind !== "code") {
     return manifest.title;
   }
-  if (MANIFEST_TITLE_SOURCE_KINDS.has(manifest.sourceKind)) {
+  const normalized = normalizeWhitespace(candidate.replace(/^#+\s+/, ""));
+  if (!normalized) {
     return manifest.title;
   }
   if (normalized.length > 140 || normalized.includes(" ## ")) {
@@ -192,7 +255,7 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
     semanticHash: manifest.semanticHash,
     extractionHash: manifest.extractionHash,
     schemaHash,
-    title: deriveTitle(manifest, text),
+    title: manifest.title,
     summary: firstSentences(normalized, 3) || truncate(normalized, 280) || `Imported ${manifest.sourceKind} source.`,
     concepts,
     entities,
