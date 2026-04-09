@@ -638,138 +638,504 @@ export function resetTreeSitterLanguageCacheForTests(): void {
   packageRootCache.clear();
 }
 
-function parsePythonImportStatement(text: string): CodeImport[] {
-  const match = text.trim().match(/^import\s+(.+)$/);
-  if (!match) {
-    return [];
+// Join the `identifier` children of a `dotted_name` tree-sitter node with `.`.
+function flattenPythonDottedName(node: TreeNode | null | undefined): string {
+  if (!node) {
+    return "";
   }
-
-  return match[1]
-    .split(",")
-    .map((item) => item.trim())
+  return node.namedChildren
+    .filter((child): child is TreeNode => child?.type === "identifier")
+    .map((child) => child.text.trim())
     .filter(Boolean)
-    .map((item) => {
-      const [specifier, alias] = item.split(/\s+as\s+/i);
-      return {
-        specifier: specifier.trim(),
-        importedSymbols: [],
-        namespaceImport: alias?.trim(),
-        isExternal: !specifier.trim().startsWith("."),
-        reExport: false
-      } satisfies CodeImport;
-    });
+    .join(".");
 }
 
-function parsePythonFromImportStatement(text: string): CodeImport[] {
-  const match = text.trim().match(/^from\s+([.\w]+)\s+import\s+(.+)$/);
-  if (!match) {
+// Flatten a `relative_import` node into its dotted specifier (`..pkg.mod`).
+function flattenPythonRelativeImport(node: TreeNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+  const prefixNode = node.namedChildren.find((child): child is TreeNode => child?.type === "import_prefix") ?? null;
+  const prefix = prefixNode ? prefixNode.text.trim() : "";
+  const moduleNode = node.namedChildren.find((child): child is TreeNode => child?.type === "dotted_name") ?? null;
+  const module = flattenPythonDottedName(moduleNode);
+  return prefix + module;
+}
+
+function parsePythonImportStatement(node: TreeNode): CodeImport[] {
+  const imports: CodeImport[] = [];
+  for (const child of node.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "dotted_name") {
+      const specifier = flattenPythonDottedName(child);
+      if (!specifier) {
+        continue;
+      }
+      imports.push({
+        specifier,
+        importedSymbols: [],
+        isExternal: !specifier.startsWith("."),
+        reExport: false
+      });
+    } else if (child.type === "aliased_import") {
+      const moduleNode = child.namedChildren.find((inner): inner is TreeNode => inner?.type === "dotted_name") ?? null;
+      const aliasNode = child.namedChildren.find((inner): inner is TreeNode => inner?.type === "identifier") ?? null;
+      const specifier = flattenPythonDottedName(moduleNode);
+      if (!specifier) {
+        continue;
+      }
+      imports.push({
+        specifier,
+        importedSymbols: [],
+        namespaceImport: aliasNode?.text.trim(),
+        isExternal: !specifier.startsWith("."),
+        reExport: false
+      });
+    }
+  }
+  return imports;
+}
+
+function parsePythonFromImportStatement(node: TreeNode): CodeImport[] {
+  const children = node.namedChildren.filter((child): child is TreeNode => child !== null);
+  if (children.length === 0) {
     return [];
   }
-
+  const [moduleNode, ...rest] = children;
+  if (!moduleNode) {
+    return [];
+  }
+  let specifier: string;
+  if (moduleNode.type === "relative_import") {
+    specifier = flattenPythonRelativeImport(moduleNode);
+  } else if (moduleNode.type === "dotted_name") {
+    specifier = flattenPythonDottedName(moduleNode);
+  } else {
+    return [];
+  }
+  if (!specifier) {
+    return [];
+  }
+  const symbols: string[] = [];
+  let hasWildcard = false;
+  for (const entry of rest) {
+    if (entry.type === "wildcard_import") {
+      hasWildcard = true;
+      continue;
+    }
+    if (entry.type === "dotted_name") {
+      const name = flattenPythonDottedName(entry);
+      if (name) {
+        symbols.push(name);
+      }
+      continue;
+    }
+    if (entry.type === "aliased_import") {
+      const moduleChild = entry.namedChildren.find((inner): inner is TreeNode => inner?.type === "dotted_name") ?? null;
+      const aliasChild = entry.namedChildren.find((inner): inner is TreeNode => inner?.type === "identifier") ?? null;
+      const baseName = flattenPythonDottedName(moduleChild);
+      const aliasName = aliasChild?.text.trim();
+      if (baseName) {
+        symbols.push(aliasName ? `${baseName} as ${aliasName}` : baseName);
+      }
+    }
+  }
+  if (hasWildcard) {
+    symbols.push("*");
+  }
   return [
     {
-      specifier: match[1],
-      importedSymbols: match[2]
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean),
-      isExternal: !match[1].startsWith("."),
+      specifier,
+      importedSymbols: symbols,
+      isExternal: !specifier.startsWith("."),
       reExport: false
     }
   ];
 }
 
-function parseGoImport(text: string): CodeImport | undefined {
-  const match = text.trim().match(/^(?:([._A-Za-z]\w*)\s+)?"([^"]+)"$/);
-  if (!match) {
-    return undefined;
+function parseGoImport(spec: TreeNode): CodeImport | undefined {
+  let alias: string | undefined;
+  let dotImport = false;
+  let blankImport = false;
+  let specifier: string | undefined;
+  for (const child of spec.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    switch (child.type) {
+      case "package_identifier":
+        alias = child.text.trim();
+        break;
+      case "dot":
+        dotImport = true;
+        break;
+      case "blank_identifier":
+        blankImport = true;
+        break;
+      case "interpreted_string_literal":
+      case "raw_string_literal": {
+        const content =
+          child.namedChildren.find(
+            (inner): inner is TreeNode =>
+              inner?.type === "interpreted_string_literal_content" || inner?.type === "raw_string_literal_content"
+          ) ?? null;
+        specifier = content ? content.text : child.text.replace(/^[`"]|[`"]$/g, "");
+        break;
+      }
+      default:
+        break;
+    }
   }
-
-  return {
-    specifier: match[2],
-    importedSymbols: [],
-    namespaceImport: match[1] && ![".", "_"].includes(match[1]) ? match[1] : undefined,
-    isExternal: !match[2].startsWith("."),
-    reExport: false
-  };
-}
-
-function parseRustUse(text: string): CodeImport {
-  const cleaned = text
-    .replace(/^pub\s+/, "")
-    .replace(/^use\s+/, "")
-    .replace(/;$/, "")
-    .trim();
-  const aliasMatch = cleaned.match(/\s+as\s+([A-Za-z_]\w*)$/);
-  const withoutAlias = aliasMatch ? cleaned.slice(0, aliasMatch.index).trim() : cleaned;
-  const braceMatch = withoutAlias.match(/^(.*)::\{(.+)\}$/);
-  const importedSymbols = braceMatch
-    ? braceMatch[2]
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean)
-    : [aliasMatch ? `${normalizeSymbolReference(withoutAlias)} as ${aliasMatch[1]}` : normalizeSymbolReference(withoutAlias)].filter(
-        Boolean
-      );
-
-  const specifier = braceMatch ? braceMatch[1].trim() : withoutAlias;
-  return {
-    specifier,
-    importedSymbols,
-    isExternal: !/^(crate|self|super)::/.test(specifier),
-    reExport: text.trim().startsWith("pub use ")
-  };
-}
-
-function parseJavaImport(text: string): CodeImport {
-  const cleaned = text
-    .replace(/^import\s+/, "")
-    .replace(/^static\s+/, "")
-    .replace(/;$/, "")
-    .trim();
-  const symbolName = normalizeSymbolReference(cleaned.replace(/\.\*$/, ""));
-  return {
-    specifier: cleaned.replace(/\.\*$/, ""),
-    importedSymbols: symbolName ? [symbolName] : [],
-    isExternal: true,
-    reExport: false
-  };
-}
-
-function parseKotlinImport(text: string): CodeImport | undefined {
-  const cleaned = text.trim().replace(/^import\s+/, "");
-  if (!cleaned) {
-    return undefined;
-  }
-  const aliasMatch = cleaned.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/);
-  const specifier = (aliasMatch ? aliasMatch[1] : cleaned).trim();
   if (!specifier) {
     return undefined;
   }
   return {
     specifier,
     importedSymbols: [],
-    namespaceImport: aliasMatch?.[2],
+    namespaceImport: !dotImport && !blankImport ? alias : undefined,
     isExternal: !specifier.startsWith("."),
     reExport: false
   };
 }
 
-function parseScalaImport(text: string): CodeImport[] {
-  const cleaned = text.trim().replace(/^import\s+/, "");
-  if (!cleaned) {
+type RustUseLeaf = {
+  segments: string[];
+  symbol: string | null;
+  wildcard: boolean;
+  alias?: string;
+};
+
+// Flatten a Rust path node (scoped_identifier / identifier / crate / self / super)
+// into its dotted segments. The tree-sitter-rust grammar uses named node types
+// `crate`, `self`, and `super` for the root keyword, plus `identifier` for the
+// intermediate segments.
+function flattenRustPath(node: TreeNode | null | undefined): string[] {
+  if (!node) {
     return [];
   }
-  return cleaned
-    .split(",")
-    .map((item) => item.trim())
+  if (node.type === "crate" || node.type === "self" || node.type === "super") {
+    return [node.type];
+  }
+  if (node.type === "identifier") {
+    return [node.text.trim()].filter(Boolean);
+  }
+  if (node.type === "scoped_identifier") {
+    const segments: string[] = [];
+    for (const child of node.namedChildren) {
+      if (!child) {
+        continue;
+      }
+      segments.push(...flattenRustPath(child));
+    }
+    return segments;
+  }
+  // Fallback: concatenate identifier-like descendants.
+  return node.namedChildren.filter((child): child is TreeNode => child !== null).flatMap((child) => flattenRustPath(child));
+}
+
+function collectRustUseLeaves(node: TreeNode | null | undefined, prefix: string[], leaves: RustUseLeaf[]): void {
+  if (!node) {
+    return;
+  }
+  switch (node.type) {
+    case "scoped_identifier": {
+      const segments = flattenRustPath(node);
+      if (segments.length === 0) {
+        return;
+      }
+      leaves.push({
+        segments: [...prefix, ...segments],
+        symbol: segments[segments.length - 1] ?? null,
+        wildcard: false
+      });
+      return;
+    }
+    case "identifier":
+    case "crate":
+    case "self":
+    case "super": {
+      // Root-word shortcuts like `use self;` or inside a use_list: `{self, Bar}`.
+      const combined = [...prefix];
+      if (node.type === "self" && prefix.length > 0) {
+        // `self` inside a brace group re-references the prefix itself, not a new segment.
+        leaves.push({ segments: combined, symbol: null, wildcard: false });
+        return;
+      }
+      combined.push(node.type === "identifier" ? node.text.trim() : node.type);
+      leaves.push({
+        segments: combined,
+        symbol: combined[combined.length - 1] ?? null,
+        wildcard: false
+      });
+      return;
+    }
+    case "scoped_use_list": {
+      const pathNode = node.namedChildren[0] ?? null;
+      const listNode = node.namedChildren[1] ?? null;
+      const nextPrefix = [...prefix, ...flattenRustPath(pathNode)];
+      collectRustUseLeaves(listNode, nextPrefix, leaves);
+      return;
+    }
+    case "use_list": {
+      for (const child of node.namedChildren) {
+        collectRustUseLeaves(child, prefix, leaves);
+      }
+      return;
+    }
+    case "use_wildcard": {
+      const pathNode = node.namedChildren[0] ?? null;
+      const pathSegments = pathNode ? flattenRustPath(pathNode) : [];
+      leaves.push({
+        segments: [...prefix, ...pathSegments],
+        symbol: null,
+        wildcard: true
+      });
+      return;
+    }
+    case "use_as_clause": {
+      const pathNode = node.childForFieldName("path") ?? node.namedChildren[0] ?? null;
+      const aliasNode = node.childForFieldName("alias") ?? node.namedChildren[1] ?? null;
+      const before = leaves.length;
+      collectRustUseLeaves(pathNode, prefix, leaves);
+      const alias = aliasNode?.text.trim();
+      if (alias) {
+        for (let index = before; index < leaves.length; index += 1) {
+          const leaf = leaves[index];
+          if (leaf) {
+            leaf.alias = alias;
+          }
+        }
+      }
+      return;
+    }
+    default: {
+      // Unknown variant — walk into children as a best-effort fallback.
+      for (const child of node.namedChildren) {
+        collectRustUseLeaves(child, prefix, leaves);
+      }
+    }
+  }
+}
+
+function isRustPubUse(useNode: TreeNode): boolean {
+  // `pub use foo;` exposes a `visibility_modifier` as the first non-use child inside
+  // the `use_declaration`. Check that bounded token position rather than regexing the
+  // declaration text.
+  for (const child of useNode.children) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "visibility_modifier") {
+      return true;
+    }
+    if (child.type === "use") {
+      return false;
+    }
+  }
+  return false;
+}
+
+function parseRustUseDeclaration(useNode: TreeNode): CodeImport[] {
+  const inner = useNode.namedChildren.find((child): child is TreeNode => child !== null) ?? null;
+  if (!inner) {
+    return [];
+  }
+  const leaves: RustUseLeaf[] = [];
+  collectRustUseLeaves(inner, [], leaves);
+  if (leaves.length === 0) {
+    return [];
+  }
+  const reExport = isRustPubUse(useNode);
+  return leaves.map((leaf) => {
+    const specifier = leaf.segments.join("::");
+    const importedSymbols = leaf.wildcard
+      ? ["*"]
+      : leaf.alias && leaf.symbol
+        ? [`${leaf.symbol} as ${leaf.alias}`]
+        : leaf.symbol
+          ? [leaf.symbol]
+          : [];
+    return {
+      specifier,
+      importedSymbols,
+      isExternal: !/^(?:crate|self|super)(?:$|::)/.test(specifier),
+      reExport
+    } satisfies CodeImport;
+  });
+}
+
+// Flatten a Java `scoped_identifier` / Kotlin-like nested identifier node into its
+// dotted textual form by concatenating the nested `scoped_identifier` path head with
+// the trailing `identifier`.
+function flattenJavaScopedIdentifier(node: TreeNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+  if (node.type === "identifier") {
+    return node.text.trim();
+  }
+  if (node.type === "scoped_identifier") {
+    const head = node.namedChildren[0] ?? null;
+    const tail = node.namedChildren[node.namedChildren.length - 1] ?? null;
+    const headText = flattenJavaScopedIdentifier(head);
+    const tailText = tail && tail !== head && tail.type === "identifier" ? tail.text.trim() : "";
+    return headText && tailText ? `${headText}.${tailText}` : headText || tailText;
+  }
+  return node.text.trim();
+}
+
+function parseJavaImport(node: TreeNode): CodeImport {
+  const pathNode = node.namedChildren.find((child): child is TreeNode => child?.type === "scoped_identifier") ?? null;
+  const hasAsterisk = node.namedChildren.some((child) => child?.type === "asterisk");
+  const pathText = flattenJavaScopedIdentifier(pathNode);
+  const specifier = hasAsterisk ? `${pathText}.*` : pathText;
+  const symbolName = hasAsterisk ? "" : (pathText.split(".").pop() ?? "").trim();
+  return {
+    specifier,
+    importedSymbols: symbolName ? [symbolName] : [],
+    isExternal: true,
+    reExport: false
+  };
+}
+
+// Flatten a Kotlin identifier node (which itself contains nested `simple_identifier`
+// children) into a dotted path.
+function flattenKotlinIdentifier(node: TreeNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+  if (node.type === "simple_identifier") {
+    return node.text.trim();
+  }
+  return node.namedChildren
+    .filter((child): child is TreeNode => child?.type === "simple_identifier")
+    .map((child) => child.text.trim())
     .filter(Boolean)
-    .map((item) => ({
-      specifier: item.replace(/\s*=>\s*/g, " => "),
-      importedSymbols: [],
-      isExternal: !item.startsWith("."),
+    .join(".");
+}
+
+function parseKotlinImport(header: TreeNode): CodeImport | undefined {
+  const identifierNode = header.namedChildren.find((child): child is TreeNode => child?.type === "identifier") ?? null;
+  const specifier = flattenKotlinIdentifier(identifierNode);
+  if (!specifier) {
+    return undefined;
+  }
+  const hasWildcard = header.descendantsOfType("wildcard_import").some((child) => child !== null);
+  const aliasNode = header.namedChildren.find((child): child is TreeNode => child?.type === "import_alias") ?? null;
+  const aliasName = aliasNode
+    ? flattenKotlinIdentifier(aliasNode.namedChildren.find((child): child is TreeNode => child?.type === "type_identifier") ?? null) ||
+      aliasNode.text.replace(/^as\s+/, "").trim()
+    : undefined;
+  return {
+    specifier: hasWildcard ? `${specifier}.*` : specifier,
+    importedSymbols: hasWildcard ? ["*"] : [],
+    namespaceImport: aliasName || undefined,
+    isExternal: true,
+    reExport: false
+  };
+}
+
+// Flatten a Scala `stable_identifier` node into its dotted path. Nested
+// `stable_identifier` children represent the path head; the trailing `identifier`
+// represents the last segment.
+function flattenScalaStableIdentifier(node: TreeNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+  if (node.type === "identifier") {
+    return node.text.trim();
+  }
+  if (node.type === "stable_identifier") {
+    return node.namedChildren
+      .filter((child): child is TreeNode => child !== null)
+      .map((child) => flattenScalaStableIdentifier(child))
+      .filter(Boolean)
+      .join(".");
+  }
+  return node.text.trim();
+}
+
+function parseScalaImport(node: TreeNode): CodeImport[] {
+  const pathNode =
+    node.namedChildren.find((child): child is TreeNode => child?.type === "stable_identifier") ??
+    node.namedChildren.find((child): child is TreeNode => child?.type === "identifier") ??
+    null;
+  const basePath = flattenScalaStableIdentifier(pathNode);
+  if (!basePath) {
+    return [];
+  }
+
+  const selectorsNode = node.namedChildren.find((child): child is TreeNode => child?.type === "import_selectors") ?? null;
+  const wildcardNode = node.namedChildren.find((child): child is TreeNode => child?.type === "wildcard") ?? null;
+
+  if (selectorsNode) {
+    const results: CodeImport[] = [];
+    for (const selector of selectorsNode.namedChildren) {
+      if (!selector) {
+        continue;
+      }
+      if (selector.type === "identifier") {
+        const symbol = selector.text.trim();
+        if (symbol) {
+          results.push({
+            specifier: basePath,
+            importedSymbols: [symbol],
+            isExternal: !basePath.startsWith("."),
+            reExport: false
+          });
+        }
+        continue;
+      }
+      if (selector.type === "renamed_identifier") {
+        const idChildren = selector.namedChildren.filter((child): child is TreeNode => child?.type === "identifier");
+        const [original, alias] = [idChildren[0]?.text.trim(), idChildren[1]?.text.trim()];
+        if (original) {
+          results.push({
+            specifier: basePath,
+            importedSymbols: [alias ? `${original} as ${alias}` : original],
+            isExternal: !basePath.startsWith("."),
+            reExport: false
+          });
+        }
+        continue;
+      }
+      if (selector.type === "wildcard") {
+        results.push({
+          specifier: basePath,
+          importedSymbols: ["*"],
+          isExternal: !basePath.startsWith("."),
+          reExport: false
+        });
+      }
+    }
+    return results;
+  }
+
+  if (wildcardNode) {
+    return [
+      {
+        specifier: basePath,
+        importedSymbols: ["*"],
+        isExternal: !basePath.startsWith("."),
+        reExport: false
+      }
+    ];
+  }
+
+  // Plain `import scala.collection.mutable` — last segment is the symbol.
+  const segments = basePath.split(".");
+  const symbol = segments.pop() ?? basePath;
+  const parent = segments.join(".");
+  return [
+    {
+      specifier: parent || basePath,
+      importedSymbols: [symbol],
+      isExternal: !basePath.startsWith("."),
       reExport: false
-    }));
+    }
+  ];
 }
 
 function bashCommandName(commandNode: TreeNode | null | undefined): string | undefined {
@@ -916,65 +1282,181 @@ function parseZigImport(node: TreeNode): CodeImport | undefined {
   };
 }
 
-function parseCSharpUsing(text: string): CodeImport | undefined {
-  const aliasMatch = text.trim().match(/^using\s+([A-Za-z_]\w*)\s*=\s*([^;]+);$/);
-  if (aliasMatch) {
-    return {
-      specifier: aliasMatch[2].trim(),
-      importedSymbols: [],
-      namespaceImport: aliasMatch[1],
-      isExternal: !aliasMatch[2].trim().startsWith("."),
-      reExport: false
-    };
+// Flatten a C# `qualified_name` / `identifier` node into its dotted form.
+function flattenCSharpQualifiedName(node: TreeNode | null | undefined): string {
+  if (!node) {
+    return "";
   }
-
-  const match = text.trim().match(/^using\s+([^;]+);$/);
-  if (!match) {
-    return undefined;
+  if (node.type === "identifier") {
+    return node.text.trim();
   }
-
-  return {
-    specifier: match[1].trim(),
-    importedSymbols: [],
-    isExternal: !match[1].trim().startsWith("."),
-    reExport: false
-  };
+  if (node.type === "qualified_name") {
+    const [head, tail] = [node.namedChildren[0] ?? null, node.namedChildren[1] ?? null];
+    const headText = flattenCSharpQualifiedName(head);
+    const tailText = tail?.type === "identifier" ? tail.text.trim() : flattenCSharpQualifiedName(tail);
+    return headText && tailText ? `${headText}.${tailText}` : headText || tailText;
+  }
+  return node.text.trim();
 }
 
-function parsePhpUse(text: string): CodeImport[] {
-  const cleaned = text
-    .trim()
-    .replace(/^use\s+/, "")
-    .replace(/;$/, "");
-  return cleaned
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => {
-      const aliasMatch = item.match(/^(.+?)\s+as\s+([A-Za-z_]\w*)$/i);
-      const specifier = (aliasMatch ? aliasMatch[1] : item).trim();
-      return {
-        specifier,
-        importedSymbols: [],
-        namespaceImport: aliasMatch?.[2],
-        isExternal: !specifier.startsWith("."),
-        reExport: false
-      } satisfies CodeImport;
-    });
-}
-
-function parseCppInclude(text: string): CodeImport | undefined {
-  const match = text.trim().match(/^#include\s+([<"].+[>"])$/);
-  if (!match) {
+function parseCSharpUsing(node: TreeNode): CodeImport | undefined {
+  const namedChildren = node.namedChildren.filter((child): child is TreeNode => child !== null);
+  if (namedChildren.length === 0) {
     return undefined;
   }
-  const specifier = quotedPath(match[1]);
+  // `using Alias = Qualified.Name` has an `identifier` alias followed by the path.
+  let aliasName: string | undefined;
+  let pathNode: TreeNode | null = null;
+  if (namedChildren.length >= 2 && namedChildren[0]?.type === "identifier" && namedChildren[1]) {
+    aliasName = namedChildren[0].text.trim();
+    pathNode = namedChildren[1];
+  } else {
+    pathNode = namedChildren[0] ?? null;
+  }
+  const specifier = flattenCSharpQualifiedName(pathNode);
+  if (!specifier) {
+    return undefined;
+  }
   return {
     specifier,
     importedSymbols: [],
-    isExternal: match[1].startsWith("<"),
+    namespaceImport: aliasName,
+    isExternal: !specifier.startsWith("."),
     reExport: false
   };
+}
+
+// Flatten a PHP `qualified_name` / `namespace_name` / `name` node into a dotted path
+// (PHP uses `\` as separator, but we store specifiers as dotted for consistency with
+// how the CodeIndex stores package aliases).
+function flattenPhpQualifiedName(node: TreeNode | null | undefined): string {
+  if (!node) {
+    return "";
+  }
+  if (node.type === "name") {
+    return node.text.trim();
+  }
+  if (node.type === "namespace_name") {
+    return node.namedChildren
+      .filter((child): child is TreeNode => child?.type === "name")
+      .map((child) => child.text.trim())
+      .filter(Boolean)
+      .join("\\");
+  }
+  if (node.type === "qualified_name") {
+    const parts: string[] = [];
+    for (const child of node.namedChildren) {
+      if (!child) {
+        continue;
+      }
+      if (child.type === "namespace_name") {
+        parts.push(flattenPhpQualifiedName(child));
+      } else if (child.type === "name") {
+        parts.push(child.text.trim());
+      }
+    }
+    return parts.filter(Boolean).join("\\");
+  }
+  return node.text.trim();
+}
+
+function parsePhpUseClause(clause: TreeNode, prefix: string): CodeImport | undefined {
+  const names = clause.namedChildren.filter((child): child is TreeNode => child?.type === "name");
+  const qualified = clause.namedChildren.find((child): child is TreeNode => child?.type === "qualified_name") ?? null;
+  let specifier: string;
+  let aliasName: string | undefined;
+  if (qualified) {
+    specifier = flattenPhpQualifiedName(qualified);
+    if (names.length >= 1 && names[0]) {
+      aliasName = names[0].text.trim();
+    }
+  } else if (names.length >= 1 && names[0]) {
+    specifier = names[0].text.trim();
+    if (names.length >= 2 && names[1]) {
+      aliasName = names[1].text.trim();
+    }
+  } else {
+    return undefined;
+  }
+  if (prefix && specifier) {
+    specifier = `${prefix}\\${specifier}`;
+  }
+  if (!specifier) {
+    return undefined;
+  }
+  return {
+    specifier,
+    importedSymbols: [],
+    namespaceImport: aliasName,
+    isExternal: true,
+    reExport: false
+  };
+}
+
+function parsePhpUse(node: TreeNode): CodeImport[] {
+  const results: CodeImport[] = [];
+  // Grouped form: `use Foo\{Bar, Baz};` — leading `namespace_name` plus a
+  // `namespace_use_group` containing multiple clauses.
+  const groupNode = node.namedChildren.find((child): child is TreeNode => child?.type === "namespace_use_group") ?? null;
+  if (groupNode) {
+    const prefixNode = node.namedChildren.find((child): child is TreeNode => child?.type === "namespace_name") ?? null;
+    const prefix = flattenPhpQualifiedName(prefixNode);
+    for (const clause of groupNode.namedChildren) {
+      if (!clause || clause.type !== "namespace_use_clause") {
+        continue;
+      }
+      const parsed = parsePhpUseClause(clause, prefix);
+      if (parsed) {
+        results.push(parsed);
+      }
+    }
+    return results;
+  }
+  // Flat form: `use Foo\Bar;` — one or more `namespace_use_clause` children.
+  for (const child of node.namedChildren) {
+    if (!child || child.type !== "namespace_use_clause") {
+      continue;
+    }
+    const parsed = parsePhpUseClause(child, "");
+    if (parsed) {
+      results.push(parsed);
+    }
+  }
+  return results;
+}
+
+function parseCppInclude(node: TreeNode): CodeImport | undefined {
+  for (const child of node.namedChildren) {
+    if (!child) {
+      continue;
+    }
+    if (child.type === "system_lib_string") {
+      const specifier = child.text.replace(/^</, "").replace(/>$/, "").trim();
+      if (!specifier) {
+        return undefined;
+      }
+      return {
+        specifier,
+        importedSymbols: [],
+        isExternal: true,
+        reExport: false
+      };
+    }
+    if (child.type === "string_literal") {
+      const contentNode = child.namedChildren.find((inner): inner is TreeNode => inner?.type === "string_content") ?? null;
+      const specifier = (contentNode?.text ?? child.text.replace(/^"|"$/g, "")).trim();
+      if (!specifier) {
+        return undefined;
+      }
+      return {
+        specifier,
+        importedSymbols: [],
+        isExternal: false,
+        reExport: false
+      };
+    }
+  }
+  return undefined;
 }
 
 function rubyStringContent(node: TreeNode | null | undefined): string | undefined {
@@ -992,7 +1474,10 @@ function normalizePowerShellDotSourceSpecifier(raw: string): string {
   // PowerShell, so it is equivalent to a sibling path relative to the current file.
   // Normalize both `$PSScriptRoot/Foo.ps1` and the rarer `$PSScriptRoot\Foo.ps1` to
   // `./Foo.ps1` so the downstream local-path resolver can find them.
-  return unquoted.replace(/^\$PSScriptRoot(?:[\\/]+|$)/i, "./");
+  const withoutScriptRoot = unquoted.replace(/^\$PSScriptRoot(?:[\\/]+|$)/i, "./");
+  // Normalize Windows-style backslashes to forward slashes so POSIX path helpers can
+  // reason about sibling imports.
+  return withoutScriptRoot.replace(/\\/g, "/");
 }
 
 function parsePowerShellImport(commandNode: TreeNode): CodeImport | undefined {
@@ -1388,11 +1873,11 @@ function pythonCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagno
       continue;
     }
     if (child.type === "import_statement") {
-      imports.push(...parsePythonImportStatement(child.text));
+      imports.push(...parsePythonImportStatement(child));
       continue;
     }
     if (child.type === "import_from_statement") {
-      imports.push(...parsePythonFromImportStatement(child.text));
+      imports.push(...parsePythonFromImportStatement(child));
       continue;
     }
     if (child.type === "class_definition") {
@@ -1449,7 +1934,7 @@ function goCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostic
     }
     if (child.type === "import_declaration") {
       for (const spec of child.descendantsOfType("import_spec")) {
-        const parsed = spec ? parseGoImport(spec.text) : undefined;
+        const parsed = spec ? parseGoImport(spec) : undefined;
         if (parsed) {
           imports.push(parsed);
         }
@@ -1527,7 +2012,7 @@ function rustCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
       continue;
     }
     if (child.type === "use_declaration") {
-      imports.push(parseRustUse(child.text));
+      imports.push(...parseRustUseDeclaration(child));
       continue;
     }
     if (child.type === "mod_item") {
@@ -1621,14 +2106,16 @@ function javaCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
       continue;
     }
     if (child.type === "package_declaration") {
-      packageName = child.text
-        .replace(/^package\s+/, "")
-        .replace(/;$/, "")
-        .trim();
+      const pathNode =
+        child.namedChildren.find((inner): inner is TreeNode => inner?.type === "scoped_identifier" || inner?.type === "identifier") ?? null;
+      const flattened = flattenJavaScopedIdentifier(pathNode);
+      if (flattened) {
+        packageName = flattened;
+      }
       continue;
     }
     if (child.type === "import_declaration") {
-      imports.push(parseJavaImport(child.text));
+      imports.push(parseJavaImport(child));
       continue;
     }
 
@@ -1724,7 +2211,7 @@ function kotlinCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagno
     }
     if (child.type === "import_list") {
       for (const importNode of child.descendantsOfType("import_header").filter((item): item is TreeNode => item !== null)) {
-        const parsed = parseKotlinImport(importNode.text);
+        const parsed = parseKotlinImport(importNode);
         if (parsed) {
           imports.push(parsed);
         }
@@ -1821,7 +2308,7 @@ function scalaCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnos
       continue;
     }
     if (child.type === "import_declaration") {
-      imports.push(...parseScalaImport(child.text));
+      imports.push(...parseScalaImport(child));
       continue;
     }
     if (child.type === "function_definition") {
@@ -2020,7 +2507,7 @@ function csharpCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagno
       continue;
     }
     if (child.type === "using_directive") {
-      const parsed = parseCSharpUsing(child.text);
+      const parsed = parseCSharpUsing(child);
       if (parsed) {
         imports.push(parsed);
       }
@@ -2138,7 +2625,7 @@ function phpCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnosti
       continue;
     }
     if (child.type === "namespace_use_declaration") {
-      imports.push(...parsePhpUse(child.text));
+      imports.push(...parsePhpUse(child));
       continue;
     }
 
@@ -2409,7 +2896,7 @@ function cFamilyCodeAnalysis(
       continue;
     }
     if (child.type === "preproc_include") {
-      const parsed = parseCppInclude(child.text);
+      const parsed = parseCppInclude(child);
       if (parsed) {
         imports.push(parsed);
       }

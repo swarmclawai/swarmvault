@@ -1,10 +1,11 @@
 import path from "node:path";
 import nlp from "compromise";
-import { fromMarkdown } from "mdast-util-from-markdown";
 import { z } from "zod";
 import { analyzeCodeSource } from "./code-analysis.js";
 import { readExtractionArtifact } from "./ingest.js";
+import { type MarkdownNode, markdownNodeText, parseMarkdownNodes } from "./markdown-ast.js";
 import type { VaultSchema } from "./schema.js";
+import { contentTokens } from "./tokenize.js";
 import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceExtractionArtifact, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
@@ -37,47 +38,6 @@ const sourceAnalysisSchema = z.object({
   tags: z.array(z.string()).max(5).default([])
 });
 
-const STOPWORDS = new Set([
-  "about",
-  "after",
-  "also",
-  "been",
-  "being",
-  "between",
-  "both",
-  "could",
-  "does",
-  "each",
-  "from",
-  "have",
-  "into",
-  "just",
-  "more",
-  "much",
-  "only",
-  "other",
-  "over",
-  "same",
-  "some",
-  "such",
-  "than",
-  "that",
-  "their",
-  "there",
-  "these",
-  "they",
-  "this",
-  "very",
-  "what",
-  "when",
-  "where",
-  "which",
-  "while",
-  "with",
-  "would",
-  "your"
-]);
-
 const HEURISTIC_SECTION_SOURCE_KINDS = new Map<SourceManifest["sourceKind"], string>([
   ["transcript", "Transcript"],
   ["chat_export", "Messages"],
@@ -85,20 +45,11 @@ const HEURISTIC_SECTION_SOURCE_KINDS = new Map<SourceManifest["sourceKind"], str
   ["calendar", "Description"]
 ]);
 
-type MarkdownNode = {
-  type: string;
-  depth?: number;
-  value?: string;
-  alt?: string;
-  children?: MarkdownNode[];
-};
-
 function extractTopTerms(text: string, count: number): string[] {
+  // contentTokens already drops closed-class words via compromise POS tagging,
+  // so there is no hand-maintained STOPWORDS filter here.
   const frequency = new Map<string, number>();
-  for (const token of text.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []) {
-    if (STOPWORDS.has(token)) {
-      continue;
-    }
+  for (const token of contentTokens(text)) {
     frequency.set(token, (frequency.get(token) ?? 0) + 1);
   }
 
@@ -132,14 +83,11 @@ function extractEntities(text: string, count: number): string[] {
       }
     }
   } catch {
-    // compromise failed to parse — fall through to the regex fallback.
-  }
-
-  if (candidates.length === 0) {
-    // Narrow regex fallback for cases where compromise produced nothing
-    // (very short text, non-English prose, etc).
-    const matches = text.match(/\b[A-Z][A-Za-z0-9-]+(?:\s+[A-Z][A-Za-z0-9-]+){0,2}\b/g) ?? [];
-    candidates.push(...matches.map((value) => normalizeWhitespace(value)));
+    // compromise failed to parse — return nothing. The heuristic fallback is
+    // intentionally empty: a bare regex match of capitalized tokens produced
+    // too much noise (sentence starters, mid-sentence proper-noun phrases
+    // spanning unrelated subjects). Users who need high-quality entities
+    // configure an LLM provider; the heuristic notice points them there.
   }
 
   return uniqueBy(candidates, (value) => value.toLowerCase()).slice(0, count);
@@ -153,28 +101,6 @@ function detectPolarity(text: string): Polarity {
     return "positive";
   }
   return "neutral";
-}
-
-function parseMarkdownNodes(text: string): MarkdownNode[] {
-  try {
-    const root = fromMarkdown(text) as { children?: MarkdownNode[] };
-    return Array.isArray(root.children) ? root.children : [];
-  } catch {
-    return [];
-  }
-}
-
-function markdownNodeText(node: MarkdownNode): string {
-  if (node.type === "text" || node.type === "inlineCode" || node.type === "code") {
-    return normalizeWhitespace(node.value ?? "");
-  }
-  if (node.type === "image") {
-    return normalizeWhitespace(node.alt ?? "");
-  }
-  if (node.type === "break" || node.type === "thematicBreak") {
-    return " ";
-  }
-  return normalizeWhitespace((node.children ?? []).map((child) => markdownNodeText(child)).join(" "));
 }
 
 function markdownNodesText(nodes: MarkdownNode[]): string {

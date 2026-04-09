@@ -1204,7 +1204,6 @@ export interface BenchmarkArtifact {
   reductionRatio: number;
   sampleQuestions: string[];
   perQuestion: BenchmarkQuestionResult[];
-  questionResults: BenchmarkQuestionResult[];
   summary: BenchmarkSummary;
 }
 

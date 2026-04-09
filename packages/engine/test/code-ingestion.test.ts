@@ -966,6 +966,365 @@ describe("code-aware ingestion", () => {
     expect(dotSource?.resolvedSourceId).toBe(helperManifest?.sourceId);
   });
 
+  it("parses Rust multi-line brace-group use declarations into one import per selector", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, "src"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "src", "lib.rs"),
+      ["mod a;", "mod b;", "use crate::{", "    a::X,", "    b::Y,", "};", "", "pub fn render() -> (X, Y) { (X, Y) }", ""].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(path.join(repoDir, "src", "a.rs"), "pub struct X;\n", "utf8");
+    await fs.writeFile(path.join(repoDir, "src", "b.rs"), "pub struct Y;\n", "utf8");
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    expect(result.imported).toHaveLength(3);
+    await compileVault(rootDir);
+
+    const libManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("lib.rs"));
+    const aManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("a.rs"));
+    const bManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("b.rs"));
+    const libAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${libManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    // Brace-group use expands one import per selector with the leaf symbol captured
+    // in importedSymbols. The specifier is the full module::symbol path and the
+    // resolver's trailing-segment stripping maps each one to the sibling source file.
+    const aImport = libAnalysis.code?.imports.find((entry) => entry.specifier === "crate::a::X");
+    const bImport = libAnalysis.code?.imports.find((entry) => entry.specifier === "crate::b::Y");
+    expect(aImport, "crate::a::X import should exist").toBeDefined();
+    expect(bImport, "crate::b::Y import should exist").toBeDefined();
+    expect(aImport?.importedSymbols).toContain("X");
+    expect(bImport?.importedSymbols).toContain("Y");
+    expect(aImport?.resolvedSourceId).toBe(aManifest?.sourceId);
+    expect(bImport?.resolvedSourceId).toBe(bManifest?.sourceId);
+  });
+
+  it("strips trailing Rust symbol segments when the specifier targets a module file", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, "src"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "src", "lib.rs"),
+      ["mod inner;", "", "use crate::inner::CONST_NAME;", "", "pub fn read() -> u32 { CONST_NAME }", ""].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(path.join(repoDir, "src", "inner.rs"), "pub const CONST_NAME: u32 = 42;\n", "utf8");
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const libManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("lib.rs"));
+    const innerManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("inner.rs"));
+    const libAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${libManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const constImport = libAnalysis.code?.imports.find((entry) => entry.specifier === "crate::inner::CONST_NAME");
+    expect(constImport).toBeDefined();
+    expect(constImport?.resolvedSourceId).toBe(innerManifest?.sourceId);
+  });
+
+  it("disambiguates Rust `crate::` references across multiple workspace crates", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, "crates", "alpha", "src"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, "crates", "beta", "src"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "crates", "alpha", "src", "lib.rs"),
+      ["// alpha crate root", "mod shared;", "use crate::shared::name;", "pub fn announce_alpha() -> &'static str { name() }", ""].join(
+        "\n"
+      ),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "crates", "alpha", "src", "shared.rs"),
+      ['pub fn name() -> &\'static str { "alpha" }', ""].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "crates", "beta", "src", "lib.rs"),
+      ["// beta crate root", "mod shared;", "use crate::shared::name;", "pub fn announce_beta() -> &'static str { name() }", ""].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "crates", "beta", "src", "shared.rs"),
+      ['pub fn name() -> &\'static str { "beta" }', ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const alphaLib = result.imported.find((entry) => entry.repoRelativePath?.endsWith("crates/alpha/src/lib.rs"));
+    const alphaShared = result.imported.find((entry) => entry.repoRelativePath?.endsWith("crates/alpha/src/shared.rs"));
+    const betaLib = result.imported.find((entry) => entry.repoRelativePath?.endsWith("crates/beta/src/lib.rs"));
+    const betaShared = result.imported.find((entry) => entry.repoRelativePath?.endsWith("crates/beta/src/shared.rs"));
+
+    const alphaAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${alphaLib?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const betaAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${betaLib?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+
+    const alphaImport = alphaAnalysis.code?.imports.find((entry) => entry.specifier === "crate::shared::name");
+    const betaImport = betaAnalysis.code?.imports.find((entry) => entry.specifier === "crate::shared::name");
+
+    expect(alphaImport?.resolvedSourceId).toBe(alphaShared?.sourceId);
+    expect(betaImport?.resolvedSourceId).toBe(betaShared?.sourceId);
+  });
+
+  it("extracts Python `from` imports through the AST, not regex on text", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, "pkg"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(path.join(repoDir, "pkg", "__init__.py"), "", "utf8");
+    await fs.writeFile(path.join(repoDir, "pkg", "mod.py"), "def A():\n    return 1\n\ndef B():\n    return 2\n", "utf8");
+    await fs.writeFile(
+      path.join(repoDir, "pkg", "app.py"),
+      ["from .mod import A, B as C", "", "def run():", "    return A() + C()", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const appManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("pkg/app.py"));
+    const appAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${appManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const fromImport = appAnalysis.code?.imports[0];
+    expect(fromImport?.specifier).toBe(".mod");
+    expect(fromImport?.importedSymbols).toEqual(["A", "B as C"]);
+    expect(fromImport?.isExternal).toBe(false);
+  });
+
+  it("extracts Go import specs including named, dot, and blank imports via AST", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "main.go"),
+      [
+        "package main",
+        "",
+        "import (",
+        '    "fmt"',
+        '    myio "io"',
+        '    . "strings"',
+        '    _ "os"',
+        ")",
+        "",
+        'func main() { fmt.Println("hi") }',
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const mainManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("main.go"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${mainManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const specs = new Map(analysis.code?.imports.map((entry) => [entry.specifier, entry]) ?? []);
+    expect(specs.get("fmt")?.namespaceImport).toBeUndefined();
+    expect(specs.get("io")?.namespaceImport).toBe("myio");
+    expect(specs.get("strings")?.namespaceImport).toBeUndefined();
+    expect(specs.get("os")?.namespaceImport).toBeUndefined();
+    expect(specs.size).toBe(4);
+  });
+
+  it("records Java wildcard and static imports through the AST", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, "com", "example"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "com", "example", "Widget.java"),
+      [
+        "package com.example;",
+        "",
+        "import java.util.List;",
+        "import java.util.*;",
+        "import static com.example.Constants.*;",
+        "",
+        "public class Widget {",
+        "}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("Widget.java"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const specifiers = (analysis.code?.imports ?? []).map((entry) => entry.specifier).sort();
+    expect(specifiers).toEqual(["com.example.Constants.*", "java.util.*", "java.util.List"]);
+  });
+
+  it("records Kotlin aliased imports through the AST", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "Widget.kt"),
+      ["package demo", "", "import foo.bar.Thing as T", "", "class Widget {", "  fun make(): T = T()", "}", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("Widget.kt"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const aliased = analysis.code?.imports.find((entry) => entry.specifier === "foo.bar.Thing");
+    expect(aliased).toBeDefined();
+    expect(aliased?.namespaceImport).toBe("T");
+  });
+
+  it("emits one Scala import per brace-group selector with alias support", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "Widget.scala"),
+      [
+        "package demo",
+        "",
+        "import java.util.{List, ArrayList => AList}",
+        "",
+        "class Widget {",
+        "  val items: List[AList[Int]] = null",
+        "}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("Widget.scala"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const selectors = analysis.code?.imports.filter((entry) => entry.specifier === "java.util") ?? [];
+    expect(selectors).toHaveLength(2);
+    const symbols = selectors.flatMap((entry) => entry.importedSymbols).sort();
+    expect(symbols).toEqual(["ArrayList as AList", "List"]);
+  });
+
+  it("records C# aliased using directives through the AST", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "Widget.cs"),
+      ["using Alias = System.Text.StringBuilder;", "using System.Collections.Generic;", "", "public class Widget {}", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("Widget.cs"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const aliased = analysis.code?.imports.find((entry) => entry.specifier === "System.Text.StringBuilder");
+    expect(aliased).toBeDefined();
+    expect(aliased?.namespaceImport).toBe("Alias");
+    const plain = analysis.code?.imports.find((entry) => entry.specifier === "System.Collections.Generic");
+    expect(plain).toBeDefined();
+    expect(plain?.namespaceImport).toBeUndefined();
+  });
+
+  it("expands PHP grouped use declarations into one import per clause", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "Widget.php"),
+      ["<?php", "namespace App;", "", "use Foo\\{Baz, Qux as Q};", "", "class Widget {}", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("Widget.php"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${manifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const imports = analysis.code?.imports ?? [];
+    const baz = imports.find((entry) => entry.specifier === "Foo\\Baz");
+    const qux = imports.find((entry) => entry.specifier === "Foo\\Qux");
+    expect(baz).toBeDefined();
+    expect(qux).toBeDefined();
+    expect(qux?.namespaceImport).toBe("Q");
+  });
+
+  it("distinguishes C++ system and local include directives through the AST", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(path.join(repoDir, "local.h"), ["#pragma once", "int shared();", ""].join("\n"), "utf8");
+    await fs.writeFile(
+      path.join(repoDir, "main.cpp"),
+      ["#include <vector>", '#include "local.h"', "", "int main() { return shared(); }", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const mainManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("main.cpp"));
+    const localManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("local.h"));
+    const analysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${mainManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const system = analysis.code?.imports.find((entry) => entry.specifier === "vector");
+    const local = analysis.code?.imports.find((entry) => entry.specifier === "local.h");
+    expect(system?.isExternal).toBe(true);
+    expect(local?.isExternal).toBe(false);
+    expect(local?.resolvedSourceId).toBe(localManifest?.sourceId);
+  });
+
   it("records a clear diagnostic when a tree-sitter grammar asset is missing without failing unrelated sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

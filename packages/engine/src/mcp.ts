@@ -25,7 +25,7 @@ import {
   searchVault
 } from "./vault.js";
 
-const SERVER_VERSION = "0.6.7";
+const SERVER_VERSION = "0.6.8";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -39,10 +39,10 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     {
       description: "Return the current SwarmVault workspace paths and high-level counts."
     },
-    async () => {
+    safeHandler(async () => {
       const info = await getWorkspaceInfo(rootDir);
       return asToolText(info);
-    }
+    })
   );
 
   server.registerTool(
@@ -54,10 +54,10 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         limit: z.number().int().min(1).max(25).optional().describe("Maximum number of results")
       }
     },
-    async ({ query, limit }) => {
+    safeHandler(async ({ query, limit }) => {
       const results = await searchVault(rootDir, query, limit ?? 5);
       return asToolText(results);
-    }
+    })
   );
 
   server.registerTool(
@@ -68,14 +68,14 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         path: z.string().min(1).describe("Path relative to wiki/, for example sources/example.md")
       }
     },
-    async ({ path: relativePath }) => {
+    safeHandler(async ({ path: relativePath }) => {
       const page = await readPage(rootDir, relativePath);
       if (!page) {
         return asToolError(`Page not found: ${relativePath}`);
       }
 
       return asToolText(page);
-    }
+    })
   );
 
   server.registerTool(
@@ -86,10 +86,10 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         limit: z.number().int().min(1).max(100).optional().describe("Maximum number of manifests to return")
       }
     },
-    async ({ limit }) => {
+    safeHandler(async ({ limit }) => {
       const manifests = await listManifests(rootDir);
       return asToolText(limit ? manifests.slice(0, limit) : manifests);
-    }
+    })
   );
 
   server.registerTool(
@@ -102,13 +102,13 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         budget: z.number().int().min(3).max(50).optional().describe("Maximum nodes to summarize")
       }
     },
-    async ({ question, traversal, budget }) => {
+    safeHandler(async ({ question, traversal, budget }) => {
       const result = await queryGraphVault(rootDir, question, {
         traversal,
         budget
       });
       return asToolText(result);
-    }
+    })
   );
 
   server.registerTool(
@@ -116,9 +116,9 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     {
       description: "Return the machine-readable graph report and trust artifact."
     },
-    async () => {
+    safeHandler(async () => {
       return asToolText((await readGraphReport(rootDir)) ?? { error: "Graph report not found. Run `swarmvault compile` first." });
-    }
+    })
   );
 
   server.registerTool(
@@ -129,9 +129,9 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         target: z.string().min(1).describe("Node or page label/id")
       }
     },
-    async ({ target }) => {
+    safeHandler(async ({ target }) => {
       return asToolText(await explainGraphVault(rootDir, target));
-    }
+    })
   );
 
   server.registerTool(
@@ -143,9 +143,9 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         limit: z.number().int().min(1).max(50).optional().describe("Maximum hyperedges to return")
       }
     },
-    async ({ target, limit }) => {
+    safeHandler(async ({ target, limit }) => {
       return asToolText(await listGraphHyperedges(rootDir, target, limit ?? 25));
-    }
+    })
   );
 
   server.registerTool(
@@ -156,10 +156,10 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         target: z.string().min(1).describe("Node or page label/id")
       }
     },
-    async ({ target }) => {
+    safeHandler(async ({ target }) => {
       const explanation = await explainGraphVault(rootDir, target);
       return asToolText(explanation.neighbors);
-    }
+    })
   );
 
   server.registerTool(
@@ -171,9 +171,9 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         to: z.string().min(1).describe("End node/page label or id")
       }
     },
-    async ({ from, to }) => {
+    safeHandler(async ({ from, to }) => {
       return asToolText(await pathGraphVault(rootDir, from, to));
-    }
+    })
   );
 
   server.registerTool(
@@ -184,9 +184,9 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         limit: z.number().int().min(1).max(25).optional().describe("Maximum nodes to return")
       }
     },
-    async ({ limit }) => {
+    safeHandler(async ({ limit }) => {
       return asToolText(await listGodNodes(rootDir, limit ?? 10));
-    }
+    })
   );
 
   server.registerTool(
@@ -199,14 +199,14 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         format: z.enum(["markdown", "report", "slides", "chart", "image"]).optional().describe("Output format")
       }
     },
-    async ({ question, save, format }) => {
+    safeHandler(async ({ question, save, format }) => {
       const result = await queryVault(rootDir, {
         question,
         save: save ?? true,
         format
       });
       return asToolText(result);
-    }
+    })
   );
 
   server.registerTool(
@@ -217,10 +217,10 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         input: z.string().min(1).describe("Local path or URL to ingest")
       }
     },
-    async ({ input }) => {
+    safeHandler(async ({ input }) => {
       const result = await ingestInputDetailed(rootDir, input);
       return asToolText(result);
-    }
+    })
   );
 
   server.registerTool(
@@ -231,10 +231,10 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         approve: z.boolean().optional().describe("Stage a review bundle without applying active page changes")
       }
     },
-    async ({ approve }) => {
+    safeHandler(async ({ approve }) => {
       const result = await compileVault(rootDir, { approve: approve ?? false });
       return asToolText(result);
-    }
+    })
   );
 
   server.registerTool(
@@ -242,10 +242,10 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     {
       description: "Run anti-drift and vault health checks."
     },
-    async () => {
+    safeHandler(async () => {
       const findings = await lintVault(rootDir);
       return asToolText(findings);
-    }
+    })
   );
 
   server.registerResource(
@@ -433,6 +433,25 @@ function asToolError(message: string) {
         text: message
       }
     ]
+  };
+}
+
+/**
+ * Wraps an MCP tool handler so thrown errors become a well-formed MCP error
+ * response instead of crashing the stdio server. A single malformed argument
+ * or transient IO failure should not sever every other tool in the session.
+ */
+function safeHandler<Args, Result>(
+  handler: (args: Args) => Promise<Result>
+): (args: Args) => Promise<Result | ReturnType<typeof asToolError>> {
+  return async (args: Args) => {
+    try {
+      return await handler(args);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[swarmvault-mcp] tool handler failed: ${message}`);
+      return asToolError(message);
+    }
   };
 }
 

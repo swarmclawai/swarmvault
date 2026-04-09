@@ -1,10 +1,64 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { initWorkspace } from "./config.js";
 import type { AgentType, InstallAgentOptions, InstallAgentResult } from "./types.js";
 import { ensureDir, fileExists } from "./utils.js";
+
+/**
+ * Resolves the directory containing the bundled hook scripts. At runtime
+ * the engine is loaded from `dist/index.js`, and the tsup build emits hook
+ * bundles alongside it under `dist/hooks/`. When the engine is running
+ * from source (e.g. during vitest), the path points at the built hooks in
+ * the engine package's dist folder instead.
+ */
+function resolveHooksDir(): string {
+  // import.meta.url points at either dist/index.js (prod) or the source
+  // file that's running under vitest. In both cases the built hooks live
+  // under the engine package's dist/hooks/.
+  const moduleUrl = import.meta.url;
+  const modulePath = fileURLToPath(moduleUrl);
+  const moduleDir = path.dirname(modulePath);
+  // Case 1: moduleDir is `.../packages/engine/dist` (production build).
+  // Case 2: moduleDir is `.../packages/engine/src` (running from source in tests).
+  if (moduleDir.endsWith(`${path.sep}dist`)) {
+    return path.join(moduleDir, "hooks");
+  }
+  if (moduleDir.endsWith(`${path.sep}src`)) {
+    return path.resolve(moduleDir, "..", "dist", "hooks");
+  }
+  // Fallback: sibling dist/hooks of the module directory.
+  return path.resolve(moduleDir, "hooks");
+}
+
+const BUILT_HOOKS_DIR = resolveHooksDir();
+const hookContentCache = new Map<string, string>();
+
+/**
+ * Reads a bundled hook script from `dist/hooks/` and caches the result.
+ * Throws a descriptive error if the hook is missing (usually because the
+ * engine hasn't been built yet).
+ */
+async function readBuiltHook(hookFile: string): Promise<string> {
+  const cached = hookContentCache.get(hookFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const hookPath = path.join(BUILT_HOOKS_DIR, hookFile);
+  try {
+    const content = await fs.readFile(hookPath, "utf8");
+    hookContentCache.set(hookFile, content);
+    return content;
+  } catch (error) {
+    throw new Error(
+      `SwarmVault hook bundle not found at ${hookPath}. ` +
+        `Run 'pnpm --filter @swarmvaultai/engine build' so the hook scripts are emitted to dist/hooks/. ` +
+        `Underlying error: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
 
 const managedStart = "<!-- swarmvault:managed:start -->";
 const managedEnd = "<!-- swarmvault:managed:end -->";
@@ -234,7 +288,7 @@ async function readJsonWithWarnings<T extends object>(filePath: string, fallback
 async function installClaudeHook(rootDir: string): Promise<{ path: string; warnings: string[] }> {
   const settingsPath = path.join(rootDir, ".claude", "settings.json");
   const scriptPath = path.join(rootDir, ".claude", "hooks", "swarmvault-graph-first.js");
-  await writeOwnedFile(scriptPath, buildClaudeHookScript(), true);
+  await writeOwnedFile(scriptPath, await readBuiltHook("claude.js"), true);
   await ensureDir(path.dirname(settingsPath));
 
   const { data: settings, warnings } = await readJsonWithWarnings<ClaudeSettings>(settingsPath, {}, ".claude/settings.json");
@@ -269,366 +323,10 @@ async function installClaudeHook(rootDir: string): Promise<{ path: string; warni
   return { path: settingsPath, warnings: [] };
 }
 
-function buildClaudeHookScript(): string {
-  return `#!/usr/bin/env node
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
-${markerStateSnippet("claude").trim()}
-
-async function readInput() {
-  let body = "";
-  for await (const chunk of process.stdin) {
-    body += chunk;
-  }
-  if (!body.trim()) {
-    return {};
-  }
-  try {
-    return JSON.parse(body);
-  } catch {
-    return {};
-  }
-}
-
-function emit(value) {
-  process.stdout.write(\`\${JSON.stringify(value)}\\n\`);
-}
-
-const mode = process.argv[2] ?? "";
-const input = await readInput();
-const cwd = resolveInputCwd(input);
-const reportNote = "SwarmVault graph report exists at wiki/graph/report.md. Read it before broad grep/glob searching.";
-
-if (!(await hasReport(cwd))) {
-  emit({});
-  process.exit(0);
-}
-
-if (mode === "session-start") {
-  await resetSession(cwd);
-  emit({
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: reportNote
-    }
-  });
-  process.exit(0);
-}
-
-const toolName = resolveToolName(input);
-if (collectCandidatePaths(input).some((value) => isReportPath(value, cwd))) {
-  await markReportRead(cwd);
-  emit({});
-  process.exit(0);
-}
-
-if (isBroadSearchTool(toolName) && !(await hasSeenReport(cwd))) {
-  emit({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      additionalContext: reportNote
-    }
-  });
-  process.exit(0);
-}
-
-emit({});
-`;
-}
-
-function markerStateSnippet(agentKey: string): string {
-  return `
-function markerState(cwd) {
-  const hash = crypto.createHash("sha256").update(cwd).digest("hex");
-  const dir = path.join(os.tmpdir(), "swarmvault-agent-hooks", "${agentKey}", hash);
-  return {
-    dir,
-    markerPath: path.join(dir, "report-read")
-  };
-}
-
-function isReportPath(value, cwd) {
-  if (typeof value !== "string" || value.length === 0) {
-    return false;
-  }
-  const reportSuffix = path.join("wiki", "graph", "report.md");
-  const normalized = value.replaceAll("\\\\", "/");
-  const reportNormalized = reportSuffix.replaceAll("\\\\", "/");
-  if (normalized.endsWith(reportNormalized)) {
-    return true;
-  }
-  return path.resolve(cwd, value) === path.resolve(cwd, reportSuffix);
-}
-
-function collectCandidatePaths(node, acc = []) {
-  if (typeof node === "string") {
-    acc.push(node);
-    return acc;
-  }
-  if (!node || typeof node !== "object") {
-    return acc;
-  }
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      collectCandidatePaths(item, acc);
-    }
-    return acc;
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (["path", "filePath", "file_path", "paths", "target", "targets"].includes(key)) {
-      collectCandidatePaths(value, acc);
-      continue;
-    }
-    collectCandidatePaths(value, acc);
-  }
-  return acc;
-}
-
-function resolveInputCwd(input) {
-  return path.resolve(
-    input?.cwd ??
-      input?.directory ??
-      input?.workspace?.cwd ??
-      input?.toolInput?.cwd ??
-      process.cwd()
-  );
-}
-
-function resolveToolName(input) {
-  return String(input?.toolName ?? input?.tool_name ?? input?.tool?.name ?? input?.name ?? "");
-}
-
-async function hasReport(cwd) {
-  try {
-    await fs.access(path.join(cwd, "wiki", "graph", "report.md"));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function markReportRead(cwd) {
-  const state = markerState(cwd);
-  await fs.mkdir(state.dir, { recursive: true });
-  await fs.writeFile(state.markerPath, "seen\\n", "utf8");
-}
-
-async function hasSeenReport(cwd) {
-  const state = markerState(cwd);
-  try {
-    await fs.access(state.markerPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resetSession(cwd) {
-  const state = markerState(cwd);
-  await fs.rm(state.dir, { recursive: true, force: true });
-}
-
-function isBroadSearchTool(toolName) {
-  return /grep|glob|search|find/i.test(toolName);
-}
-`;
-}
-
-function buildGeminiHookScript(): string {
-  return `#!/usr/bin/env node
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
-${markerStateSnippet("gemini").trim()}
-
-async function readInput() {
-  let body = "";
-  for await (const chunk of process.stdin) {
-    body += chunk;
-  }
-  if (!body.trim()) {
-    return {};
-  }
-  try {
-    return JSON.parse(body);
-  } catch {
-    return {};
-  }
-}
-
-function emit(value) {
-  process.stdout.write(\`\${JSON.stringify(value)}\\n\`);
-}
-
-const mode = process.argv[2] ?? "";
-const input = await readInput();
-const cwd = resolveInputCwd(input);
-const reportNote = "SwarmVault graph report exists at wiki/graph/report.md. Read it before broad grep/glob searching.";
-
-if (!(await hasReport(cwd))) {
-  emit({});
-  process.exit(0);
-}
-
-if (mode === "session-start") {
-  await resetSession(cwd);
-  emit({
-    systemMessage: reportNote,
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: "SwarmVault graph report: wiki/graph/report.md"
-    }
-  });
-  process.exit(0);
-}
-
-const toolName = resolveToolName(input);
-if (collectCandidatePaths(input).some((value) => isReportPath(value, cwd))) {
-  await markReportRead(cwd);
-  emit({});
-  process.exit(0);
-}
-
-if (isBroadSearchTool(toolName) && !(await hasSeenReport(cwd))) {
-  emit({ systemMessage: reportNote });
-  process.exit(0);
-}
-
-emit({});
-`;
-}
-
-function buildCopilotHookScript(): string {
-  return `#!/usr/bin/env node
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
-${markerStateSnippet("copilot").trim()}
-
-async function readInput() {
-  let body = "";
-  for await (const chunk of process.stdin) {
-    body += chunk;
-  }
-  if (!body.trim()) {
-    return {};
-  }
-  try {
-    return JSON.parse(body);
-  } catch {
-    return {};
-  }
-}
-
-function emit(value) {
-  if (value !== undefined) {
-    process.stdout.write(\`\${JSON.stringify(value)}\\n\`);
-  }
-}
-
-const mode = process.argv[2] ?? "";
-const input = await readInput();
-const cwd = resolveInputCwd(input);
-const reportNote = "SwarmVault graph report exists at wiki/graph/report.md. Read it before broad grep/glob searching.";
-
-if (!(await hasReport(cwd))) {
-  emit({});
-  process.exit(0);
-}
-
-if (mode === "session-start") {
-  await resetSession(cwd);
-  emit({});
-  process.exit(0);
-}
-
-const toolName = resolveToolName(input);
-if (collectCandidatePaths(input).some((value) => isReportPath(value, cwd))) {
-  await markReportRead(cwd);
-  emit({});
-  process.exit(0);
-}
-
-if (isBroadSearchTool(toolName) && !(await hasSeenReport(cwd))) {
-  emit({
-    permissionDecision: "deny",
-    permissionDecisionReason: reportNote
-  });
-  process.exit(0);
-}
-
-emit({});
-`;
-}
-
-function buildOpenCodePlugin(): string {
-  return `import path from "node:path";
-
-const reportRelativePath = path.join("wiki", "graph", "report.md");
-
-export const name = "swarmvault-graph-first";
-
-export default async function swarmvaultGraphFirst({ client }) {
-  let reportSeen = false;
-
-  async function hasReport(cwd) {
-    try {
-      await Bun.file(path.join(cwd, reportRelativePath)).arrayBuffer();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async function note(message) {
-    if (client?.app?.log) {
-      await client.app.log({
-        level: "info",
-        message
-      });
-    }
-  }
-
-  return {
-    async "session.created"(input) {
-      reportSeen = false;
-      const cwd = input?.session?.cwd ?? process.cwd();
-      if (await hasReport(cwd)) {
-        await note("SwarmVault graph report exists. Read wiki/graph/report.md before broad workspace searching.");
-      }
-    },
-    async "tool.execute.before"(input) {
-      const cwd = input?.session?.cwd ?? process.cwd();
-      if (!(await hasReport(cwd))) {
-        return;
-      }
-
-      const argsText = JSON.stringify(input?.args ?? {});
-      if (argsText.includes("wiki/graph/report.md")) {
-        reportSeen = true;
-        return;
-      }
-
-      if (!reportSeen && ["glob", "grep"].includes(String(input?.tool ?? ""))) {
-        await note("SwarmVault graph report exists. Read wiki/graph/report.md before broad workspace searching.");
-      }
-    }
-  };
-}
-`;
-}
-
 async function installGeminiHook(rootDir: string): Promise<{ paths: string[]; warnings: string[] }> {
   const settingsPath = path.join(rootDir, ".gemini", "settings.json");
   const scriptPath = path.join(rootDir, ".gemini", "hooks", "swarmvault-graph-first.js");
-  await writeOwnedFile(scriptPath, buildGeminiHookScript(), true);
+  await writeOwnedFile(scriptPath, await readBuiltHook("gemini.js"), true);
 
   const { data: settings, warnings } = await readJsonWithWarnings<GeminiSettings>(settingsPath, {}, ".gemini/settings.json");
   if (warnings.length > 0 && (await fileExists(settingsPath))) {
@@ -710,7 +408,7 @@ async function installCopilotHook(rootDir: string): Promise<{ paths: string[]; w
   const hooksDir = path.join(rootDir, ".github", "hooks");
   const scriptPath = path.join(hooksDir, "swarmvault-graph-first.js");
   const configPath = path.join(hooksDir, "swarmvault-graph-first.json");
-  await writeOwnedFile(scriptPath, buildCopilotHookScript(), true);
+  await writeOwnedFile(scriptPath, await readBuiltHook("copilot.js"), true);
 
   const config: CopilotHookConfig = {
     version: copilotHookVersion,
@@ -743,7 +441,7 @@ async function installCopilotHook(rootDir: string): Promise<{ paths: string[]; w
 
 async function installOpenCodeHook(rootDir: string): Promise<{ paths: string[]; warnings: string[] }> {
   const pluginPath = path.join(rootDir, ".opencode", "plugins", "swarmvault-graph-first.js");
-  await writeOwnedFile(pluginPath, buildOpenCodePlugin());
+  await writeOwnedFile(pluginPath, await readBuiltHook("opencode.js"));
   return { paths: [pluginPath], warnings: [] };
 }
 

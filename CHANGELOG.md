@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.8
+
+- Replaced several regex-shaped code import parsers with parser-backed AST extraction for Python, Go, Rust, Java, Kotlin, Scala, C#, PHP, and C/C++ includes, reducing brittle language handling and improving grouped import fidelity
+- Hardened repo-aware code resolution for real multi-crate and multi-root projects by expanding Rust crate alias handling, stripping trailing symbol segments when imports target module files, and broadening Lua local module candidate resolution
+- Refactored agent hook installation to ship built hook bundles from the engine package instead of embedding large inline hook scripts in source, keeping installed hook artifacts aligned with the packaged runtime
+- Made MCP tool handlers fail per-request instead of crashing the whole stdio server, and isolated schedule-loop listing/job failures so one bad schedule no longer tears down the scheduler
+- Tightened configuration defaults and release prep by centralizing workspace directory defaults and keeping the engine build wired for bundled hooks
+
 ## 0.6.7
 
 - Added a one-time interactive heuristic-provider notice for compile/query/explore so default local users are pointed at a stronger fully-local Ollama + Gemma setup without leaking notices into `--json`, CI, MCP, or long-running flows

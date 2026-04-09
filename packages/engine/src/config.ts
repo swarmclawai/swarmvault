@@ -116,14 +116,29 @@ const vaultProfileConfigSchema = z.object({
   dataviewBlocks: z.boolean().default(false)
 });
 
+/**
+ * Single source of truth for workspace directory names. Both the config zod
+ * schema and `defaultVaultConfig()` reference this so adding or renaming a
+ * workspace dir only has to happen in one place.
+ */
+const WORKSPACE_DIR_DEFAULTS = {
+  rawDir: "raw",
+  wikiDir: "wiki",
+  stateDir: "state",
+  agentDir: "agent",
+  inboxDir: "inbox"
+} as const;
+
 const vaultConfigSchema = z.object({
-  workspace: z.object({
-    rawDir: z.string().min(1),
-    wikiDir: z.string().min(1),
-    stateDir: z.string().min(1),
-    agentDir: z.string().min(1),
-    inboxDir: z.string().min(1)
-  }),
+  workspace: z
+    .object({
+      rawDir: z.string().min(1).default(WORKSPACE_DIR_DEFAULTS.rawDir),
+      wikiDir: z.string().min(1).default(WORKSPACE_DIR_DEFAULTS.wikiDir),
+      stateDir: z.string().min(1).default(WORKSPACE_DIR_DEFAULTS.stateDir),
+      agentDir: z.string().min(1).default(WORKSPACE_DIR_DEFAULTS.agentDir),
+      inboxDir: z.string().min(1).default(WORKSPACE_DIR_DEFAULTS.inboxDir)
+    })
+    .default(WORKSPACE_DIR_DEFAULTS),
   providers: z.record(z.string(), providerConfigSchema),
   tasks: z.object({
     compileProvider: z.string().min(1),
@@ -282,13 +297,7 @@ export function resolveInitProfile(profile?: string): { alias: string; profile: 
 
 export function defaultVaultConfig(profile: VaultProfileConfig = defaultVaultProfileConfig()): VaultConfig {
   return {
-    workspace: {
-      rawDir: "raw",
-      wikiDir: "wiki",
-      stateDir: "state",
-      agentDir: "agent",
-      inboxDir: "inbox"
-    },
+    workspace: { ...WORKSPACE_DIR_DEFAULTS },
     providers: {
       local: {
         type: "heuristic",

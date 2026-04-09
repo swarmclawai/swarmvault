@@ -817,7 +817,10 @@ export async function extractEpubChapters(input: {
       if (!markdown) {
         continue;
       }
-      const chapterTitle = firstHtmlHeading(html) || markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() || item.href;
+      // Prefer the parser-backed HTML heading; fall back to the manifest href
+      // (filename-derived) when no heading exists, rather than regex-scanning
+      // the converted markdown.
+      const chapterTitle = firstHtmlHeading(html) || item.href;
       const normalizedTitle = normalizeWhitespace(chapterTitle);
       if (!normalizedTitle || /^table of contents$/i.test(normalizedTitle)) {
         continue;
