@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import matter from "gray-matter";
 import { afterEach, describe, expect, it } from "vitest";
+import { semanticGraphMatches } from "../src/embeddings.js";
 import {
   addInput,
   addManagedSource,
@@ -1322,6 +1323,27 @@ describe("swarmvault workflow", () => {
     expect(semanticQuery.matches.some((match) => match.label.includes("Alpha Source") || match.label.includes("Beta Source"))).toBe(true);
   });
 
+  it("suggests an embedding-capable backend when embeddingProvider lacks embeddings support", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await updateConfig(rootDir, (config) => {
+      config.tasks.embeddingProvider = "local";
+    });
+
+    await fs.writeFile(path.join(rootDir, "alpha.md"), "# Alpha\n\nDurable memory keeps agent context alive.\n", "utf8");
+    await fs.writeFile(path.join(rootDir, "beta.md"), "# Beta\n\nPersistent context helps an agent resume prior work.\n", "utf8");
+    await ingestInput(rootDir, "alpha.md");
+    await ingestInput(rootDir, "beta.md");
+
+    await compileVault(rootDir);
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+
+    await expect(semanticGraphMatches(rootDir, graph, "compounding memory")).rejects.toThrow(
+      'Provider local does not support required capability "embeddings". Configure tasks.embeddingProvider to use an embedding-capable backend such as ollama or another openai-compatible embedding service.'
+    );
+  });
+
   it("classifies repo material by source class and keeps graph reporting focused on first-party content", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -1409,6 +1431,7 @@ describe("swarmvault workflow", () => {
         sourceClass: "first_party",
         mimeType: "text/markdown",
         contentHash: `hash-${index + 1}`,
+        semanticHash: `semantic-${index + 1}`,
         storedPath: `raw/sources/source-${index + 1}.md`,
         title: `Source ${index + 1}`,
         createdAt: now,
@@ -1429,6 +1452,7 @@ describe("swarmvault workflow", () => {
         backlinks: [],
         schemaHash: "schema-hash",
         sourceHashes: { [`source-${index + 1}`]: `hash-${index + 1}` },
+        sourceSemanticHashes: { [`source-${index + 1}`]: `semantic-${index + 1}` },
         relatedPageIds: [],
         relatedNodeIds: [],
         relatedSourceIds: [],
@@ -1964,5 +1988,51 @@ describe("swarmvault workflow", () => {
     expect(updatedEntries[0].diff).toBeDefined();
     expect(updatedEntries[0].diff).toContain("---");
     expect(updatedEntries[0].diff).toContain("+++");
+  });
+
+  it("ignores operational markdown frontmatter changes when semantic content is unchanged", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const sourcePath = path.join(rootDir, "semantic-cache.md");
+    await fs.writeFile(sourcePath, "---\nlayout: compact\n---\n# Semantic Cache\n\nStable body.\n", "utf8");
+
+    const manifest = await ingestInput(rootDir, "semantic-cache.md");
+    await compileVault(rootDir);
+    await compileVault(rootDir);
+    const manifestPath = path.join(rootDir, "state", "manifests", `${manifest.sourceId}.json`);
+    const firstManifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { contentHash: string; semanticHash: string };
+    const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
+    const compiledSourcePage = matter(await fs.readFile(sourcePagePath, "utf8"));
+    expect(compiledSourcePage.data.source_semantic_hashes).toBeDefined();
+
+    await fs.writeFile(sourcePath, "---\nlayout: expanded\n---\n# Semantic Cache\n\nStable body.\n", "utf8");
+    await ingestInput(rootDir, "semantic-cache.md");
+    const secondManifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { contentHash: string; semanticHash: string };
+    expect(secondManifest.contentHash).not.toBe(firstManifest.contentHash);
+    expect(secondManifest.semanticHash).toBe(firstManifest.semanticHash);
+
+    const compile = await compileVault(rootDir);
+    expect(compile.changedPages).toEqual([]);
+  });
+
+  it("falls back to legacy source_hashes when source_semantic_hashes are absent", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const sourcePath = path.join(rootDir, "legacy-page.md");
+    await fs.writeFile(sourcePath, "---\ntags:\n  - alpha\n---\n# Legacy Page\n\nStable body.\n", "utf8");
+
+    const manifest = await ingestInput(rootDir, "legacy-page.md");
+    await compileVault(rootDir);
+
+    const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
+    const parsedPage = matter(await fs.readFile(sourcePagePath, "utf8"));
+    delete parsedPage.data.source_semantic_hashes;
+    await fs.writeFile(sourcePagePath, matter.stringify(parsedPage.content, parsedPage.data), "utf8");
+
+    await fs.writeFile(sourcePath, "---\ntags:\n  - beta\n---\n# Legacy Page\n\nStable body.\n", "utf8");
+    await ingestInput(rootDir, "legacy-page.md");
+
+    const findings = await lintVault(rootDir);
+    expect(findings.some((finding) => finding.code === "stale_page" && finding.pagePath === sourcePagePath)).toBe(true);
   });
 });

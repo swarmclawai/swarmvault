@@ -66,6 +66,17 @@ export type ViewerGraphArtifact = {
   nodes: ViewerGraphNode[];
   edges: ViewerGraphEdge[];
   hyperedges: ViewerGraphHyperedge[];
+  presentation?: {
+    mode: "full" | "overview";
+    threshold: number;
+    nodeBudget: number;
+    totalNodes: number;
+    displayedNodes: number;
+    totalEdges: number;
+    displayedEdges: number;
+    totalCommunities: number;
+    displayedCommunities: number;
+  };
   communities?: Array<{
     id: string;
     label: string;

@@ -38,6 +38,10 @@ export function normalizeSourceHashes(value: unknown): Record<string, string> {
   );
 }
 
+export function normalizeSourceSemanticHashes(value: unknown): Record<string, string> {
+  return normalizeSourceHashes(value);
+}
+
 export function normalizePageStatus(value: unknown, fallback: PageStatus = "active"): PageStatus {
   return value === "draft" || value === "candidate" || value === "active" || value === "archived" ? value : fallback;
 }
@@ -210,6 +214,7 @@ export function parseStoredPage(
     backlinks,
     schemaHash: typeof parsed.data.schema_hash === "string" ? parsed.data.schema_hash : "",
     sourceHashes: normalizeSourceHashes(parsed.data.source_hashes),
+    sourceSemanticHashes: normalizeSourceSemanticHashes(parsed.data.source_semantic_hashes),
     relatedPageIds,
     relatedNodeIds,
     relatedSourceIds,
@@ -270,6 +275,7 @@ export async function loadInsightPages(wikiDir: string): Promise<StoredPage[]> {
         backlinks,
         schemaHash: typeof parsed.data.schema_hash === "string" ? parsed.data.schema_hash : "",
         sourceHashes: normalizeSourceHashes(parsed.data.source_hashes),
+        sourceSemanticHashes: normalizeSourceSemanticHashes(parsed.data.source_semantic_hashes),
         relatedPageIds,
         relatedNodeIds,
         relatedSourceIds,

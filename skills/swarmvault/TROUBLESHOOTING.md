@@ -25,6 +25,8 @@ Upgrade Node before troubleshooting provider or compile behavior.
 
 Check whether the vault is still using the built-in `heuristic` provider. That is a valid local/offline default, but its synthesis is intentionally lighter. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation.
 
+For local semantic graph query, `embeddingProvider` must point at an embedding-capable backend such as `ollama` or another OpenAI-compatible embeddings service. The built-in `heuristic` provider does not generate embeddings.
+
 ## `wiki/graph/report.md` or search artifacts are missing
 
 Run:

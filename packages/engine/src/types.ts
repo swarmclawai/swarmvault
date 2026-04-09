@@ -335,6 +335,7 @@ export interface SourceManifest {
   extractionHash?: string;
   mimeType: string;
   contentHash: string;
+  semanticHash: string;
   createdAt: string;
   updatedAt: string;
   attachments?: SourceAttachment[];
@@ -457,6 +458,7 @@ export interface SourceAnalysis {
   analysisVersion: number;
   sourceId: string;
   sourceHash: string;
+  semanticHash: string;
   extractionHash?: string;
   schemaHash: string;
   title: string;
@@ -533,6 +535,7 @@ export interface GraphPage {
   backlinks: string[];
   schemaHash: string;
   sourceHashes: Record<string, string>;
+  sourceSemanticHashes: Record<string, string>;
   relatedPageIds: string[];
   relatedNodeIds: string[];
   relatedSourceIds: string[];
@@ -870,6 +873,7 @@ export interface CompileState {
   projectConfigHash: string;
   analyses: Record<string, string>;
   sourceHashes: Record<string, string>;
+  sourceSemanticHashes: Record<string, string>;
   sourceProjects: Record<string, string | null>;
   outputHashes: Record<string, string>;
   insightHashes: Record<string, string>;

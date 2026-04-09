@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- Added frontmatter-aware markdown semantic hashing so compile and analysis caches ignore operational frontmatter churn while still invalidating on title, summary, aliases, tags, authors, publication, canonical URL, and source-type changes
+- Added large-graph overview mode for `swarmvault graph serve` and `swarmvault graph export --html`, including deterministic sampling, viewer presentation metadata, and `--full` escapes for rendering the complete canvas
+- Tightened local embeddings UX by making embedding-capable backends explicit in docs and runtime errors, adding Ollama-first local examples, and adding an opt-in installed-package smoke lane for local embeddings
+- Expanded installed-artifact validation to cover overview-mode graph presentation on packaged builds, including browser-backed proof for the standard graph workspace plus tarball-installed overview checks
+
 ## 0.2.1
 
 - Added parser-backed Lua and Zig code ingestion, including repo-aware module/import resolution, module pages, code-index integration, and graph/search coverage through the existing local analyzer pipeline

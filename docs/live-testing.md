@@ -42,6 +42,9 @@ SWARMVAULT_OLLAMA_API_STYLE=chat
 SWARMVAULT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
 SWARMVAULT_OPENCODE_OLLAMA_MODEL=gpt-oss:20b-cloud
 SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE=1
+SWARMVAULT_RUN_LOCAL_EMBEDDINGS_SMOKE=1
+SWARMVAULT_LOCAL_EMBEDDINGS_MODEL=nomic-embed-text
+SWARMVAULT_LOCAL_EMBEDDINGS_BASE_URL=http://localhost:11434/v1
 ```
 
 The Neo4j live-smoke lane uses a local Docker-managed Neo4j container and does not require a hosted Neo4j account, but it does require a running Docker daemon.
@@ -119,7 +122,8 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `explore`
 - run `lint` and `lint --deep`
 - run `graph export --html` and verify the standalone HTML embeds local asset data
-- when `--browser-check` is enabled, open both `graph serve` and the exported HTML in a real headless Chromium session, select a graph node, verify the details panel updates, trigger path highlighting, and verify deselection
+- run large-graph overview checks against both `graph serve` and `graph export --html`, and verify `--full` disables overview sampling for oversized graphs
+- when `--browser-check` is enabled, open both `graph serve` and the exported HTML in a real headless Chromium session, select a graph node, trigger path highlighting, and verify deselection
 - run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
 - start `graph serve` and verify HTML plus `/api/graph`, `/api/search`, `/api/page`, `/api/asset`, `/api/candidates`, and `/api/reviews`
 - promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
@@ -134,6 +138,7 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - verify the installed package writes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`, `.aider.conf.yml`, `.github/copilot-instructions.md`, and the expected hook/plugin artifacts
 - when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, and Gemini CLI against `GEMINI.md`
 - run the OpenCode host-agent check only when `SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE=1` is set, because it depends on an external model path and is not part of the required packaged-artifact release gate
+- run the Ollama local-embeddings check only when `SWARMVAULT_RUN_LOCAL_EMBEDDINGS_SMOKE=1` is set, because it depends on a reachable embedding-capable local model and is not part of the required packaged-artifact release gate
 - on live npm-installed runs, execute `swarmvault source add https://github.com/karpathy/micrograd` and verify the registry entry, compile artifacts, and source brief
 
 ### OpenAI lane

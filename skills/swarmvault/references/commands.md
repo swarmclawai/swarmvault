@@ -40,7 +40,9 @@ swarmvault candidate list
 
 ```bash
 swarmvault graph serve
+swarmvault graph serve --full
 swarmvault graph export --html ./graph.html
+swarmvault graph export --html ./graph.html --full
 swarmvault graph push neo4j --dry-run
 swarmvault mcp
 ```

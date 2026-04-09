@@ -6,7 +6,7 @@ import type { VaultSchema } from "./schema.js";
 import type { Polarity, ProviderAdapter, ResolvedPaths, SourceAnalysis, SourceExtractionArtifact, SourceManifest } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
-const ANALYSIS_FORMAT_VERSION = 6;
+const ANALYSIS_FORMAT_VERSION = 7;
 
 const sourceAnalysisSchema = z.object({
   title: z.string().min(1),
@@ -135,6 +135,7 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
     analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    semanticHash: manifest.semanticHash,
     extractionHash: manifest.extractionHash,
     schemaHash,
     title: deriveTitle(manifest, text),
@@ -185,6 +186,7 @@ async function providerAnalysis(
     analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    semanticHash: manifest.semanticHash,
     extractionHash: manifest.extractionHash,
     schemaHash: schema.hash,
     title: parsed.title,
@@ -227,6 +229,7 @@ function analysisFromVisionExtraction(
     analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
+    semanticHash: manifest.semanticHash,
     extractionHash: manifest.extractionHash,
     schemaHash,
     title: extraction.vision.title?.trim() || manifest.title,
@@ -276,7 +279,7 @@ export async function analyzeSource(
   if (
     cached &&
     cached.analysisVersion === ANALYSIS_FORMAT_VERSION &&
-    cached.sourceHash === manifest.contentHash &&
+    (cached.semanticHash ?? cached.sourceHash) === manifest.semanticHash &&
     cached.extractionHash === manifest.extractionHash &&
     cached.schemaHash === schema.hash
   ) {
@@ -298,6 +301,7 @@ export async function analyzeSource(
         analysisVersion: ANALYSIS_FORMAT_VERSION,
         sourceId: manifest.sourceId,
         sourceHash: manifest.contentHash,
+        semanticHash: manifest.semanticHash,
         extractionHash: manifest.extractionHash,
         schemaHash: schema.hash,
         title: manifest.title,
@@ -324,6 +328,7 @@ export async function analyzeSource(
       analysisVersion: ANALYSIS_FORMAT_VERSION,
       sourceId: manifest.sourceId,
       sourceHash: manifest.contentHash,
+      semanticHash: manifest.semanticHash,
       extractionHash: manifest.extractionHash,
       schemaHash: schema.hash,
       title: manifest.title,

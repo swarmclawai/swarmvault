@@ -29,6 +29,7 @@ const installSpecs = args.installSpecs?.length ? args.installSpecs : [`@swarmvau
 const keepArtifacts = args.keepArtifacts ?? process.env.KEEP_LIVE_SMOKE_ARTIFACTS === "1";
 const browserCheck = args.browserCheck ?? process.env.SWARMVAULT_BROWSER_CHECK === "1";
 const runOpencodeAgentSmoke = process.env.SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE === "1";
+const runLocalEmbeddingsSmoke = process.env.SWARMVAULT_RUN_LOCAL_EMBEDDINGS_SMOKE === "1";
 const artifactDir =
   args.artifactDir ??
   path.join(repoRoot, ".live-smoke-artifacts", `${lane}-${new Date().toISOString().replaceAll(":", "-")}`);
@@ -993,13 +994,64 @@ try {
 
       const semanticQuery = await runCliJson(["graph", "query", "compounding memory"]);
       assert.ok(
-        Array.isArray(semanticQuery.pageIds) &&
-          semanticQuery.pageIds.some((pageId) => pageId.startsWith("source:semantic-alpha-") || pageId.startsWith("source:semantic-beta-")) &&
-          Array.isArray(semanticQuery.visitedEdgeIds) &&
-          semanticQuery.visitedEdgeIds.some((edgeId) => edgeId.startsWith("similar-embed:")),
-        "semantic graph query did not surface embedding-backed source pages and edges"
+        Array.isArray(semanticQuery.matches) &&
+          semanticQuery.matches.some(
+            (match) =>
+              (match.type === "node" || match.type === "page") &&
+              (match.id.startsWith("source:semantic-alpha-") || match.id.startsWith("source:semantic-beta-"))
+          ) &&
+          Array.isArray(semanticQuery.seedNodeIds) &&
+          semanticQuery.seedNodeIds.some(
+            (nodeId) => nodeId.startsWith("source:semantic-alpha-") || nodeId.startsWith("source:semantic-beta-")
+          ),
+        "semantic graph query did not seed from embedding-backed source matches"
       );
     });
+
+    if (runLocalEmbeddingsSmoke) {
+      await runStep("local-embeddings", async () => {
+        await updateConfig((config) => {
+          config.providers.localEmbeddings = {
+            type: "ollama",
+            model: process.env.SWARMVAULT_LOCAL_EMBEDDINGS_MODEL ?? "nomic-embed-text",
+            baseUrl: process.env.SWARMVAULT_LOCAL_EMBEDDINGS_BASE_URL ?? "http://localhost:11434/v1"
+          };
+          config.tasks.embeddingProvider = "localEmbeddings";
+        });
+
+        await fs.writeFile(
+          path.join(workspaceDir, "local-embedding-alpha.md"),
+          "# Local Embedding Alpha\n\nDurable memory keeps agent context alive.\n",
+          "utf8"
+        );
+        await fs.writeFile(
+          path.join(workspaceDir, "local-embedding-beta.md"),
+          "# Local Embedding Beta\n\nPersistent context helps an agent resume prior work.\n",
+          "utf8"
+        );
+        await runCliJson(["ingest", "local-embedding-alpha.md"]);
+        await runCliJson(["ingest", "local-embedding-beta.md"]);
+        await runCliJson(["compile"]);
+
+        await assertExists(path.join(workspaceDir, "state", "embeddings.json"));
+        const graph = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "graph.json"), "utf8"));
+        assert.ok(
+          graph.edges.some((edge) => edge.relation === "semantically_similar_to" && edge.similarityBasis === "embeddings"),
+          "local embeddings smoke did not record embedding-backed similarity edges"
+        );
+
+        const semanticQuery = await runCliJson(["graph", "query", "compounding memory"]);
+        assert.ok(
+          Array.isArray(semanticQuery.matches) &&
+            semanticQuery.matches.some(
+              (match) =>
+                (match.type === "node" || match.type === "page") &&
+                (match.id.startsWith("source:local-embedding-alpha-") || match.id.startsWith("source:local-embedding-beta-"))
+            ),
+          "local embeddings smoke did not surface embedding-backed source matches"
+        );
+      });
+    }
 
     await runStep("candidate-flow", async () => {
       await fs.writeFile(
@@ -1104,6 +1156,32 @@ try {
       assert.ok((await fs.readFile(cypherPath, "utf8")).includes("MERGE (n:SwarmNode"), "cypher export did not contain Cypher nodes");
     });
 
+    await runStep("graph-export-overview", async () => {
+      const exportDir = path.join(workspaceDir, "exports");
+      const overviewPath = path.join(exportDir, "graph-overview.html");
+      const fullPath = path.join(exportDir, "graph-overview-full.html");
+      await fs.mkdir(exportDir, { recursive: true });
+
+      await withOverviewFixture(async () => {
+        const overview = await runCliJson(["graph", "export", "--html", overviewPath]);
+        assert.equal(overview.outputPath, overviewPath, "overview graph export returned an unexpected output path");
+        const overviewEmbedded = readEmbeddedViewerData(await fs.readFile(overviewPath, "utf8"));
+        assert.equal(overviewEmbedded.graph.presentation.mode, "overview", "graph export did not enter overview mode");
+        assert.equal(overviewEmbedded.graph.presentation.totalNodes, 5_100, "overview export reported the wrong total node count");
+        assert.ok(
+          overviewEmbedded.graph.presentation.displayedNodes <= overviewEmbedded.graph.presentation.nodeBudget,
+          "overview export exceeded the display node budget"
+        );
+
+        const full = await runCliJson(["graph", "export", "--html", fullPath, "--full"]);
+        assert.equal(full.outputPath, fullPath, "full graph export returned an unexpected output path");
+        const fullEmbedded = readEmbeddedViewerData(await fs.readFile(fullPath, "utf8"));
+        assert.equal(fullEmbedded.graph.presentation.mode, "full", "graph export --full did not disable overview mode");
+        assert.equal(fullEmbedded.graph.presentation.displayedNodes, 5_100, "graph export --full did not render the full graph");
+
+      });
+    });
+
     await runStep("schedule-run", async () => {
       const configPath = path.join(workspaceDir, "swarmvault.config.json");
       const config = JSON.parse(await fs.readFile(configPath, "utf8"));
@@ -1191,6 +1269,42 @@ try {
       }
       await stopProcess(graphServer.child, graphServer.label);
       graphServer = undefined;
+    });
+
+    await runStep("graph-serve-overview", async () => {
+      await withOverviewFixture(async () => {
+        const overviewPort = await reservePort();
+        const overviewServer = await startCliServer("graph-serve-overview", ["graph", "serve", "--port", String(overviewPort)], workspaceDir);
+        try {
+          await waitFor(async () => {
+            const response = await fetch(`http://127.0.0.1:${overviewPort}/`).catch(() => null);
+            return Boolean(response?.ok);
+          }, 10_000);
+          const overviewGraph = await fetchJson(`http://127.0.0.1:${overviewPort}/api/graph`);
+          assert.equal(overviewGraph.presentation.mode, "overview", "graph serve did not enter overview mode for a large graph");
+          assert.equal(overviewGraph.presentation.totalNodes, 5_100, "graph serve overview reported the wrong total node count");
+          assert.ok(
+            overviewGraph.presentation.displayedNodes <= overviewGraph.presentation.nodeBudget,
+            "graph serve overview exceeded the display node budget"
+          );
+        } finally {
+          await stopProcess(overviewServer.child, overviewServer.label);
+        }
+
+        const fullPort = await reservePort();
+        const fullServer = await startCliServer("graph-serve-full", ["graph", "serve", "--port", String(fullPort), "--full"], workspaceDir);
+        try {
+          await waitFor(async () => {
+            const response = await fetch(`http://127.0.0.1:${fullPort}/`).catch(() => null);
+            return Boolean(response?.ok);
+          }, 10_000);
+          const fullGraph = await fetchJson(`http://127.0.0.1:${fullPort}/api/graph`);
+          assert.equal(fullGraph.presentation.mode, "full", "graph serve --full did not disable overview mode");
+          assert.equal(fullGraph.presentation.displayedNodes, 5_100, "graph serve --full did not expose the full node set");
+        } finally {
+          await stopProcess(fullServer.child, fullServer.label);
+        }
+      });
     });
 
     await runStep("review-flow", async () => {
@@ -1636,6 +1750,152 @@ function createSimplePdf(text) {
   return Buffer.from(pdf, "utf8");
 }
 
+function buildOverviewFixtureGraph() {
+  const nodes = Array.from({ length: 5_100 }, (_, index) => ({
+    id: `node-${index}`,
+    type: "concept",
+    label: `Node ${index}`,
+    sourceIds: [`overview-source-${index}`],
+    projectIds: [],
+    sourceClass: index < 4_200 ? "first_party" : "third_party",
+    communityId: index < 4_200 ? "community-core" : "community-external",
+    degree: index === 0 ? 5_099 : index >= 4_200 ? 2 : 1,
+    bridgeScore: index === 4_250 ? 0.95 : 0.1
+  }));
+
+  const edges = Array.from({ length: 5_099 }, (_, index) => ({
+    id: `edge-${index + 1}`,
+    source: "node-0",
+    target: `node-${index + 1}`,
+    relation: "mentions",
+    status: "extracted",
+    evidenceClass: "direct",
+    confidence: 0.8,
+    provenance: ["live-smoke"]
+  }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    nodes,
+    edges,
+    hyperedges: [
+      {
+        id: "group-1",
+        label: "Pinned cluster",
+        relation: "form",
+        nodeIds: ["node-0", "node-4250", "node-5099"],
+        evidenceClass: "direct",
+        confidence: 0.8,
+        sourcePageIds: [],
+        why: "Pinned nodes should survive overview mode."
+      }
+    ],
+    communities: [
+      {
+        id: "community-core",
+        label: "Core",
+        nodeIds: nodes.slice(0, 4_200).map((node) => node.id)
+      },
+      {
+        id: "community-external",
+        label: "External",
+        nodeIds: nodes.slice(4_200).map((node) => node.id)
+      }
+    ],
+    sources: [],
+    pages: []
+  };
+}
+
+function buildOverviewFixtureReport() {
+  return {
+    generatedAt: new Date().toISOString(),
+    graphHash: "overview-smoke-hash",
+    overview: {
+      nodes: 5_100,
+      edges: 5_099,
+      pages: 0,
+      communities: 2
+    },
+    firstPartyOverview: {
+      nodes: 4_200,
+      edges: 4_199,
+      pages: 0,
+      communities: 1
+    },
+    sourceClassBreakdown: {
+      first_party: { sources: 0, pages: 0, nodes: 4_200 },
+      third_party: { sources: 0, pages: 0, nodes: 900 },
+      resource: { sources: 0, pages: 0, nodes: 0 },
+      generated: { sources: 0, pages: 0, nodes: 0 }
+    },
+    warnings: [],
+    godNodes: [{ nodeId: "node-0", label: "Node 0", degree: 5_099, bridgeScore: 0.9 }],
+    bridgeNodes: [{ nodeId: "node-4250", label: "Node 4250", degree: 2, bridgeScore: 0.95 }],
+    thinCommunities: [],
+    surprisingConnections: [
+      {
+        id: "surprise-1",
+        sourceNodeId: "node-4250",
+        sourceLabel: "Node 4250",
+        targetNodeId: "node-5099",
+        targetLabel: "Node 5099",
+        relation: "mentions",
+        evidenceClass: "direct",
+        confidence: 0.8,
+        pathNodeIds: ["node-4250", "node-0", "node-5099"],
+        pathEdgeIds: ["edge-4250", "edge-5099"],
+        pathRelations: ["mentions", "mentions"],
+        pathEvidenceClasses: ["direct", "direct"],
+        pathSummary: "Node 4250 reaches Node 5099 through Node 0.",
+        why: "Pinned endpoints should remain visible.",
+        explanation: "Overview mode should preserve the report's most interesting endpoints."
+      }
+    ],
+    groupPatterns: [],
+    suggestedQuestions: [],
+    communityPages: [],
+    recentResearchSources: [],
+    contradictions: []
+  };
+}
+
+function readEmbeddedViewerData(html) {
+  const marker = "window.__SWARMVAULT_EMBEDDED_DATA__ = ";
+  const start = html.indexOf(marker);
+  assert.ok(start >= 0, "exported HTML did not embed viewer data");
+  const jsonStart = start + marker.length;
+  const jsonEnd = html.indexOf(";</script>", jsonStart);
+  assert.ok(jsonEnd >= 0, "exported HTML embedded data was truncated");
+  return JSON.parse(html.slice(jsonStart, jsonEnd));
+}
+
+async function withOverviewFixture(fn) {
+  const graphPath = path.join(workspaceDir, "state", "graph.json");
+  const reportPath = path.join(workspaceDir, "wiki", "graph", "report.json");
+  const [originalGraph, originalReport] = await Promise.all([
+    fs.readFile(graphPath, "utf8"),
+    fs.readFile(reportPath, "utf8").catch(() => null)
+  ]);
+
+  await fs.mkdir(path.dirname(reportPath), { recursive: true });
+  await Promise.all([
+    fs.writeFile(graphPath, `${JSON.stringify(buildOverviewFixtureGraph(), null, 2)}\n`, "utf8"),
+    fs.writeFile(reportPath, `${JSON.stringify(buildOverviewFixtureReport(), null, 2)}\n`, "utf8")
+  ]);
+
+  try {
+    return await fn();
+  } finally {
+    await fs.writeFile(graphPath, originalGraph, "utf8");
+    if (originalReport === null) {
+      await fs.rm(reportPath, { force: true });
+    } else {
+      await fs.writeFile(reportPath, originalReport, "utf8");
+    }
+  }
+}
+
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
   const text = await response.text();
@@ -1920,7 +2180,7 @@ async function stopProcess(child, label) {
   return exited;
 }
 
-async function runBrowserValidation(targetUrl, label) {
+async function runBrowserValidation(targetUrl, label, options = {}) {
   let chromium;
   try {
     ({ chromium } = await import("playwright"));
@@ -1944,6 +2204,9 @@ async function runBrowserValidation(targetUrl, label) {
     await page.goto(targetUrl, { waitUntil: "networkidle" });
     await page.locator('[data-testid="graph-canvas"]').waitFor({ state: "visible" });
     await page.waitForFunction(() => Array.isArray(window.__SWARMVAULT_TEST__?.getNodeIds?.()) && window.__SWARMVAULT_TEST__.getNodeIds().length > 0);
+    if (options.expectOverview) {
+      await page.locator('[data-testid="graph-overview-banner"]').waitFor({ state: "visible" });
+    }
 
     const firstNodeId = await page.evaluate(() => window.__SWARMVAULT_TEST__?.getNodeIds?.()[0] ?? null);
     assert.ok(firstNodeId, `${label} did not expose a selectable graph node`);
