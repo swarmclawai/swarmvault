@@ -331,6 +331,84 @@ try {
       }
     });
 
+    await runStep("personal-knowledge-review", async () => {
+      const personalDir = path.join(workspaceDir, "personal-research");
+      await fs.mkdir(personalDir, { recursive: true });
+      await fs.writeFile(
+        path.join(personalDir, "call.srt"),
+        [
+          "1",
+          "00:00:00,000 --> 00:00:03,000",
+          "Ada: We should review the transcript before updating the wiki.",
+          "",
+          "2",
+          "00:00:03,100 --> 00:00:05,200",
+          "Linus: Capture the next action and the open question."
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(personalDir, "message.eml"),
+        [
+          "From: Ada Lovelace <ada@example.com>",
+          "To: Team <team@example.com>",
+          "Subject: Research follow-up",
+          "Date: Wed, 09 Apr 2026 09:15:00 +0000",
+          "Message-ID: <message-1@example.com>",
+          "Content-Type: text/plain; charset=utf-8",
+          "",
+          "Please keep the source review focused on the transcript, the calendar event, and the Slack export."
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(personalDir, "calendar.ics"),
+        [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "PRODID:-//SwarmVault Smoke//EN",
+          "BEGIN:VEVENT",
+          "UID:event-1@example.com",
+          "DTSTAMP:20260409T080000Z",
+          "DTSTART:20260410T090000Z",
+          "DTEND:20260410T093000Z",
+          "SUMMARY:Research sync",
+          "DESCRIPTION:Discuss contradictions and next questions.",
+          "LOCATION:Video call",
+          "ATTENDEE;CN=Ada Lovelace:mailto:ada@example.com",
+          "ATTENDEE;CN=Linus Torvalds:mailto:linus@example.com",
+          "ORGANIZER;CN=Grace Hopper:mailto:grace@example.com",
+          "END:VEVENT",
+          "END:VCALENDAR"
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(path.join(personalDir, "slack-export.zip"), createSimpleSlackExportZip());
+
+      const ingested = await runCliJson(["ingest", personalDir, "--review"]);
+      assert.ok(ingested.review?.approvalId, "ingest --review did not stage a source review approval bundle");
+      await assertExists(ingested.review.reviewPath);
+      const importedKinds = new Set((ingested.ingest.imported ?? []).map((manifest) => manifest.sourceKind));
+      for (const kind of ["transcript", "email", "calendar", "chat_export"]) {
+        assert.ok(importedKinds.has(kind), `personal knowledge ingest did not preserve source kind ${kind}`);
+      }
+
+      await assertExists(path.join(workspaceDir, "wiki", "dashboards", "index.md"));
+      await assertExists(path.join(workspaceDir, "wiki", "dashboards", "timeline.md"));
+      await assertExists(path.join(workspaceDir, "wiki", "dashboards", "recent-sources.md"));
+      const timelinePage = await fs.readFile(path.join(workspaceDir, "wiki", "dashboards", "timeline.md"), "utf8");
+      assert.ok(timelinePage.includes("Research sync") || timelinePage.includes("call"), "dashboard timeline did not include personal knowledge sources");
+
+      const managedFile = await runCliJson(["source", "add", path.join(personalDir, "call.srt"), "--review"]);
+      assert.equal(managedFile.source.kind, "file", "source add did not classify the local file as a managed file source");
+      assert.ok(managedFile.review?.approvalId, "source add --review did not stage a managed-file source review");
+      await assertExists(managedFile.review.reviewPath);
+
+      const sourceReview = await runCliJson(["source", "review", managedFile.source.sourceIds[0]]);
+      assert.ok(sourceReview.approvalId, "source review did not stage an approval bundle for the raw source id");
+      await assertExists(sourceReview.reviewPath);
+    });
+
     if (usesPublishedRegistryInstall(installSpecs)) {
       await runStep("managed-source-public-github", async () => {
         const githubSource = await runCliJson(["source", "add", "https://github.com/karpathy/micrograd"]);
@@ -1980,6 +2058,54 @@ function createSimpleEpub() {
       ),
       "OEBPS/chapter-2.xhtml": Buffer.from(
         '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Second Chapter</h1><p>Books belong in everyday vaults too.</p></body></html>',
+        "utf8"
+      )
+    })
+  );
+}
+
+function createSimpleSlackExportZip() {
+  return Buffer.from(
+    zipSync({
+      "users.json": Buffer.from(
+        JSON.stringify([
+          {
+            id: "U123",
+            name: "ada",
+            real_name: "Ada Lovelace",
+            profile: {
+              display_name: "Ada Lovelace"
+            }
+          }
+        ]),
+        "utf8"
+      ),
+      "channels.json": Buffer.from(
+        JSON.stringify([
+          {
+            id: "C123",
+            name: "research",
+            is_channel: true
+          }
+        ]),
+        "utf8"
+      ),
+      "research/2026-04-09.json": Buffer.from(
+        JSON.stringify([
+          {
+            type: "message",
+            user: "U123",
+            text: "Please review the transcript before updating the wiki.",
+            ts: "1775726100.000100"
+          },
+          {
+            type: "message",
+            user: "U123",
+            text: "Open question: which note becomes canonical?",
+            ts: "1775726160.000200",
+            thread_ts: "1775726100.000100"
+          }
+        ]),
         "utf8"
       )
     })

@@ -138,6 +138,24 @@ function relatedOutputsSection(relatedOutputs: GraphPage[]): string[] {
   return ["## Related Outputs", "", ...relatedOutputs.map((page) => `- ${pageLink(page)}`), ""];
 }
 
+function detailValue(manifest: SourceManifest, key: string): string | undefined {
+  const value = manifest.details?.[key];
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized || undefined;
+}
+
+function detailList(manifest: SourceManifest, key: string): string[] | undefined {
+  const value = detailValue(manifest, key);
+  if (!value) {
+    return undefined;
+  }
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length ? items : undefined;
+}
+
 export function buildSourcePage(
   manifest: SourceManifest,
   analysis: SourceAnalysis,
@@ -170,6 +188,10 @@ export function buildSourcePage(
     title: analysis.title,
     ...(manifest.sourceType ? { source_type: manifest.sourceType } : {}),
     ...(manifest.sourceClass ? { source_class: manifest.sourceClass } : {}),
+    ...(detailValue(manifest, "occurred_at") ? { occurred_at: detailValue(manifest, "occurred_at") } : {}),
+    ...(detailList(manifest, "participants") ? { participants: detailList(manifest, "participants") } : {}),
+    ...(detailValue(manifest, "container_title") ? { container_title: detailValue(manifest, "container_title") } : {}),
+    ...(detailValue(manifest, "conversation_id") ? { conversation_id: detailValue(manifest, "conversation_id") } : {}),
     tags: decoratedTags(analysis.code ? ["source", "code"] : ["source"], decorations),
     source_ids: [manifest.sourceId],
     project_ids: decorations?.projectIds ?? [],
@@ -566,6 +588,9 @@ export function buildIndexPage(
   const outputs = pages.filter((page) => page.kind === "output");
   const insights = pages.filter((page) => page.kind === "insight");
   const graphPages = pages.filter((page) => page.kind === "graph_report" || page.kind === "community_summary");
+  const dashboards = pages.filter(
+    (page) => page.kind === "index" && page.path.startsWith("dashboards/") && page.path !== "dashboards/index.md"
+  );
 
   return [
     "---",
@@ -612,6 +637,10 @@ export function buildIndexPage(
     "",
     ...(outputs.length ? outputs.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No saved outputs yet."]),
     "",
+    "## Dashboards",
+    "",
+    ...(dashboards.length ? dashboards.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`) : ["- No dashboards yet."]),
+    "",
     "## Graph",
     "",
     ...(graphPages.length
@@ -638,7 +667,7 @@ export function buildIndexPage(
 }
 
 export function buildSectionIndex(
-  kind: "sources" | "code" | "concepts" | "entities" | "outputs" | "candidates" | "graph",
+  kind: "sources" | "code" | "concepts" | "entities" | "outputs" | "dashboards" | "candidates" | "graph",
   pages: GraphPage[],
   schemaHash: string,
   metadata: ManagedPageMetadata,

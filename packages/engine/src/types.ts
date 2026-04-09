@@ -46,10 +46,26 @@ export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
-export type SourceKind = "markdown" | "text" | "pdf" | "image" | "html" | "docx" | "epub" | "csv" | "xlsx" | "pptx" | "binary" | "code";
+export type SourceKind =
+  | "markdown"
+  | "text"
+  | "pdf"
+  | "image"
+  | "html"
+  | "docx"
+  | "epub"
+  | "csv"
+  | "xlsx"
+  | "pptx"
+  | "transcript"
+  | "chat_export"
+  | "email"
+  | "calendar"
+  | "binary"
+  | "code";
 export type SourceCaptureType = "arxiv" | "doi" | "tweet" | "article" | "url";
 export type SourceClass = "first_party" | "third_party" | "resource" | "generated";
-export type ManagedSourceKind = "directory" | "github_repo" | "crawl_url";
+export type ManagedSourceKind = "directory" | "file" | "github_repo" | "crawl_url";
 export type ManagedSourceStatus = "ready" | "missing" | "error";
 export type CodeLanguage =
   | "javascript"
@@ -266,6 +282,10 @@ export type ExtractionKind =
   | "csv_text"
   | "xlsx_text"
   | "pptx_text"
+  | "transcript_text"
+  | "chat_export_text"
+  | "email_text"
+  | "calendar_text"
   | "image_vision";
 
 export interface ExtractionTerm {
@@ -857,6 +877,7 @@ export interface InstallAgentResult {
 export interface ManagedSourceAddOptions {
   compile?: boolean;
   brief?: boolean;
+  review?: boolean;
   maxPages?: number;
   maxDepth?: number;
 }
@@ -870,16 +891,27 @@ export interface ManagedSourceAddResult {
   source: ManagedSourceRecord;
   compile?: CompileResult;
   briefGenerated: boolean;
+  review?: SourceReviewResult;
 }
 
 export interface ManagedSourceReloadResult {
   sources: ManagedSourceRecord[];
   compile?: CompileResult;
   briefPaths: string[];
+  reviews: SourceReviewResult[];
 }
 
 export interface ManagedSourceDeleteResult {
   removed: ManagedSourceRecord;
+}
+
+export interface SourceReviewResult {
+  sourceId: string;
+  pageId: string;
+  reviewPath: string;
+  staged: boolean;
+  approvalId?: string;
+  approvalDir?: string;
 }
 
 export interface GitHookStatus {

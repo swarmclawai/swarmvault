@@ -1,7 +1,7 @@
 ---
 name: swarmvault
-description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, review, and MCP artifacts to disk from books, notes, datasets, slide decks, files, URLs, code, and recurring source workflows."
-version: "0.3.0"
+description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, dashboard, review, and MCP artifacts to disk from books, notes, transcripts, exports, datasets, slide decks, files, URLs, code, and recurring source workflows."
+version: "0.4.0"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -22,23 +22,24 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 
 1. Initialize a vault with `swarmvault init` when needed.
 2. Update `swarmvault.schema.md` before a serious compile. Use it for naming rules, categories, grounding, freshness expectations, and exclusions.
-3. Use `swarmvault source add <input>` when the input is a recurring local directory, public GitHub repo root, or docs hub that should stay registered.
+3. Use `swarmvault source add <input>` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Ingest one-off inputs with `swarmvault ingest <path-or-url>`, or ingest a whole repo tree with `swarmvault ingest <directory>`.
-5. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint --repo` when the workflow should stay automated. Install `swarmvault hook install` when git checkouts and commits should trigger repo-aware refreshes automatically.
-6. Compile with `swarmvault compile`, or use `swarmvault compile --approve` when changes should go through the local review queue first.
-7. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
-8. Ask questions with `swarmvault query "<question>"`. It saves durable answers into `wiki/outputs/` by default; add `--no-save` only for ephemeral checks.
-9. Use `swarmvault explore "<question>" --steps <n>` for save-first multi-step research loops, or `--format report|slides|chart|image` when the artifact should be presentation-oriented.
-10. Run `swarmvault lint` whenever the schema changed, artifacts look stale, or compile/query results drift.
-11. Use `swarmvault mcp` when another agent or tool should browse, search, and query the vault through MCP.
-12. Use `swarmvault graph serve` or `swarmvault graph export --html <output>` when graph inspection or sharing will help.
+5. Use `swarmvault ingest --review`, `swarmvault source add --review`, or `swarmvault source review <id>` when the human should review a transcript, export, or other source before canonical pages change.
+6. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint --repo` when the workflow should stay automated. Install `swarmvault hook install` when git checkouts and commits should trigger repo-aware refreshes automatically.
+7. Compile with `swarmvault compile`, or use `swarmvault compile --approve` when changes should go through the local review queue first.
+8. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
+9. Ask questions with `swarmvault query "<question>"`. It saves durable answers into `wiki/outputs/` by default; add `--no-save` only for ephemeral checks.
+10. Use `swarmvault explore "<question>" --steps <n>` for save-first multi-step research loops, or `--format report|slides|chart|image` when the artifact should be presentation-oriented.
+11. Run `swarmvault lint` whenever the schema changed, artifacts look stale, or compile/query results drift.
+12. Use `swarmvault mcp` when another agent or tool should browse, search, and query the vault through MCP.
+13. Use `swarmvault graph serve` or `swarmvault graph export --html <output>` when graph inspection or sharing will help.
 
 ## Working rules
 
 - Prefer changing the schema before re-running compile when organization or grounding is wrong.
 - Treat `wiki/` and `state/` as first-class outputs. Inspect them instead of trusting a single chat answer.
 - Prefer `wiki/graph/report.md`, `state/graph.json`, and saved wiki pages over ad hoc broad search when they already exist.
-- Use `source add` for recurring directories, public GitHub repo roots, and docs hubs. Use `ingest` and `add` for deliberate one-off inputs.
+- Use `source add` for recurring files, directories, public GitHub repo roots, and docs hubs. Use `ingest` and `add` for deliberate one-off inputs.
 - The default heuristic provider is a valid local/offline starting point. Add a model provider only when the user wants richer synthesis quality or optional capabilities such as embeddings, vision, or image generation.
 - If an OpenAI-compatible backend cannot satisfy structured generation, reduce its declared capabilities instead of forcing every task through it.
 - Keep raw sources immutable. Put corrections in schema, new sources, or saved outputs rather than manually rewriting generated provenance.
@@ -49,8 +50,10 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 - `raw/sources/` and `raw/assets/`: canonical source storage.
 - `wiki/`: generated pages plus saved outputs.
 - `wiki/outputs/source-briefs/`: saved onboarding briefs for managed sources.
+- `wiki/outputs/source-reviews/`: staged source-scoped review pages.
+- `wiki/dashboards/`: recent sources, timeline, contradiction, and open-question dashboards.
 - `wiki/code/`: module pages for ingested JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell sources.
-- `state/extracts/`: extracted markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, and image sources.
+- `state/extracts/`: extracted markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, transcripts, Slack exports, email, calendar, and image sources.
 - `state/code-index.json`: repo-aware code aliases and local import resolution data.
 - `wiki/projects/`: project rollups over canonical pages.
 - `wiki/candidates/`: staged concept and entity pages awaiting promotion.

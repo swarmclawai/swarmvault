@@ -1,6 +1,6 @@
 # SwarmVault Skill
 
-Use the SwarmVault skill when you want a local-first knowledge vault that compiles books, articles, notes, datasets, spreadsheets, slide decks, screenshots, URLs, code, and research captures into durable markdown pages, a searchable graph, and reviewable outputs on disk.
+Use the SwarmVault skill when you want a local-first knowledge vault that compiles books, articles, notes, transcripts, chat exports, emails, calendars, datasets, spreadsheets, slide decks, screenshots, URLs, code, and research captures into durable markdown pages, a searchable graph, dashboards, and reviewable outputs on disk.
 
 SwarmVault is inspired by Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist, then extended into a local toolchain with graph/search artifacts, review flows, automation, and optional provider-backed synthesis.
 
@@ -18,6 +18,7 @@ Install the CLI it depends on:
 npm install -g @swarmvaultai/cli
 swarmvault --version
 swarmvault source add https://github.com/karpathy/micrograd
+swarmvault ingest ./meeting.srt --review
 ```
 
 Requirements:
@@ -38,12 +39,13 @@ npm install -g @swarmvaultai/cli@latest
 - The repo already contains `swarmvault.config.json` or `swarmvault.schema.md`.
 - You want markdown wiki pages, graph artifacts, local search, approvals, candidates, and MCP exposure from the same workspace.
 - You want a save-first compile/query/review loop for source collections, codebases, or research material.
-- You want one workflow for mixed non-code material such as EPUBs, CSV/TSV files, XLSX workbooks, and PPTX decks.
+- You want one workflow for mixed non-code material such as EPUBs, CSV/TSV files, XLSX workbooks, PPTX decks, transcripts, Slack exports, mailbox files, and calendar exports.
 
 ## Quickstart
 
 ```bash
 swarmvault init --obsidian
+swarmvault source add ./exports/customer-call.srt --review
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
@@ -59,7 +61,7 @@ The default `heuristic` provider is a valid local/offline starting point. Add a 
 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
 
-Supported non-code ingest includes `.pdf`, `.docx`, `.epub`, `.csv`, `.tsv`, `.xlsx`, `.pptx`, images, markdown/text notes, browser clips, and research URLs captured through `swarmvault add`.
+Supported non-code ingest includes `.pdf`, `.docx`, `.epub`, `.csv`, `.tsv`, `.xlsx`, `.pptx`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, images, markdown/text notes, browser clips, and research URLs captured through `swarmvault add`.
 
 ## What The Skill Package Includes
 
@@ -78,18 +80,21 @@ The published ClawHub package is intentionally text-only in this release.
 
 1. Initialize the vault with `swarmvault init`.
 2. Treat `swarmvault.schema.md` as the vault contract before serious compile or query work.
-3. Use `swarmvault source add` when the input is a recurring local directory, public GitHub repo root, or docs hub that should stay registered.
+3. Use `swarmvault source add` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Add one-off material with `swarmvault ingest`, `swarmvault add`, or `swarmvault inbox import`.
-5. Compile with `swarmvault compile` or `swarmvault compile --approve`.
-6. Inspect `wiki/` and `state/` artifacts before broad re-search.
-7. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable.
-8. Use `swarmvault graph serve`, `swarmvault graph export`, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
+5. Use `swarmvault ingest --review`, `swarmvault source add --review`, or `swarmvault source review <id>` when you want a source-scoped review page and approval bundle before changing canonical pages.
+6. Compile with `swarmvault compile` or `swarmvault compile --approve`.
+7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search.
+8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable.
+9. Use `swarmvault graph serve`, `swarmvault graph export`, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
 ## What SwarmVault Writes
 
 - `raw/sources/` and `raw/assets/` for canonical input storage
 - `wiki/` for compiled source, concept, entity, code, graph, and output pages
 - `wiki/outputs/source-briefs/` for recurring-source onboarding briefs
+- `wiki/outputs/source-reviews/` for staged source-scoped review artifacts
+- `wiki/dashboards/` for recent sources, timeline, contradictions, and open questions
 - `wiki/candidates/` for staged concept/entity pages
 - `state/graph.json` for the compiled graph
 - `state/search.sqlite` for local search

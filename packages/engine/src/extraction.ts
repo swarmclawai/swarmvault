@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { parse as parseCsvSync } from "csv-parse/sync";
 import { strFromU8, unzipSync } from "fflate";
 import { JSDOM } from "jsdom";
@@ -431,6 +432,13 @@ export interface EpubChapterExtraction {
   metadata: Record<string, string>;
 }
 
+export interface GroupedTextExtraction {
+  partKey: string;
+  title: string;
+  markdown: string;
+  metadata: Record<string, string>;
+}
+
 export async function extractPdfText(input: {
   mimeType: string;
   bytes: Buffer;
@@ -836,6 +844,654 @@ export async function extractEpubChapters(input: {
     return {
       chapters: [],
       warnings: [`EPUB extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+    };
+  }
+}
+
+function timestampFromMs(value: number): string {
+  const totalMs = Math.max(0, Math.floor(value));
+  const totalSeconds = Math.floor(totalMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const milliseconds = totalMs % 1000;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(
+    milliseconds
+  ).padStart(3, "0")}`;
+}
+
+function normalizeDelimitedList(values: string[]): string | undefined {
+  const unique = [...new Set(values.map((value) => normalizeWhitespace(value)).filter(Boolean))];
+  return unique.length ? unique.join(", ") : undefined;
+}
+
+function normalizeIsoDate(value: unknown): string | undefined {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString();
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  return undefined;
+}
+
+function addressNames(value: unknown): string[] {
+  if (!value || typeof value !== "object" || !("value" in value) || !Array.isArray((value as { value?: unknown }).value)) {
+    return [];
+  }
+  return (value as { value: Array<{ name?: string; address?: string }> }).value
+    .map((entry) => normalizeWhitespace(entry.name ?? entry.address ?? ""))
+    .filter(Boolean);
+}
+
+function addressList(value: unknown): string | undefined {
+  return normalizeDelimitedList(addressNames(value));
+}
+
+function emailConversationId(parsed: {
+  messageId?: string | null;
+  inReplyTo?: string | string[] | null;
+  references?: string | string[] | null;
+}): string | undefined {
+  const asArray = (value: string | string[] | null | undefined): string[] =>
+    Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return (
+    normalizeWhitespace(parsed.messageId ?? "") ||
+    normalizeWhitespace(asArray(parsed.inReplyTo)[0] ?? "") ||
+    normalizeWhitespace(asArray(parsed.references)[0] ?? "") ||
+    undefined
+  );
+}
+
+function emailBodyMarkdown(parsed: { text?: string | null; html?: string | false | null }): string {
+  const text = normalizeDocumentText(parsed.text ?? "");
+  if (text) {
+    return text;
+  }
+  if (typeof parsed.html === "string" && parsed.html.trim()) {
+    return normalizeDocumentText(htmlToMarkdown(parsed.html));
+  }
+  return "";
+}
+
+type NormalizedEmailExtraction = {
+  title: string;
+  markdown: string;
+  metadata: Record<string, string>;
+  conversationId?: string;
+};
+
+function normalizeParsedEmail(
+  parsed: {
+    subject?: string | null;
+    date?: Date | string | null;
+    messageId?: string | null;
+    inReplyTo?: string | string[] | null;
+    references?: string | string[] | null;
+    from?: unknown;
+    to?: unknown;
+    cc?: unknown;
+    attachments?: unknown[];
+    text?: string | null;
+    html?: string | false | null;
+  },
+  fallbackTitle: string
+): NormalizedEmailExtraction {
+  const title = normalizeWhitespace(parsed.subject ?? "") || fallbackTitle;
+  const sender = addressList(parsed.from);
+  const recipients = addressList(parsed.to);
+  const cc = addressList(parsed.cc);
+  const occurredAt = normalizeIsoDate(parsed.date);
+  const participants = normalizeDelimitedList([...addressNames(parsed.from), ...addressNames(parsed.to), ...addressNames(parsed.cc)]);
+  const conversationId = emailConversationId(parsed);
+  const body = emailBodyMarkdown(parsed);
+  const attachmentCount = Array.isArray(parsed.attachments) ? parsed.attachments.length : 0;
+
+  return {
+    title,
+    conversationId,
+    metadata: {
+      ...(occurredAt ? { occurred_at: occurredAt } : {}),
+      ...(sender ? { sender } : {}),
+      ...(recipients ? { recipients } : {}),
+      ...(cc ? { cc } : {}),
+      ...(participants ? { participants } : {}),
+      ...(conversationId ? { conversation_id: conversationId } : {}),
+      ...(normalizeWhitespace(parsed.messageId ?? "") ? { message_id: normalizeWhitespace(parsed.messageId ?? "") } : {}),
+      ...(attachmentCount ? { attachment_count: String(attachmentCount) } : {})
+    },
+    markdown: [
+      `# ${title}`,
+      "",
+      ...(occurredAt ? [`Date: ${occurredAt}`] : []),
+      ...(sender ? [`From: ${sender}`] : []),
+      ...(recipients ? [`To: ${recipients}`] : []),
+      ...(cc ? [`CC: ${cc}`] : []),
+      ...(conversationId ? [`Conversation ID: ${conversationId}`] : []),
+      ...(attachmentCount ? [`Attachments: ${attachmentCount}`] : []),
+      "",
+      "## Message",
+      "",
+      body || "No readable body content was extracted from this email.",
+      ""
+    ].join("\n")
+  };
+}
+
+function calendarAttendees(value: unknown): string[] {
+  if (!value) {
+    return [];
+  }
+  const attendees = Array.isArray(value) ? value : [value];
+  return attendees
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return "";
+      }
+      const item = entry as { params?: Record<string, unknown>; val?: string; value?: string };
+      const name = normalizeWhitespace(String(item.params?.CN ?? ""));
+      const address = normalizeWhitespace(String(item.val ?? item.value ?? ""));
+      return name || address;
+    })
+    .filter(Boolean);
+}
+
+function slackFormatSpeakerId(input: string, usersById: Map<string, string>): string {
+  return usersById.get(input) ?? input;
+}
+
+function slackNormalizeText(text: string, usersById: Map<string, string>): string {
+  return normalizeWhitespace(
+    text
+      .replace(/<@([A-Z0-9]+)>/g, (_, userId: string) => `@${slackFormatSpeakerId(userId, usersById)}`)
+      .replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1")
+      .replace(/<(https?:\/\/[^>|]+)\|([^>]+)>/g, "$2 ($1)")
+      .replace(/<(https?:\/\/[^>]+)>/g, "$1")
+  );
+}
+
+function slackMessageTimestamp(ts: string | undefined, fallbackDate: string): string {
+  const numeric = Number(ts);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return new Date(numeric * 1000).toISOString();
+  }
+  return new Date(`${fallbackDate}T00:00:00.000Z`).toISOString();
+}
+
+async function loadZipMessageBuffers(bytes: Buffer): Promise<Buffer[]> {
+  const { MboxStream } = await import("node-mbox");
+  const stream = MboxStream(Readable.from([bytes]));
+  return await new Promise<Buffer[]>((resolve, reject) => {
+    const messages: Buffer[] = [];
+    stream.on("data", (message: Buffer | Uint8Array | string) => {
+      messages.push(Buffer.isBuffer(message) ? message : Buffer.from(message));
+    });
+    stream.on("error", reject);
+    stream.on("finish", () => resolve(messages));
+    stream.on("end", () => resolve(messages));
+  });
+}
+
+function archiveEntriesAsText(archive: Record<string, Uint8Array>): Map<string, string> {
+  return new Map(
+    Object.entries(archive)
+      .filter(([, value]) => value)
+      .map(([entryPath, value]) => [entryPath, strFromU8(value)])
+  );
+}
+
+function looksLikeSlackEntries(entries: Iterable<string>): boolean {
+  const all = [...entries];
+  const hasChannelsIndex = all.some(
+    (entry) => entry === "channels.json" || entry === "groups.json" || entry === "dms.json" || entry === "mpims.json"
+  );
+  const hasChannelDayFiles = all.some((entry) => /^[^/]+\/\d{4}-\d{2}-\d{2}\.json$/i.test(entry));
+  return hasChannelsIndex && hasChannelDayFiles;
+}
+
+function slackEntriesFromChannelIndex(
+  raw: unknown,
+  usersById: Map<string, string>
+): Map<string, { id: string; title: string; members: string[] }> {
+  const entries = new Map<string, { id: string; title: string; members: string[] }>();
+  if (!Array.isArray(raw)) {
+    return entries;
+  }
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const value = item as { id?: string; name?: string; members?: string[]; user?: string };
+    const id = normalizeWhitespace(value.id ?? "");
+    const title = normalizeWhitespace(value.name ?? "");
+    if (!title) {
+      continue;
+    }
+    const members = (Array.isArray(value.members) ? value.members : value.user ? [value.user] : [])
+      .map((member) => slackFormatSpeakerId(member, usersById))
+      .filter(Boolean);
+    entries.set(title, { id, title, members });
+  }
+  return entries;
+}
+
+export async function extractTranscriptText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const { parseSync } = await import("subtitle");
+    const rawText = decodeTextBytes(input.bytes);
+    const cues = (parseSync(rawText) as Array<{ type?: string; data?: { start?: number; end?: number; text?: string } }>)
+      .filter((node) => node.type === "cue" && node.data)
+      .map((node) => ({
+        start: Math.max(0, node.data?.start ?? 0),
+        end: Math.max(0, node.data?.end ?? 0),
+        text: normalizeWhitespace((node.data?.text ?? "").replace(/\s*\n+\s*/g, " "))
+      }))
+      .filter((cue) => cue.text);
+    const title = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined;
+    const extractedText = [
+      title ? `# ${title}` : null,
+      `Format: ${input.fileName?.toLowerCase().endsWith(".vtt") ? "WebVTT" : "SRT"}`,
+      `Segments: ${cues.length}`,
+      ...(cues.length ? [`Start: ${timestampFromMs(cues[0]!.start)}`, `End: ${timestampFromMs(cues[cues.length - 1]!.end)}`] : []),
+      "",
+      "## Transcript",
+      "",
+      ...(cues.length
+        ? cues.map((cue) => `- [${timestampFromMs(cue.start)} - ${timestampFromMs(cue.end)}] ${cue.text}`)
+        : ["- No transcript segments were extracted."]),
+      ""
+    ]
+      .filter((item): item is string => Boolean(item))
+      .join("\n");
+
+    return {
+      title,
+      extractedText,
+      artifact: {
+        ...extractionMetadata("transcript", input.mimeType, "transcript_text"),
+        metadata: {
+          format: input.fileName?.toLowerCase().endsWith(".vtt") ? "vtt" : "srt",
+          segment_count: String(cues.length),
+          ...(cues.length ? { started_at: timestampFromMs(cues[0]!.start), ended_at: timestampFromMs(cues[cues.length - 1]!.end) } : {})
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("transcript", input.mimeType, "transcript_text"),
+        warnings: [`Transcript extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+export async function extractEmailText(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const { simpleParser } = await import("mailparser");
+    const fallbackTitle = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : "Email";
+    const parsed = await simpleParser(input.bytes);
+    const normalized = normalizeParsedEmail(parsed, fallbackTitle);
+    return {
+      title: normalized.title,
+      extractedText: normalized.markdown,
+      artifact: {
+        ...extractionMetadata("email", input.mimeType, "email_text"),
+        metadata: normalized.metadata
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("email", input.mimeType, "email_text"),
+        warnings: [`Email extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+export async function extractMboxMessages(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; messages: GroupedTextExtraction[]; warnings?: string[] }> {
+  try {
+    const title = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : "Mailbox";
+    const { simpleParser } = await import("mailparser");
+    const messages = await loadZipMessageBuffers(input.bytes);
+    const extracted: GroupedTextExtraction[] = [];
+    for (let index = 0; index < messages.length; index += 1) {
+      const parsed = await simpleParser(messages[index]!);
+      const normalized = normalizeParsedEmail(parsed, `Message ${index + 1}`);
+      const conversationId = normalized.conversationId || `${index + 1}`;
+      extracted.push({
+        partKey: `${conversationId}-${index + 1}`,
+        title: normalized.title,
+        markdown: normalized.markdown,
+        metadata: {
+          ...normalized.metadata,
+          container_title: title,
+          mailbox_title: title,
+          part_index: String(index + 1),
+          part_count: String(messages.length)
+        }
+      });
+    }
+    return {
+      title,
+      messages: extracted,
+      warnings: extracted.length ? undefined : ["Mailbox extraction completed but found no readable messages."]
+    };
+  } catch (error) {
+    return {
+      messages: [],
+      warnings: [`Mailbox extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+    };
+  }
+}
+
+export async function extractCalendarEvents(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; events: GroupedTextExtraction[]; warnings?: string[] }> {
+  try {
+    const ical = await import("node-ical");
+    const calendarTitle = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : "Calendar";
+    const parsed = ical.default.sync.parseICS(decodeTextBytes(input.bytes)) as Record<string, unknown>;
+    const events: GroupedTextExtraction[] = [];
+
+    for (const item of Object.values(parsed)) {
+      if (!item || typeof item !== "object" || (item as { type?: string }).type !== "VEVENT") {
+        continue;
+      }
+      const event = item as {
+        uid?: string;
+        summary?: string;
+        description?: string;
+        location?: string;
+        start?: Date | string;
+        end?: Date | string;
+        organizer?: { params?: Record<string, unknown>; val?: string };
+        attendees?: unknown;
+      };
+      const title = normalizeWhitespace(event.summary ?? "") || "Calendar Event";
+      const occurredAt = normalizeIsoDate(event.start);
+      const endsAt = normalizeIsoDate(event.end);
+      const organizer = event.organizer ? normalizeWhitespace(String(event.organizer.params?.CN ?? event.organizer.val ?? "")) : undefined;
+      const attendees = calendarAttendees(event.attendees);
+      const participants = normalizeDelimitedList([organizer ?? "", ...attendees]);
+      const location = normalizeWhitespace(event.location ?? "") || undefined;
+      const description = normalizeDocumentText(event.description ?? "");
+      const conversationId = normalizeWhitespace(event.uid ?? "") || `${title}-${occurredAt ?? events.length + 1}`;
+      events.push({
+        partKey: conversationId,
+        title,
+        metadata: {
+          container_title: calendarTitle,
+          ...(occurredAt ? { occurred_at: occurredAt } : {}),
+          ...(endsAt ? { ends_at: endsAt } : {}),
+          ...(organizer ? { organizer } : {}),
+          ...(location ? { location } : {}),
+          ...(participants ? { participants } : {}),
+          conversation_id: conversationId
+        },
+        markdown: [
+          `# ${title}`,
+          "",
+          ...(occurredAt ? [`Start: ${occurredAt}`] : []),
+          ...(endsAt ? [`End: ${endsAt}`] : []),
+          ...(organizer ? [`Organizer: ${organizer}`] : []),
+          ...(attendees.length ? [`Attendees: ${attendees.join(", ")}`] : []),
+          ...(location ? [`Location: ${location}`] : []),
+          ...(conversationId ? [`Event ID: ${conversationId}`] : []),
+          "",
+          "## Description",
+          "",
+          description || "No event description was provided.",
+          ""
+        ].join("\n")
+      });
+    }
+
+    return {
+      title: calendarTitle,
+      events,
+      warnings: events.length ? undefined : ["Calendar extraction completed but found no VEVENT entries."]
+    };
+  } catch (error) {
+    return {
+      events: [],
+      warnings: [`Calendar extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+    };
+  }
+}
+
+function parseSlackExportEntries(
+  entries: Map<string, string>,
+  exportTitle: string
+): { title: string; conversations: GroupedTextExtraction[]; warnings?: string[] } {
+  const usersById = new Map<string, string>();
+  const rawUsers = entries.get("users.json");
+  if (rawUsers) {
+    const parsed = JSON.parse(rawUsers) as Array<{
+      id?: string;
+      name?: string;
+      real_name?: string;
+      profile?: { display_name?: string; real_name?: string };
+    }>;
+    for (const user of parsed) {
+      const id = normalizeWhitespace(user.id ?? "");
+      const name = normalizeWhitespace(user.profile?.display_name ?? user.real_name ?? user.profile?.real_name ?? user.name ?? "");
+      if (id && name) {
+        usersById.set(id, name);
+      }
+    }
+  }
+
+  const channelIndex = new Map<string, { id: string; title: string; members: string[] }>();
+  for (const indexPath of ["channels.json", "groups.json", "dms.json", "mpims.json"]) {
+    const rawIndex = entries.get(indexPath);
+    if (!rawIndex) {
+      continue;
+    }
+    const parsed = JSON.parse(rawIndex) as unknown;
+    for (const [key, value] of slackEntriesFromChannelIndex(parsed, usersById)) {
+      channelIndex.set(key, value);
+    }
+  }
+
+  const conversationPaths = [...entries.keys()]
+    .filter((entryPath) => /^[^/]+\/\d{4}-\d{2}-\d{2}\.json$/i.test(entryPath))
+    .sort((left, right) => left.localeCompare(right));
+  const conversations: GroupedTextExtraction[] = [];
+  for (const entryPath of conversationPaths) {
+    const raw = entries.get(entryPath);
+    if (!raw) {
+      continue;
+    }
+    const messages = JSON.parse(raw) as Array<{
+      text?: string;
+      ts?: string;
+      thread_ts?: string;
+      user?: string;
+      username?: string;
+      subtype?: string;
+      files?: Array<{ title?: string; name?: string }>;
+      bot_profile?: { name?: string };
+    }>;
+    if (!Array.isArray(messages)) {
+      continue;
+    }
+    const [channelName, dateFile] = entryPath.split("/");
+    const date = dateFile?.replace(/\.json$/i, "") ?? "";
+    const channel = channelIndex.get(channelName ?? "") ?? {
+      id: channelName ?? "",
+      title: channelName ?? "channel",
+      members: []
+    };
+    const participants = new Set(channel.members);
+    const lines: string[] = [];
+    const threadIds = new Set<string>();
+    const sortedMessages = [...messages].sort((left, right) => Number(left.ts ?? 0) - Number(right.ts ?? 0));
+    let occurredAt: string | undefined;
+    for (const message of sortedMessages) {
+      const speaker =
+        normalizeWhitespace(
+          message.username ?? message.bot_profile?.name ?? (message.user ? slackFormatSpeakerId(message.user, usersById) : "")
+        ) || "unknown";
+      participants.add(speaker);
+      const messageTime = slackMessageTimestamp(message.ts, date);
+      occurredAt ??= messageTime;
+      const normalizedText = slackNormalizeText(
+        [
+          message.text ?? "",
+          ...(Array.isArray(message.files)
+            ? message.files
+                .map((file) => normalizeWhitespace(file.title ?? file.name ?? ""))
+                .filter(Boolean)
+                .map((label) => `Attachment: ${label}`)
+            : [])
+        ].join("\n"),
+        usersById
+      );
+      if (message.thread_ts && message.thread_ts !== message.ts) {
+        threadIds.add(message.thread_ts);
+      }
+      lines.push(
+        `- [${messageTime}] ${speaker}${message.thread_ts ? ` {thread:${message.thread_ts}}` : ""}${message.ts ? ` {id:${message.ts}}` : ""}: ${
+          normalizedText || normalizeWhitespace(message.subtype ?? "") || "[no text]"
+        }`
+      );
+    }
+    const participantsList = normalizeDelimitedList([...participants]);
+    const conversationId = `${channel.id || channel.title}:${date}`;
+    conversations.push({
+      partKey: `${channel.title}-${date}`,
+      title: `#${channel.title} - ${date}`,
+      metadata: {
+        workspace_title: exportTitle,
+        channel: channel.title,
+        ...(channel.id ? { channel_id: channel.id } : {}),
+        ...(occurredAt ? { occurred_at: occurredAt } : {}),
+        ...(participantsList ? { participants: participantsList } : {}),
+        container_title: `${exportTitle} / #${channel.title}`,
+        conversation_id: conversationId,
+        date,
+        message_count: String(sortedMessages.length),
+        thread_count: String(threadIds.size)
+      },
+      markdown: [
+        `# #${channel.title} - ${date}`,
+        "",
+        `Workspace: ${exportTitle}`,
+        `Messages: ${sortedMessages.length}`,
+        `Threads: ${threadIds.size}`,
+        ...(participantsList ? [`Participants: ${participantsList}`] : []),
+        "",
+        "## Messages",
+        "",
+        ...(lines.length ? lines : ["- No messages were extracted."]),
+        ""
+      ].join("\n")
+    });
+  }
+
+  return {
+    title: exportTitle,
+    conversations,
+    warnings: conversations.length ? undefined : ["Slack export parsing completed but found no channel day files."]
+  };
+}
+
+export function isSlackExportArchive(bytes: Buffer): boolean {
+  try {
+    const archive = unzipSync(new Uint8Array(bytes));
+    return looksLikeSlackEntries(Object.keys(archive));
+  } catch {
+    return false;
+  }
+}
+
+export async function isSlackExportDirectory(directoryPath: string): Promise<boolean> {
+  const entries = await fs.readdir(directoryPath).catch(() => []);
+  if (!entries.length) {
+    return false;
+  }
+  const fileSet = new Set(entries);
+  const hasIndex = ["channels.json", "groups.json", "dms.json", "mpims.json"].some((name) => fileSet.has(name));
+  if (!hasIndex) {
+    return false;
+  }
+  for (const entry of entries) {
+    const channelDir = path.join(directoryPath, entry);
+    const stat = await fs.stat(channelDir).catch(() => null);
+    if (!stat?.isDirectory()) {
+      continue;
+    }
+    const channelEntries = await fs.readdir(channelDir).catch(() => []);
+    if (channelEntries.some((name) => /^\d{4}-\d{2}-\d{2}\.json$/i.test(name))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export async function extractSlackExportArchive(input: {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+}): Promise<{ title?: string; conversations: GroupedTextExtraction[]; warnings?: string[] }> {
+  try {
+    const archive = unzipSync(new Uint8Array(input.bytes));
+    const title = input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : "Slack Export";
+    return parseSlackExportEntries(archiveEntriesAsText(archive), title);
+  } catch (error) {
+    return {
+      conversations: [],
+      warnings: [`Slack export extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+    };
+  }
+}
+
+export async function extractSlackExportDirectory(directoryPath: string): Promise<{
+  title?: string;
+  conversations: GroupedTextExtraction[];
+  warnings?: string[];
+}> {
+  const title = path.basename(directoryPath) || "Slack Export";
+  try {
+    const entries = new Map<string, string>();
+    const queue = [directoryPath];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const children = await fs.readdir(current, { withFileTypes: true });
+      for (const child of children) {
+        const absoluteChild = path.join(current, child.name);
+        if (child.isDirectory()) {
+          queue.push(absoluteChild);
+          continue;
+        }
+        const relativeChild = path.posix.relative(directoryPath, absoluteChild.split(path.sep).join(path.posix.sep));
+        entries.set(relativeChild, await fs.readFile(absoluteChild, "utf8"));
+      }
+    }
+    return parseSlackExportEntries(entries, title);
+  } catch (error) {
+    return {
+      conversations: [],
+      warnings: [`Slack export extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
     };
   }
 }

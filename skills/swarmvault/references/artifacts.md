@@ -18,6 +18,8 @@ SwarmVault is save-first. The files on disk are the product.
 - `wiki/projects/` - project rollups
 - `wiki/outputs/` - saved query and explore outputs
 - `wiki/outputs/source-briefs/` - source-scoped onboarding briefs for managed sources
+- `wiki/outputs/source-reviews/` - source-scoped review pages staged through approvals
+- `wiki/dashboards/` - recent sources, timeline, contradiction, and open-question dashboards
 - `wiki/candidates/` - staged concept/entity pages
 - `wiki/graph/report.md` - trust and orientation report
 
@@ -26,7 +28,7 @@ SwarmVault is save-first. The files on disk are the product.
 - `state/graph.json` - compiled graph artifact
 - `state/search.sqlite` - local full-text index
 - `state/code-index.json` - repo-aware symbol/import index
-- `state/extracts/` - extraction markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, and image sources
+- `state/extracts/` - extraction markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, transcript, Slack export, email, calendar, and image sources
 - `state/approvals/` - review bundles from `compile --approve`
 - `state/benchmark.json` - latest benchmark/trust artifact
 - `state/watch/` - pending semantic refresh and watch status artifacts

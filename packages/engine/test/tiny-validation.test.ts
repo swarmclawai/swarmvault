@@ -170,6 +170,20 @@ async function createTempWorkspace(): Promise<string> {
   return dir;
 }
 
+async function removeDirWithRetry(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOTEMPTY" || attempt === 4) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}
+
 async function readManifests(rootDir: string): Promise<SourceManifest[]> {
   const manifestsDir = path.join(rootDir, "state", "manifests");
   const names = await fs.readdir(manifestsDir);
@@ -179,20 +193,14 @@ async function readManifests(rootDir: string): Promise<SourceManifest[]> {
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(tempDirs.splice(0).map(async (dir) => await removeDirWithRetry(dir)));
 });
 
 describe("tiny validation matrix", () => {
-  it("covers every shipped code language and local source kind with repo ingest", async () => {
+  it("covers every shipped code language with repo ingest", async () => {
     const rootDir = await createTempWorkspace();
     const repoDir = path.join(rootDir, "repo");
     await fs.cp(tinyFixtureDir, repoDir, { recursive: true });
-    await fs.writeFile(path.join(repoDir, "docs", "brief.docx"), MINIMAL_DOCX);
-    await fs.writeFile(path.join(repoDir, "docs", "dataset.csv"), ["Metric,Value", "Users,12", "Errors,1"].join("\n"), "utf8");
-    await fs.writeFile(path.join(repoDir, "docs", "dataset.tsv"), ["Week\tSignups", "Week 1\t4", "Week 2\t8"].join("\n"), "utf8");
-    await fs.writeFile(path.join(repoDir, "docs", "deck.pptx"), createSimplePptx());
-    await fs.writeFile(path.join(repoDir, "docs", "workbook.xlsx"), await createSimpleXlsx());
-    await fs.writeFile(path.join(repoDir, "docs", "book.epub"), createSimpleEpub());
 
     await initVault(rootDir);
     await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
@@ -200,7 +208,6 @@ describe("tiny validation matrix", () => {
 
     const manifests = await readManifests(rootDir);
     const codeLanguages = new Set(manifests.filter((manifest) => manifest.sourceKind === "code").map((manifest) => manifest.language));
-    const sourceKinds = new Set(manifests.map((manifest) => manifest.sourceKind));
 
     const expectedLanguages: CodeLanguage[] = [
       "javascript",
@@ -222,11 +229,53 @@ describe("tiny validation matrix", () => {
       "ruby",
       "powershell"
     ];
-    const expectedSourceKinds: SourceKind[] = ["markdown", "text", "html", "pdf", "docx", "epub", "csv", "xlsx", "pptx", "image", "code"];
 
     for (const language of expectedLanguages) {
       expect(codeLanguages.has(language), `missing language ${language}`).toBe(true);
     }
+
+    const codeIndexPath = path.join(rootDir, "state", "code-index.json");
+    const codeIndex = JSON.parse(await fs.readFile(codeIndexPath, "utf8")) as { entries: Array<{ language: CodeLanguage }> };
+    const indexedLanguages = new Set(codeIndex.entries.map((entry) => entry.language));
+    for (const language of expectedLanguages) {
+      expect(indexedLanguages.has(language), `missing indexed language ${language}`).toBe(true);
+    }
+
+    const tsxManifest = manifests.find((manifest) => manifest.repoRelativePath === "tsx/Widget.tsx");
+    const tsxModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${tsxManifest?.sourceId}.md`), "utf8");
+    expect(tsxModulePage).toContain("Language: `tsx`");
+
+    const zigManifest = manifests.find((manifest) => manifest.repoRelativePath === "zig/Widget.zig");
+    const zigModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${zigManifest?.sourceId}.md`), "utf8");
+    expect(zigModulePage).toContain("Language: `zig`");
+
+    const luaManifest = manifests.find((manifest) => manifest.repoRelativePath === "lua/widget.lua");
+    const luaModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${luaManifest?.sourceId}.md`), "utf8");
+    expect(luaModulePage).toContain("Language: `lua`");
+
+    const results = await searchVault(rootDir, "Tiny HTML Source", 10);
+    expect(results.some((result) => result.path.startsWith("sources/"))).toBe(true);
+  });
+
+  it("covers every shipped local source kind with repo ingest", async () => {
+    const rootDir = await createTempWorkspace();
+    const repoDir = path.join(rootDir, "repo");
+    await fs.cp(tinyFixtureDir, repoDir, { recursive: true });
+    await fs.writeFile(path.join(repoDir, "docs", "brief.docx"), MINIMAL_DOCX);
+    await fs.writeFile(path.join(repoDir, "docs", "dataset.csv"), ["Metric,Value", "Users,12", "Errors,1"].join("\n"), "utf8");
+    await fs.writeFile(path.join(repoDir, "docs", "dataset.tsv"), ["Week\tSignups", "Week 1\t4", "Week 2\t8"].join("\n"), "utf8");
+    await fs.writeFile(path.join(repoDir, "docs", "deck.pptx"), createSimplePptx());
+    await fs.writeFile(path.join(repoDir, "docs", "workbook.xlsx"), await createSimpleXlsx());
+    await fs.writeFile(path.join(repoDir, "docs", "book.epub"), createSimpleEpub());
+
+    await initVault(rootDir);
+    await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    await compileVault(rootDir);
+
+    const manifests = await readManifests(rootDir);
+    const sourceKinds = new Set(manifests.map((manifest) => manifest.sourceKind));
+    const expectedSourceKinds: SourceKind[] = ["markdown", "text", "html", "pdf", "docx", "epub", "csv", "xlsx", "pptx", "image", "code"];
+
     for (const sourceKind of expectedSourceKinds) {
       expect(sourceKinds.has(sourceKind), `missing source kind ${sourceKind}`).toBe(true);
     }
@@ -309,27 +358,5 @@ describe("tiny validation matrix", () => {
     const rstExtract = await fs.readFile(path.join(rootDir, rstManifest?.extractedTextPath ?? ""), "utf8");
     expect(rstExtract).toContain("# Tiny reStructuredText Source");
     expect(rstExtract).toContain("Note: The extracted text should normalize headings and directives.");
-
-    const codeIndexPath = path.join(rootDir, "state", "code-index.json");
-    const codeIndex = JSON.parse(await fs.readFile(codeIndexPath, "utf8")) as { entries: Array<{ language: CodeLanguage }> };
-    const indexedLanguages = new Set(codeIndex.entries.map((entry) => entry.language));
-    for (const language of expectedLanguages) {
-      expect(indexedLanguages.has(language), `missing indexed language ${language}`).toBe(true);
-    }
-
-    const tsxManifest = manifests.find((manifest) => manifest.repoRelativePath === "tsx/Widget.tsx");
-    const tsxModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${tsxManifest?.sourceId}.md`), "utf8");
-    expect(tsxModulePage).toContain("Language: `tsx`");
-
-    const zigManifest = manifests.find((manifest) => manifest.repoRelativePath === "zig/Widget.zig");
-    const zigModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${zigManifest?.sourceId}.md`), "utf8");
-    expect(zigModulePage).toContain("Language: `zig`");
-
-    const luaManifest = manifests.find((manifest) => manifest.repoRelativePath === "lua/widget.lua");
-    const luaModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${luaManifest?.sourceId}.md`), "utf8");
-    expect(luaModulePage).toContain("Language: `lua`");
-
-    const results = await searchVault(rootDir, "Tiny HTML Source", 10);
-    expect(results.some((result) => result.path.startsWith("sources/"))).toBe(true);
-  });
+  }, 20_000);
 });

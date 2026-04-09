@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
-import type { GraphPage, PageKind, PageStatus, SearchResult, SourceCaptureType, SourceClass } from "./types.js";
+import type { GraphPage, PageKind, PageStatus, SearchResult, SourceCaptureType, SourceClass, SourceManifest } from "./types.js";
 import { ensureDir } from "./utils.js";
 
 export interface SearchPageFilters {
@@ -94,16 +94,38 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
   const insertPage = db.prepare(
     "INSERT INTO pages (id, path, title, body, kind, status, source_type, source_class, project_ids, project_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
+  const rootDir = path.dirname(wikiDir);
 
   for (const page of pages) {
     const absolutePath = path.join(wikiDir, page.path);
     const content = await fs.readFile(absolutePath, "utf8");
     const parsed = matter(content);
+    let body = parsed.content;
+    const primarySourceId =
+      Array.isArray(parsed.data.source_ids) && typeof parsed.data.source_ids[0] === "string"
+        ? parsed.data.source_ids[0]
+        : page.sourceIds[0];
+    if ((page.kind === "source" || page.kind === "module") && primarySourceId) {
+      try {
+        const manifest = JSON.parse(
+          await fs.readFile(path.join(rootDir, "state", "manifests", `${primarySourceId}.json`), "utf8")
+        ) as SourceManifest;
+        const excerptPath = manifest.extractedTextPath ?? manifest.storedPath;
+        if (excerptPath) {
+          const excerpt = await fs.readFile(path.join(rootDir, excerptPath), "utf8");
+          if (excerpt.trim()) {
+            body = `${body}\n\n## Source Excerpt\n\n${excerpt.trim()}`.trim();
+          }
+        }
+      } catch {
+        // Leave the page searchable via its generated markdown alone when source excerpts are unavailable.
+      }
+    }
     insertPage.run(
       page.id,
       page.path,
       page.title,
-      parsed.content,
+      body,
       page.kind,
       page.status,
       typeof parsed.data.source_type === "string" ? parsed.data.source_type : "",
@@ -168,7 +190,25 @@ export function searchPages(dbPath: string, query: string, limitOrOptions: numbe
     FROM page_search
     JOIN pages ON pages.rowid = page_search.rowid
     WHERE ${clauses.join(" AND ")}
-    ORDER BY rank
+    ORDER BY
+      CASE pages.status
+        WHEN 'active' THEN 0
+        WHEN 'draft' THEN 1
+        WHEN 'candidate' THEN 2
+        ELSE 3
+      END,
+      CASE pages.kind
+        WHEN 'source' THEN 0
+        WHEN 'module' THEN 1
+        WHEN 'output' THEN 2
+        WHEN 'insight' THEN 3
+        WHEN 'graph_report' THEN 4
+        WHEN 'community_summary' THEN 5
+        WHEN 'concept' THEN 6
+        WHEN 'entity' THEN 7
+        ELSE 8
+      END,
+      rank
     LIMIT ?
   `);
   params.push(options.limit ?? 5);

@@ -8,7 +8,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**AI エージェント向けのローカルファーストな知識コンパイラ。** 生のファイル、URL、コードを永続的な知識ボルトへ変換します。作業をチャット履歴の中で失うのではなく、Markdown wiki、ナレッジグラフ、ローカル検索、レビュー可能な成果物としてディスクに残せます。
+**AI エージェント向けのローカルファーストな知識コンパイラ。** 生のファイル、URL、コード、書き起こし、メール書き出し、カレンダー、データセット、ドキュメントを永続的な知識ボルトへ変換します。作業をチャット履歴の中で失うのではなく、Markdown wiki、ナレッジグラフ、ローカル検索、ダッシュボード、レビュー可能な成果物としてディスクに残せます。
 
 ウェブサイトのドキュメントは現在 English-first です。各言語版で表現に差が出た場合は [README.md](README.md) を正としてください。
 
@@ -58,6 +58,7 @@ my-vault/
 swarmvault init --obsidian
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
+swarmvault ingest ./meeting.srt --review
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -117,18 +118,19 @@ API キーなしでローカルの semantic graph query を使いたい場合は
 }
 ```
 
-## リポジトリや docs ハブを直接追加
+## 継続的なソースをそのまま追加
 
 SwarmVault をすぐ役立てる最短経路は、managed-source ワークフローです:
 
 ```bash
+swarmvault source add ./exports/customer-call.srt --review
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source list
 swarmvault source reload --all
 ```
 
-`source add` はソースを登録し、ボルトへ同期し、1 回 compile し、`wiki/outputs/source-briefs/` にソース別ブリーフを書きます。単発のファイルや URL には `ingest`、研究 URL の正規化には `add` を使ってください。
+`source add` はソースを登録し、ボルトへ同期し、1 回 compile し、`wiki/outputs/source-briefs/` にソース別ブリーフを書きます。ディレクトリや公開リポジトリ、docs ハブだけでなく、継続的に同期したいローカルファイルにも使えます。単発のファイルや URL には `ingest`、研究 URL の正規化には `add` を使ってください。
 
 <!-- readme-section:agent-setup -->
 ## エージェントと MCP の設定
@@ -168,6 +170,10 @@ clawhub install swarmvault
 | データセット | `.csv .tsv` | ローカルで表形式サマリーと限定プレビューを生成 |
 | スプレッドシート | `.xlsx` | ローカルでブックとシートのプレビューを抽出 |
 | スライド | `.pptx` | ローカルでスライド本文とノートを抽出 |
+| 書き起こし | `.srt .vtt` | タイムスタンプ付きのテキストをローカル抽出 |
+| チャット書き出し | Slack export `.zip`、展開済み Slack export ディレクトリ | チャンネル/日付単位の会話をローカル抽出 |
+| メール | `.eml .mbox` | 単一メール抽出と mailbox 展開 |
+| カレンダー | `.ics` | `VEVENT` のローカル展開 |
 | HTML | `.html`, URLs | Readability + Turndown による Markdown 化 |
 | Images | `.png .jpg .webp` | Vision provider（設定されている場合） |
 | Research | arXiv, DOI, articles, X/Twitter | `swarmvault add` による正規化 Markdown |
@@ -189,6 +195,10 @@ clawhub install swarmvault
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
+**ガイド付きソースレビュー** - `ingest --review`、`source add --review`、`source review <id>` は `wiki/outputs/source-reviews/` にソース単位のレビュー頁を生成し、正規 wiki へ反映する前に approval bundle を段階化します。
+
+**知識ダッシュボード** - `wiki/dashboards/` には recent sources、timeline、contradictions、open questions が出力されます。通常の Markdown として読めて、Obsidian + Dataview ではさらに便利になります。
+
 **任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 
 **9 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI 用のインストール規則があります。任意の graph-first hooks により、エージェントは広い検索の前に wiki を優先します。
@@ -197,7 +207,7 @@ clawhub install swarmvault
 
 **Automation** - watch mode、git hooks、定期実行、inbox import により、ボルトを手動更新なしで最新に保てます。
 
-**Managed sources** - `swarmvault source add|list|reload|delete` により、繰り返し使うディレクトリ、公開 GitHub リポジトリ、docs サイトを名前付き同期ソースとして管理できます。レジストリは `state/sources.json`、ソース別ブリーフは `wiki/outputs/source-briefs/` に保存されます。
+**Managed sources** - `swarmvault source add|list|reload|delete` により、繰り返し使うローカルファイル、ディレクトリ、公開 GitHub リポジトリ、docs サイトを名前付き同期ソースとして管理できます。レジストリは `state/sources.json`、ソース別ブリーフは `wiki/outputs/source-briefs/`、必要ならソースレビューは `wiki/outputs/source-reviews/` に保存されます。
 
 **外部グラフ連携** - HTML、SVG、GraphML、Cypher にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
 

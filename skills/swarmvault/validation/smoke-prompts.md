@@ -52,6 +52,19 @@ Expected shape:
 - compiles before answering if needed
 - points at contradiction/report artifacts when conflicts exist
 
+## Personal knowledge prompt
+
+Prompt:
+
+> Ingest this transcript or export file, stage a review, and tell me what dashboard pages I should open first.
+
+Expected shape:
+
+- uses `swarmvault ingest --review`, `swarmvault source add --review`, or `swarmvault source review`
+- points at `wiki/outputs/source-reviews/`
+- points at `wiki/dashboards/timeline.md` or `wiki/dashboards/recent-sources.md`
+- treats the approval queue as part of the workflow instead of silently overwriting canonical pages
+
 ## Graph prompt
 
 Prompt:

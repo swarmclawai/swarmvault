@@ -19,7 +19,14 @@ export { createMcpServer, startMcpServer } from "./mcp.js";
 export { assertProviderCapability, createProvider, getProviderForTask } from "./providers/registry.js";
 export { listSchedules, runSchedule, serveSchedules } from "./schedule.js";
 export { loadVaultSchema, loadVaultSchemas } from "./schema.js";
-export { addManagedSource, deleteManagedSource, listManagedSourceRecords, reloadManagedSources } from "./sources.js";
+export {
+  addManagedSource,
+  deleteManagedSource,
+  listManagedSourceRecords,
+  reloadManagedSources,
+  reviewManagedSource,
+  reviewSourceScope
+} from "./sources.js";
 export type * from "./types.js";
 export {
   acceptApproval,
@@ -45,7 +52,8 @@ export {
   readGraphReport,
   readPage,
   rejectApproval,
-  searchVault
+  searchVault,
+  stageGeneratedOutputPages
 } from "./vault.js";
 export { exportGraphHtml, startGraphServer } from "./viewer.js";
 export { getWatchStatus, runWatchCycle, watchVault } from "./watch.js";

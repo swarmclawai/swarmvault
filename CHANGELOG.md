@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Added first-class personal-knowledge ingest for transcripts (`.srt`, `.vtt`), Slack exports, email (`.eml`, `.mbox`), and calendar files (`.ics`) using parser- and library-backed extraction instead of code-first heuristics
+- Added grouped-source normalization for human-export inputs, source-scoped review generation under `wiki/outputs/source-reviews/`, and `--review` support for both `swarmvault ingest` and managed sources
+- Added markdown-first dashboard pages under `wiki/dashboards/` for recent sources, timeline, contradictions, and open questions so vaults stay navigable in plain Obsidian-style workflows
+- Fixed the expanded tiny-matrix CI instability by splitting the code and local-source matrices, increasing the non-code timeout, hardening temp-dir cleanup, and proving the new personal-knowledge flow through tarball-installed heuristic/browser smoke
+
 ## 0.3.0
 
 - Broadened non-code ingest so SwarmVault now treats books, datasets, spreadsheets, and slide decks as first-class sources with library-backed EPUB, CSV/TSV, XLSX, and PPTX extraction instead of repo/code-only workflows

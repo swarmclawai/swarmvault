@@ -20,10 +20,11 @@ import type {
   ManagedSourceStatus,
   ManagedSourceSyncCounts,
   SourceAnalysis,
-  SourceManifest
+  SourceManifest,
+  SourceReviewResult
 } from "./types.js";
 import { ensureDir, fileExists, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy } from "./utils.js";
-import { compileVault, readGraphReport, refreshVaultAfterOutputSave } from "./vault.js";
+import { compileVault, readGraphReport, refreshVaultAfterOutputSave, stageGeneratedOutputPages } from "./vault.js";
 
 const DEFAULT_CRAWL_MAX_PAGES = 12;
 const DEFAULT_CRAWL_MAX_DEPTH = 2;
@@ -46,6 +47,7 @@ const DOCS_HINT_SEGMENTS = new Set([
 
 type ManagedSourceInput =
   | { kind: "directory"; path: string; repoRoot: string; title: string }
+  | { kind: "file"; path: string; title: string }
   | { kind: "github_repo"; url: string; cloneUrl: string; title: string }
   | { kind: "crawl_url"; url: string; title: string };
 
@@ -274,7 +276,7 @@ function matchesManagedSourceSpec(existing: ManagedSourceRecord, input: ManagedS
   if (existing.kind !== input.kind) {
     return false;
   }
-  if (input.kind === "directory") {
+  if (input.kind === "directory" || input.kind === "file") {
     return path.resolve(existing.path ?? "") === path.resolve(input.path);
   }
   return (existing.url ?? "") === input.url;
@@ -287,10 +289,15 @@ async function resolveManagedSourceInput(rootDir: string, input: string): Promis
     if (!stat) {
       throw new Error(`Source not found: ${input}`);
     }
+    if (stat.isFile()) {
+      return {
+        kind: "file",
+        path: absoluteInput,
+        title: path.basename(absoluteInput, path.extname(absoluteInput)) || absoluteInput
+      };
+    }
     if (!stat.isDirectory()) {
-      throw new Error(
-        "`swarmvault source add` supports directories, public GitHub repo root URLs, and docs hubs. Use `swarmvault ingest` for single files."
-      );
+      throw new Error("`swarmvault source add` supports local files, directories, public GitHub repo root URLs, and docs hubs.");
     }
     const detectedRepoRoot = await findNearestGitRoot(absoluteInput);
     const repoRoot =
@@ -333,6 +340,14 @@ function directorySourceIdsFor(manifests: SourceManifest[], inputPath: string): 
     .sort((left, right) => left.localeCompare(right));
 }
 
+function fileSourceIdsFor(manifests: SourceManifest[], inputPath: string): string[] {
+  const absoluteInput = path.resolve(inputPath);
+  return manifests
+    .filter((manifest) => manifest.originalPath && path.resolve(manifest.originalPath) === absoluteInput)
+    .map((manifest) => manifest.sourceId)
+    .sort((left, right) => left.localeCompare(right));
+}
+
 async function syncDirectorySource(rootDir: string, inputPath: string, repoRoot: string): Promise<ManagedSourceSyncResult> {
   const manifestsBefore = await listManifests(rootDir);
   const previousInScope = manifestsBefore.filter(
@@ -364,6 +379,23 @@ async function syncDirectorySource(rootDir: string, inputPath: string, repoRoot:
       skippedCount: result.skipped.length
     },
     changed: result.imported.length + result.updated.length + removed.length > 0
+  };
+}
+
+async function syncFileSource(rootDir: string, inputPath: string): Promise<ManagedSourceSyncResult> {
+  const result = await ingestInputDetailed(rootDir, inputPath);
+  const manifestsAfter = await listManifests(rootDir);
+  return {
+    title: path.basename(inputPath, path.extname(inputPath)) || inputPath,
+    sourceIds: fileSourceIdsFor(manifestsAfter, inputPath),
+    counts: {
+      scannedCount: result.scannedCount,
+      importedCount: result.created.length,
+      updatedCount: result.updated.length,
+      removedCount: result.removed.length,
+      skippedCount: result.skipped.length
+    },
+    changed: result.created.length + result.updated.length + result.removed.length > 0
   };
 }
 
@@ -472,6 +504,22 @@ async function syncManagedSource(
         };
       }
       sync = await syncDirectorySource(rootDir, entry.path, entry.repoRoot);
+    } else if (entry.kind === "file") {
+      if (!entry.path) {
+        throw new Error(`Managed source ${entry.id} is missing its file path.`);
+      }
+      if (!(await fileExists(entry.path))) {
+        return {
+          ...entry,
+          status: "missing",
+          updatedAt: now,
+          lastSyncAt: now,
+          lastSyncStatus: "error",
+          lastError: `File not found: ${entry.path}`,
+          changed: false
+        };
+      }
+      sync = await syncFileSource(rootDir, entry.path);
     } else if (entry.kind === "github_repo") {
       sync = await syncGitHubRepoSource(rootDir, entry);
     } else {
@@ -732,6 +780,218 @@ async function generateBriefsForSources(rootDir: string, sources: ManagedSourceR
   return briefPaths;
 }
 
+type SourceReviewScope = {
+  id: string;
+  title: string;
+  sourceIds: string[];
+};
+
+function renderDeterministicSourceReview(input: {
+  scope: SourceReviewScope;
+  sourcePages: GraphArtifact["pages"];
+  graph: GraphArtifact;
+  analyses: SourceAnalysis[];
+  report: Awaited<ReturnType<typeof readGraphReport>>;
+}): string {
+  const canonicalPages = input.sourcePages
+    .filter((page) => page.kind === "source" || page.kind === "concept" || page.kind === "entity")
+    .slice(0, 10);
+  const modulePages = input.sourcePages.filter((page) => page.kind === "module").slice(0, 8);
+  const questions = uniqueStrings(input.analyses.flatMap((analysis) => analysis.questions)).slice(0, 8);
+  const concepts = uniqueStrings(input.analyses.flatMap((analysis) => analysis.concepts.map((concept) => concept.name))).slice(0, 8);
+  const entities = uniqueStrings(input.analyses.flatMap((analysis) => analysis.entities.map((entity) => entity.name))).slice(0, 8);
+  const contradictions =
+    input.report?.contradictions.filter(
+      (contradiction) => input.scope.sourceIds.includes(contradiction.sourceIdA) || input.scope.sourceIds.includes(contradiction.sourceIdB)
+    ) ?? [];
+
+  return [
+    `# Source Review: ${input.scope.title}`,
+    "",
+    "## What This Source Contains",
+    "",
+    ...(input.analyses.length
+      ? input.analyses.map((analysis) => `- ${analysis.title}: ${analysis.summary}`)
+      : ["- This source has not been analyzed yet. Compile the vault before trusting downstream pages."]),
+    "",
+    "## Likely Canonical Pages To Update",
+    "",
+    ...(canonicalPages.length
+      ? canonicalPages.map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+      : ["- No canonical source, concept, or entity pages are linked to this source yet."]),
+    "",
+    "## Important Topics And Entities",
+    "",
+    ...(concepts.length ? [`Concepts: ${concepts.join(", ")}`] : ["Concepts: none detected."]),
+    ...(entities.length ? [`Entities: ${entities.join(", ")}`] : ["Entities: none detected."]),
+    ...(modulePages.length ? ["", ...modulePages.map((page) => `- Module: [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)] : []),
+    "",
+    "## Contradictions To Inspect",
+    "",
+    ...(contradictions.length
+      ? contradictions.map((contradiction) => `- ${contradiction.claimA} / ${contradiction.claimB}`)
+      : ["- No contradictions are currently flagged for this source scope."]),
+    "",
+    "## Open Questions",
+    "",
+    ...(questions.length ? questions.map((question) => `- ${question}`) : ["- No extracted open questions yet."]),
+    "",
+    "## Suggested Next Steps",
+    "",
+    ...(canonicalPages.length
+      ? canonicalPages.slice(0, 5).map((page) => `- Review [[${page.path.replace(/\.md$/, "")}|${page.title}]] for canonical updates.`)
+      : ["- Review the source page and decide which canonical pages should exist."]),
+    ""
+  ].join("\n");
+}
+
+async function generateSourceReviewMarkdown(rootDir: string, scope: SourceReviewScope): Promise<string | null> {
+  const { paths } = await loadVaultConfig(rootDir);
+  let graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  if (!graph) {
+    await compileVault(rootDir, {});
+    graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  }
+  if (!graph) {
+    return null;
+  }
+
+  const sourcePages = scopedSourcePages(graph, scope.sourceIds);
+  const analyses = await loadSourceAnalyses(rootDir, scope.sourceIds);
+  const report = await readGraphReport(rootDir);
+  const fallback = renderDeterministicSourceReview({
+    scope,
+    sourcePages,
+    graph,
+    analyses,
+    report
+  });
+
+  const provider = await getProviderForTask(rootDir, "queryProvider");
+  if (provider.type === "heuristic") {
+    return fallback;
+  }
+
+  try {
+    const schemas = await loadVaultSchemas(rootDir);
+    const pageContext = sourcePages
+      .slice(0, 12)
+      .map((page) => `- ${page.title} (${page.kind}) -> ${page.path}`)
+      .join("\n");
+    const analysisContext = analyses
+      .slice(0, 8)
+      .map(
+        (analysis) =>
+          `# ${analysis.title}\nSummary: ${analysis.summary}\nQuestions: ${analysis.questions.join(" | ") || "none"}\nConcepts: ${
+            analysis.concepts.map((concept) => concept.name).join(", ") || "none"
+          }\nEntities: ${analysis.entities.map((entity) => entity.name).join(", ") || "none"}`
+      )
+      .join("\n\n---\n\n");
+    const response = await provider.generateText({
+      system: buildSchemaPrompt(
+        schemas.effective.global,
+        "Write a concise markdown source review with sections: What This Source Contains, Likely Canonical Pages To Update, Important Topics And Entities, Contradictions To Inspect, Open Questions, Suggested Next Steps. Focus on helping a human decide what to keep, update, or question in the wiki."
+      ),
+      prompt: [
+        `Source scope: ${scope.title}`,
+        `Scope id: ${scope.id}`,
+        `Tracked source ids: ${scope.sourceIds.join(", ") || "none"}`,
+        "",
+        "Pages:",
+        pageContext || "- none",
+        "",
+        "Analyses:",
+        analysisContext || "No analysis context available.",
+        "",
+        "Deterministic fallback draft:",
+        fallback
+      ].join("\n")
+    });
+    return response.text?.trim() ? response.text.trim() : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function stageSourceReviewForScope(rootDir: string, scope: SourceReviewScope): Promise<SourceReviewResult> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const markdown = await generateSourceReviewMarkdown(rootDir, scope);
+  if (!markdown) {
+    throw new Error(`Could not generate a source review for ${scope.id}.`);
+  }
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const relatedPages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
+  const relatedPageIds = relatedPages.slice(0, 16).map((page) => page.id);
+  const relatedNodeIds = graph ? scopedNodeIds(graph, scope.sourceIds).slice(0, 24) : [];
+  const projectIds = uniqueStrings(relatedPages.flatMap((page) => page.projectIds));
+  const now = new Date().toISOString();
+  const output = buildOutputPage({
+    title: `Source Review: ${scope.title}`,
+    question: `Review ${scope.title}`,
+    answer: markdown,
+    citations: scope.sourceIds,
+    schemaHash: graph?.generatedAt ?? "",
+    outputFormat: "report",
+    relatedPageIds,
+    relatedNodeIds,
+    relatedSourceIds: scope.sourceIds,
+    projectIds,
+    extraTags: ["source-review"],
+    origin: "query",
+    slug: `source-reviews/${scope.id}`,
+    metadata: {
+      status: "draft",
+      createdAt: now,
+      updatedAt: now,
+      compiledFrom: scope.sourceIds,
+      managedBy: "system",
+      confidence: 0.79
+    }
+  });
+  const approval = await stageGeneratedOutputPages(rootDir, [{ page: output.page, content: output.content }]);
+  return {
+    sourceId: scope.id,
+    pageId: output.page.id,
+    reviewPath: path.join(approval.approvalDir, "wiki", output.page.path),
+    staged: true,
+    approvalId: approval.approvalId,
+    approvalDir: approval.approvalDir
+  };
+}
+
+function scopeFromManagedSource(source: ManagedSourceRecord): SourceReviewScope {
+  return {
+    id: source.id,
+    title: source.title,
+    sourceIds: source.sourceIds
+  };
+}
+
+export async function reviewSourceScope(rootDir: string, scope: SourceReviewScope): Promise<SourceReviewResult> {
+  return await stageSourceReviewForScope(rootDir, scope);
+}
+
+export async function reviewManagedSource(rootDir: string, id: string): Promise<SourceReviewResult> {
+  const managedSources = await loadManagedSources(rootDir);
+  const managedSource = managedSources.find((source) => source.id === id);
+  if (managedSource) {
+    if (!(await loadVaultConfig(rootDir).then(({ paths }) => fileExists(paths.graphPath)))) {
+      await compileVault(rootDir, {});
+    }
+    return await stageSourceReviewForScope(rootDir, scopeFromManagedSource(managedSource));
+  }
+
+  const manifest = (await listManifests(rootDir)).find((candidate) => candidate.sourceId === id);
+  if (!manifest) {
+    throw new Error(`Managed source or source id not found: ${id}`);
+  }
+  return await stageSourceReviewForScope(rootDir, {
+    id: manifest.sourceId,
+    title: manifest.title,
+    sourceIds: [manifest.sourceId]
+  });
+}
+
 function shouldCompile(changedSources: ManagedSourceRecord[], graphExists: boolean, compileRequested: boolean): boolean {
   return compileRequested && (!graphExists || changedSources.length > 0);
 }
@@ -748,20 +1008,21 @@ export async function addManagedSource(
 ): Promise<ManagedSourceAddResult> {
   const compileRequested = options.compile ?? true;
   const briefRequested = options.brief ?? true;
+  const reviewRequested = options.review ?? false;
   const sources = await loadManagedSources(rootDir);
   const resolved = await resolveManagedSourceInput(rootDir, input);
   const existing = sources.find((candidate) => matchesManagedSourceSpec(candidate, resolved));
   const now = new Date().toISOString();
   const source: ManagedSourceRecord = existing ?? {
     id:
-      resolved.kind === "directory"
-        ? stableManagedSourceId("directory", path.resolve(resolved.path), resolved.title)
+      resolved.kind === "directory" || resolved.kind === "file"
+        ? stableManagedSourceId(resolved.kind, path.resolve(resolved.path), resolved.title)
         : stableManagedSourceId(resolved.kind, resolved.url, resolved.title),
     kind: resolved.kind,
     title: resolved.title,
-    path: resolved.kind === "directory" ? resolved.path : undefined,
+    path: resolved.kind === "directory" || resolved.kind === "file" ? resolved.path : undefined,
     repoRoot: resolved.kind === "directory" ? resolved.repoRoot : undefined,
-    url: resolved.kind === "directory" ? undefined : resolved.url,
+    url: resolved.kind === "directory" || resolved.kind === "file" ? undefined : resolved.url,
     createdAt: now,
     updatedAt: now,
     status: "ready",
@@ -796,16 +1057,23 @@ export async function addManagedSource(
     : [...sources, nextSource];
   await saveManagedSources(rootDir, nextSources);
 
+  const review =
+    reviewRequested && nextSource.status === "ready"
+      ? await stageSourceReviewForScope(rootDir, scopeFromManagedSource(nextSource))
+      : undefined;
+
   return {
     source: nextSource,
     compile,
-    briefGenerated
+    briefGenerated,
+    review
   };
 }
 
 export async function reloadManagedSources(rootDir: string, options: ManagedSourceReloadOptions = {}): Promise<ManagedSourceReloadResult> {
   const compileRequested = options.compile ?? true;
   const briefRequested = options.brief ?? true;
+  const reviewRequested = options.review ?? false;
   const sources = await loadManagedSources(rootDir);
   const selected = options.all || !options.id ? sources : sources.filter((source) => source.id === options.id);
   if (!selected.length) {
@@ -847,11 +1115,20 @@ export async function reloadManagedSources(rootDir: string, options: ManagedSour
     };
   });
   await saveManagedSources(rootDir, nextSources);
+  const reviews = reviewRequested
+    ? await Promise.all(
+        nextSources
+          .filter((source) => selected.some((candidate) => candidate.id === source.id))
+          .filter((source) => source.status === "ready")
+          .map(async (source) => await stageSourceReviewForScope(rootDir, scopeFromManagedSource(source)))
+      )
+    : [];
 
   return {
     sources: nextSources.filter((source) => selected.some((candidate) => candidate.id === source.id)),
     compile,
-    briefPaths: [...briefPaths.values()]
+    briefPaths: [...briefPaths.values()],
+    reviews
   };
 }
 

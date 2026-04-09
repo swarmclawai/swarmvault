@@ -27,6 +27,7 @@ import {
   listCandidates,
   listGodNodes,
   listManagedSourceRecords,
+  listManifests,
   listSchedules,
   loadVaultConfig,
   pathGraphVault,
@@ -37,6 +38,8 @@ import {
   readApproval,
   rejectApproval,
   reloadManagedSources,
+  reviewManagedSource,
+  reviewSourceScope,
   runSchedule,
   runWatchCycle,
   serveSchedules,
@@ -60,9 +63,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.3.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.4.0";
   } catch {
-    return "0.3.0";
+    return "0.4.0";
   }
 }
 
@@ -133,6 +136,7 @@ program
   .command("ingest")
   .description("Ingest a local file path, directory path, or URL into the raw SwarmVault workspace.")
   .argument("<input>", "Local file path, directory path, or URL")
+  .option("--review", "Stage a source review artifact after ingest and compile", false)
   .option("--include-assets", "Download remote image assets when ingesting URLs", true)
   .option("--no-include-assets", "Skip downloading remote image assets when ingesting URLs")
   .option("--max-asset-size <bytes>", "Maximum number of bytes to fetch for a single remote image asset")
@@ -158,6 +162,7 @@ program
         includeResources?: boolean;
         includeGenerated?: boolean;
         gitignore?: boolean;
+        review?: boolean;
       }
     ) => {
       const maxAssetSize =
@@ -191,18 +196,64 @@ program
           )
         : null;
       if (directoryResult) {
+        const review =
+          options.review && (directoryResult.imported.length || directoryResult.updated.length)
+            ? await (async () => {
+                await compileVault(process.cwd(), {});
+                const pathModule = await import("node:path");
+                const absoluteInput = pathModule.resolve(process.cwd(), input);
+                const sourceIds = (await listManifests(process.cwd()))
+                  .filter((manifest) => {
+                    if (!manifest.originalPath) {
+                      return false;
+                    }
+                    const relative = pathModule.relative(absoluteInput, pathModule.resolve(manifest.originalPath));
+                    return relative === "" || (!relative.startsWith("..") && !pathModule.isAbsolute(relative));
+                  })
+                  .map((manifest) => manifest.sourceId);
+                return sourceIds.length
+                  ? await reviewSourceScope(process.cwd(), {
+                      id: `directory-${absoluteInput.split(pathModule.sep).pop() ?? "source"}`,
+                      title: absoluteInput.split(pathModule.sep).pop() ?? absoluteInput,
+                      sourceIds
+                    })
+                  : undefined;
+              })()
+            : undefined;
         if (isJson()) {
-          emitJson(directoryResult);
+          emitJson(review ? { ingest: directoryResult, review } : directoryResult);
         } else {
           log(
             `Imported ${directoryResult.imported.length} file(s), updated ${directoryResult.updated.length}, skipped ${directoryResult.skipped.length}.`
           );
+          if (review) {
+            log(`Staged source review at ${review.reviewPath}.`);
+          }
         }
         return;
       }
       const ingest = await ingestInputDetailed(process.cwd(), input, commonOptions);
+      const review =
+        options.review && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
+          ? await (async () => {
+              await compileVault(process.cwd(), {});
+              const scopeSourceIds = [...ingest.created, ...ingest.updated, ...ingest.unchanged].map((manifest) => manifest.sourceId);
+              return await reviewSourceScope(process.cwd(), {
+                id:
+                  ingest.created[0]?.sourceGroupId ??
+                  ingest.updated[0]?.sourceGroupId ??
+                  ingest.unchanged[0]?.sourceGroupId ??
+                  scopeSourceIds[0]!,
+                title:
+                  [...ingest.created, ...ingest.updated, ...ingest.unchanged][0]?.sourceGroupTitle ??
+                  [...ingest.created, ...ingest.updated, ...ingest.unchanged][0]?.title ??
+                  input,
+                sourceIds: scopeSourceIds
+              });
+            })()
+          : undefined;
       if (isJson()) {
-        emitJson(ingest);
+        emitJson(review ? { ingest, review } : ingest);
       } else {
         const primary = [...ingest.created, ...ingest.updated, ...ingest.unchanged][0];
         if (ingest.created.length + ingest.updated.length + ingest.removed.length <= 1 && primary) {
@@ -211,6 +262,9 @@ program
           log(
             `Created ${ingest.created.length}, updated ${ingest.updated.length}, unchanged ${ingest.unchanged.length}, removed ${ingest.removed.length}.`
           );
+        }
+        if (review) {
+          log(`Staged source review at ${review.reviewPath}.`);
         }
       }
     }
@@ -234,33 +288,38 @@ program
     }
   });
 
-const source = program.command("source").description("Manage recurring directory, public repo, and docs sources.");
+const source = program.command("source").description("Manage recurring local files, directories, public repos, and docs sources.");
 
 source
   .command("add")
-  .description("Register and sync a managed source from a directory, public GitHub repo root URL, or docs hub URL.")
-  .argument("<input>", "Directory path, public GitHub repo root URL, or docs hub URL")
+  .description("Register and sync a managed source from a local file, directory, public GitHub repo root URL, or docs hub URL.")
+  .argument("<input>", "Local file path, directory path, public GitHub repo root URL, or docs hub URL")
   .option("--no-compile", "Register and sync without compiling the vault")
   .option("--no-brief", "Skip source brief generation after sync")
+  .option("--review", "Stage a source review artifact after sync and compile", false)
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
-  .action(async (input: string, options: { compile?: boolean; brief?: boolean; maxPages?: string; maxDepth?: string }) => {
-    const result = await addManagedSource(process.cwd(), input, {
-      compile: options.compile,
-      brief: options.brief,
-      maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
-      maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
-    });
-    if (isJson()) {
-      emitJson(result);
-    } else {
-      log(
-        `Registered ${result.source.kind} source ${result.source.id}. Status: ${result.source.status}.` +
-          `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
-          `${result.briefGenerated ? ` Brief: ${result.source.briefPath}` : ""}`
-      );
+  .action(
+    async (input: string, options: { compile?: boolean; brief?: boolean; review?: boolean; maxPages?: string; maxDepth?: string }) => {
+      const result = await addManagedSource(process.cwd(), input, {
+        compile: options.compile,
+        brief: options.brief,
+        review: options.review,
+        maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
+        maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
+      });
+      if (isJson()) {
+        emitJson(result);
+      } else {
+        log(
+          `Registered ${result.source.kind} source ${result.source.id}. Status: ${result.source.status}.` +
+            `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
+            `${result.briefGenerated ? ` Brief: ${result.source.briefPath}` : ""}` +
+            `${result.review ? ` Review: ${result.review.reviewPath}` : ""}`
+        );
+      }
     }
-  });
+  );
 
 source
   .command("list")
@@ -322,6 +381,19 @@ source
       emitJson(result);
     } else {
       log(`Deleted managed source ${result.removed.id}. Canonical vault content was left in place.`);
+    }
+  });
+
+source
+  .command("review")
+  .description("Stage a source review artifact for a managed source id or raw source id.")
+  .argument("<id>", "Managed source id or raw source id")
+  .action(async (id: string) => {
+    const result = await reviewManagedSource(process.cwd(), id);
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(`Staged source review at ${result.reviewPath}.`);
     }
   });
 

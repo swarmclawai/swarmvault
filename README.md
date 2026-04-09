@@ -8,7 +8,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**A local-first knowledge compiler for AI agents.** Turn books, articles, notes, datasets, slide decks, screenshots, URLs, and code into a persistent knowledge vault. Instead of losing work inside chat history, you get a markdown wiki, a knowledge graph, local search, and reviewable artifacts that stay on disk.
+**A local-first knowledge compiler for AI agents.** Turn books, articles, notes, transcripts, mail exports, calendars, datasets, slide decks, screenshots, URLs, and code into a persistent knowledge vault. Instead of losing work inside chat history, you get a markdown wiki, a knowledge graph, local search, dashboards, and reviewable artifacts that stay on disk.
 
 Documentation on the website is currently English-first. If wording drifts between translations, [README.md](README.md) is the canonical source.
 
@@ -58,6 +58,7 @@ my-vault/
 swarmvault init --obsidian
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
+swarmvault ingest ./meeting.srt --review
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -117,18 +118,19 @@ For local semantic graph query without API keys, use an embedding-capable local 
 }
 ```
 
-## Point It At A Repo Or Docs Hub
+## Point It At Recurring Sources
 
 The fastest way to make SwarmVault useful is the managed-source flow:
 
 ```bash
+swarmvault source add ./exports/customer-call.srt --review
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source list
 swarmvault source reload --all
 ```
 
-`source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
+`source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. It now works for recurring local files as well as directories, public repos, and docs hubs. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
 
 <!-- readme-section:agent-setup -->
 ## Agent and MCP Setup
@@ -168,6 +170,10 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Datasets | `.csv .tsv` | Local tabular summary with bounded preview |
 | Spreadsheets | `.xlsx` | Local workbook and sheet preview extraction |
 | Slide decks | `.pptx` | Local slide and speaker-note extraction |
+| Transcripts | `.srt .vtt` | Local timestamped transcript extraction |
+| Chat exports | Slack export `.zip`, extracted Slack export directories | Local channel/day conversation extraction |
+| Email | `.eml .mbox` | Local message extraction and mailbox expansion |
+| Calendar | `.ics` | Local VEVENT expansion |
 | HTML | `.html`, URLs | Readability + Turndown to markdown |
 | Images | `.png .jpg .webp` | Vision provider (when configured) |
 | Research | arXiv, DOI, articles, X/Twitter | Normalized markdown via `swarmvault add` |
@@ -193,6 +199,10 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 
+**Guided source review** - `ingest --review`, `source add --review`, and `source review <id>` generate source-scoped review pages under `wiki/outputs/source-reviews/` and stage approval bundles before the canonical wiki changes.
+
+**Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a timeline, contradictions, and open questions. The pages work as plain markdown and get better when opened in Obsidian with Dataview.
+
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
 **9 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, and GitHub Copilot CLI. Optional graph-first hooks bias agents toward the wiki before broad search.
@@ -201,7 +211,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Automation** - watch mode, git hooks, recurring schedules, and inbox import keep the vault current without manual intervention.
 
-**Managed sources** - `swarmvault source add|list|reload|delete` turns recurring directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json` and source briefs under `wiki/outputs/source-briefs/`.
+**Managed sources** - `swarmvault source add|list|reload|delete` turns recurring files, directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json`, source briefs under `wiki/outputs/source-briefs/`, and optional source reviews under `wiki/outputs/source-reviews/`.
 
 **External graph sinks** - export to HTML, SVG, GraphML, and Cypher, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
 

@@ -948,6 +948,297 @@ async function buildManagedContent(
   return content;
 }
 
+function manifestDetailValue(manifest: SourceManifest, key: string): string | undefined {
+  const value = manifest.details?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function loadAnalysesBySourceIds(
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  sourceIds: string[]
+): Promise<SourceAnalysis[]> {
+  const analyses = await Promise.all(
+    sourceIds.map(async (sourceId) => await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${sourceId}.json`)))
+  );
+  return analyses.filter((analysis): analysis is SourceAnalysis => Boolean(analysis?.sourceId));
+}
+
+async function buildDashboardRecords(
+  paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
+  graph: GraphArtifact,
+  schemaHash: string,
+  report: GraphReportArtifact | null
+): Promise<ManagedPageRecord[]> {
+  const sourcePages = graph.pages.filter((page) => page.kind === "source");
+  const reviewPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-reviews/"));
+  const briefPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-briefs/"));
+  const manifests = graph.sources;
+  const manifestBySourceId = new Map(manifests.map((manifest) => [manifest.sourceId, manifest] as const));
+  const timelineManifests = manifests
+    .filter((manifest) => manifestDetailValue(manifest, "occurred_at"))
+    .sort((left, right) => (manifestDetailValue(right, "occurred_at") ?? "").localeCompare(manifestDetailValue(left, "occurred_at") ?? ""))
+    .slice(0, 25);
+  const recentSourcePages = [...sourcePages].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, 20);
+  const analyses = await loadAnalysesBySourceIds(paths, uniqueStrings(sourcePages.flatMap((page) => page.sourceIds)));
+  const openQuestions = uniqueStrings(
+    analyses.flatMap((analysis) => analysis.questions.map((question) => `${analysis.title}: ${question}`))
+  ).slice(0, 20);
+
+  const dashboards: Array<{ relativePath: string; title: string; content: (metadata: ManagedPageMetadata) => string }> = [
+    {
+      relativePath: "dashboards/index.md",
+      title: "Dashboards",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Dashboards",
+            "",
+            "- [[dashboards/recent-sources|Recent Sources]]",
+            "- [[dashboards/timeline|Timeline]]",
+            "- [[dashboards/contradictions|Contradictions]]",
+            "- [[dashboards/open-questions|Open Questions]]",
+            "",
+            "```dataview",
+            "TABLE file.mtime AS updated",
+            'FROM "dashboards"',
+            'WHERE file.name != "index"',
+            "SORT file.mtime desc",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:index",
+            kind: "index",
+            title: "Dashboards",
+            tags: ["index", "dashboards"],
+            source_ids: [],
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: metadata.compiledFrom,
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
+      relativePath: "dashboards/recent-sources.md",
+      title: "Recent Sources",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Recent Sources",
+            "",
+            ...(recentSourcePages.length
+              ? recentSourcePages.map((page) => `- ${page.updatedAt}: [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
+              : ["- No source pages yet."]),
+            "",
+            "```dataview",
+            "TABLE source_type, occurred_at, participants",
+            'FROM "sources"',
+            "SORT updated_at desc",
+            "LIMIT 25",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:recent-sources",
+            kind: "index",
+            title: "Recent Sources",
+            tags: ["index", "dashboard", "recent-sources"],
+            source_ids: recentSourcePages.flatMap((page) => page.sourceIds),
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: recentSourcePages.flatMap((page) => page.sourceIds),
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
+      relativePath: "dashboards/timeline.md",
+      title: "Timeline",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Timeline",
+            "",
+            ...(timelineManifests.length
+              ? timelineManifests.map((manifest) => {
+                  const occurredAt = manifestDetailValue(manifest, "occurred_at") ?? manifest.updatedAt;
+                  const sourcePage = sourcePages.find((page) => page.sourceIds.includes(manifest.sourceId));
+                  return `- ${occurredAt}: ${sourcePage ? `[[${sourcePage.path.replace(/\.md$/, "")}|${sourcePage.title}]]` : manifest.title}`;
+                })
+              : ["- No timeline-aware sources yet."]),
+            "",
+            "```dataview",
+            "TABLE occurred_at, participants, container_title",
+            'FROM "sources"',
+            "WHERE occurred_at",
+            "SORT occurred_at desc",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:timeline",
+            kind: "index",
+            title: "Timeline",
+            tags: ["index", "dashboard", "timeline"],
+            source_ids: timelineManifests.map((manifest) => manifest.sourceId),
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: timelineManifests.map((manifest) => manifest.sourceId),
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
+      relativePath: "dashboards/contradictions.md",
+      title: "Contradictions",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Contradictions",
+            "",
+            ...(report?.contradictions.length
+              ? report.contradictions.map((contradiction) => {
+                  const left = manifestBySourceId.get(contradiction.sourceIdA)?.title ?? contradiction.sourceIdA;
+                  const right = manifestBySourceId.get(contradiction.sourceIdB)?.title ?? contradiction.sourceIdB;
+                  return `- ${left} / ${right}: ${contradiction.claimA} <> ${contradiction.claimB}`;
+                })
+              : ["- No contradictions are currently flagged."]),
+            "",
+            ...(reviewPages.length || briefPages.length
+              ? [
+                  "## Related Reviews",
+                  "",
+                  ...[...reviewPages, ...briefPages].slice(0, 12).map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`),
+                  ""
+                ]
+              : []),
+            "```dataview",
+            'LIST FROM "outputs/source-reviews"',
+            "SORT file.mtime desc",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:contradictions",
+            kind: "index",
+            title: "Contradictions",
+            tags: ["index", "dashboard", "contradictions"],
+            source_ids: report?.contradictions.flatMap((item) => [item.sourceIdA, item.sourceIdB]) ?? [],
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: report?.contradictions.flatMap((item) => [item.sourceIdA, item.sourceIdB]) ?? [],
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
+      relativePath: "dashboards/open-questions.md",
+      title: "Open Questions",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Open Questions",
+            "",
+            ...(openQuestions.length ? openQuestions.map((question) => `- ${question}`) : ["- No open questions are currently extracted."]),
+            "",
+            "```dataview",
+            'LIST FROM "outputs/source-briefs" OR "outputs/source-reviews"',
+            "SORT file.mtime desc",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:open-questions",
+            kind: "index",
+            title: "Open Questions",
+            tags: ["index", "dashboard", "open-questions"],
+            source_ids: analyses.map((analysis) => analysis.sourceId),
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: analyses.map((analysis) => analysis.sourceId),
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    }
+  ];
+
+  const records: ManagedPageRecord[] = [];
+  for (const dashboard of dashboards) {
+    const absolutePath = path.join(paths.wikiDir, dashboard.relativePath);
+    const compiledFrom =
+      dashboard.relativePath === "dashboards/recent-sources.md" ? recentSourcePages.flatMap((page) => page.sourceIds) : [];
+    const content = await buildManagedContent(
+      absolutePath,
+      {
+        managedBy: "system",
+        compiledFrom
+      },
+      dashboard.content
+    );
+    records.push({
+      page: emptyGraphPage({
+        id: `dashboard:${dashboard.relativePath.replace(/\.md$/, "")}`,
+        path: dashboard.relativePath,
+        title: dashboard.title,
+        kind: "index",
+        sourceIds: compiledFrom,
+        nodeIds: [],
+        schemaHash,
+        sourceHashes: {},
+        confidence: 1
+      }),
+      content
+    });
+  }
+  return records;
+}
+
 function indexCompiledFrom(pages: GraphPage[]): string[] {
   return uniqueStrings(pages.flatMap((page) => page.sourceIds));
 }
@@ -2226,8 +2517,19 @@ async function syncVaultArtifacts(
     input.previousState?.generatedAt,
     contradictions
   );
-  records.push(...graphOrientation.records);
-  const allPages = [...basePages, ...graphOrientation.records.map((record) => record.page)];
+  const preliminaryPages = [...basePages, ...graphOrientation.records.map((record) => record.page)];
+  const dashboardRecords = await buildDashboardRecords(
+    paths,
+    {
+      ...baseGraph,
+      sources: input.manifests,
+      pages: preliminaryPages
+    },
+    globalSchemaHash,
+    graphOrientation.report
+  );
+  records.push(...graphOrientation.records, ...dashboardRecords);
+  const allPages = uniqueBy([...preliminaryPages, ...dashboardRecords.map((record) => record.page)], (page) => page.id);
   const graph: GraphArtifact = {
     ...baseGraph,
     pages: allPages
@@ -2336,6 +2638,11 @@ async function syncVaultArtifacts(
     ["concepts/index.md", "concepts", activeConceptPages],
     ["entities/index.md", "entities", activeEntityPages],
     ["outputs/index.md", "outputs", allPages.filter((page) => page.kind === "output")],
+    [
+      "dashboards/index.md",
+      "dashboards",
+      allPages.filter((page) => page.kind === "index" && page.path.startsWith("dashboards/") && page.path !== "dashboards/index.md")
+    ],
     ["candidates/index.md", "candidates", candidatePages],
     ["graph/index.md", "graph", allPages.filter((page) => page.kind === "graph_report" || page.kind === "community_summary")]
   ] as const) {
@@ -2453,19 +2760,45 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
   const compileState = await readJsonFile<CompileState>(paths.compileStatePath);
   const globalSchemaHash = schemas.effective.global.hash;
   const currentGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
-  const basePages = pages.filter((page) => page.kind !== "graph_report" && page.kind !== "community_summary");
+  const orientationPages = uniqueBy(
+    pages.filter((page) => page.kind !== "graph_report" && page.kind !== "community_summary"),
+    (page) => page.id
+  );
+  const basePages = uniqueBy(
+    pages.filter(
+      (page) =>
+        page.kind !== "graph_report" && page.kind !== "community_summary" && !(page.kind === "index" && page.path.startsWith("dashboards/"))
+    ),
+    (page) => page.id
+  );
   const graphOrientation: { records: ManagedPageRecord[]; report: GraphReportArtifact | null } = currentGraph
     ? await buildGraphOrientationPages(
         {
           ...currentGraph,
-          pages: basePages
+          pages: orientationPages
         },
         paths,
         globalSchemaHash,
         compileState?.generatedAt
       )
     : { records: [], report: null };
-  const pagesWithGraph = sortGraphPages([...basePages, ...graphOrientation.records.map((record) => record.page)]);
+  const dashboardRecords = currentGraph
+    ? await buildDashboardRecords(
+        paths,
+        {
+          ...currentGraph,
+          pages: [...basePages, ...graphOrientation.records.map((record) => record.page)]
+        },
+        globalSchemaHash,
+        graphOrientation.report
+      )
+    : [];
+  const pagesWithGraph = sortGraphPages(
+    uniqueBy(
+      [...basePages, ...graphOrientation.records.map((record) => record.page), ...dashboardRecords.map((record) => record.page)],
+      (page) => page.id
+    )
+  );
   if (currentGraph) {
     await writeJsonFile(paths.graphPath, {
       ...currentGraph,
@@ -2493,6 +2826,7 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
     ensureDir(path.join(paths.wikiDir, "concepts")),
     ensureDir(path.join(paths.wikiDir, "entities")),
     ensureDir(path.join(paths.wikiDir, "outputs")),
+    ensureDir(path.join(paths.wikiDir, "dashboards")),
     ensureDir(path.join(paths.wikiDir, "graph")),
     ensureDir(path.join(paths.wikiDir, "graph", "communities")),
     ensureDir(path.join(paths.wikiDir, "projects")),
@@ -2559,6 +2893,11 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
     ["concepts/index.md", "concepts", pagesWithGraph.filter((page) => page.kind === "concept" && page.status !== "candidate")],
     ["entities/index.md", "entities", pagesWithGraph.filter((page) => page.kind === "entity" && page.status !== "candidate")],
     ["outputs/index.md", "outputs", pagesWithGraph.filter((page) => page.kind === "output")],
+    [
+      "dashboards/index.md",
+      "dashboards",
+      pagesWithGraph.filter((page) => page.kind === "index" && page.path.startsWith("dashboards/") && page.path !== "dashboards/index.md")
+    ],
     ["candidates/index.md", "candidates", pagesWithGraph.filter((page) => page.status === "candidate")],
     ["graph/index.md", "graph", pagesWithGraph.filter((page) => page.kind === "graph_report" || page.kind === "community_summary")]
   ] as const) {
@@ -2577,6 +2916,9 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
   }
 
   for (const record of graphOrientation.records) {
+    await writeFileIfChanged(path.join(paths.wikiDir, record.page.path), record.content);
+  }
+  for (const record of dashboardRecords) {
     await writeFileIfChanged(path.join(paths.wikiDir, record.page.path), record.content);
   }
   if (graphOrientation.report) {
@@ -2603,6 +2945,16 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
   await Promise.all(
     existingGraphPages
       .filter((relativePath) => !allowedGraphPages.has(relativePath))
+      .map((relativePath) => fs.rm(path.join(paths.wikiDir, relativePath), { force: true }))
+  );
+
+  const existingDashboardPages = (await listFilesRecursive(path.join(paths.wikiDir, "dashboards")).catch(() => []))
+    .filter((absolutePath) => absolutePath.endsWith(".md"))
+    .map((absolutePath) => toPosix(path.relative(paths.wikiDir, absolutePath)));
+  const allowedDashboardPages = new Set(["dashboards/index.md", ...dashboardRecords.map((record) => record.page.path)]);
+  await Promise.all(
+    existingDashboardPages
+      .filter((relativePath) => !allowedDashboardPages.has(relativePath))
       .map((relativePath) => fs.rm(path.join(paths.wikiDir, relativePath), { force: true }))
   );
 
@@ -2772,6 +3124,13 @@ async function stageOutputApprovalBundle(
   });
 
   return { approvalId, approvalDir };
+}
+
+export async function stageGeneratedOutputPages(
+  rootDir: string,
+  stagedPages: Array<{ page: GraphPage; content: string; assetFiles?: GeneratedOutputArtifacts["assetFiles"] }>
+): Promise<{ approvalId: string; approvalDir: string }> {
+  return await stageOutputApprovalBundle(rootDir, stagedPages);
 }
 
 async function executeQuery(rootDir: string, question: string, format: OutputFormat): Promise<QueryExecutionResult> {
@@ -4265,7 +4624,17 @@ export async function benchmarkVault(rootDir: string, options: BenchmarkOptions 
 
   await writeJsonFile(paths.benchmarkPath, artifact);
   await refreshIndexesAndSearch(rootDir, graph.pages);
-  return artifact;
+  const refreshedGraph = (await readJsonFile<GraphArtifact>(paths.graphPath)) ?? graph;
+  const refreshedHash = graphHash(refreshedGraph);
+  if (artifact.graphHash === refreshedHash) {
+    return artifact;
+  }
+  const refreshedArtifact = {
+    ...artifact,
+    graphHash: refreshedHash
+  } satisfies BenchmarkArtifact;
+  await writeJsonFile(paths.benchmarkPath, refreshedArtifact);
+  return refreshedArtifact;
 }
 
 export async function pathGraphVault(rootDir: string, from: string, to: string): Promise<GraphPathResult> {

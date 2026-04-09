@@ -27,6 +27,23 @@ Check whether the vault is still using the built-in `heuristic` provider. That i
 
 For local semantic graph query, `embeddingProvider` must point at an embedding-capable backend such as `ollama` or another OpenAI-compatible embeddings service. The built-in `heuristic` provider does not generate embeddings.
 
+## Source reviews or dashboards did not appear
+
+If you expected a source-scoped review page, use one of these flows:
+
+```bash
+swarmvault ingest <input> --review
+swarmvault source add <input> --review
+swarmvault source review <source-id>
+```
+
+Then verify:
+
+- `wiki/outputs/source-reviews/`
+- `wiki/dashboards/index.md`
+- `wiki/dashboards/timeline.md`
+- `state/approvals/`
+
 ## `wiki/graph/report.md` or search artifacts are missing
 
 Run:

@@ -8,7 +8,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**面向 AI 代理的本地优先知识编译器。** 把原始文件、URL 和代码编译成持久化知识库。你不再把工作丢在聊天记录里，而是得到可以长期保存在磁盘上的 Markdown wiki、知识图谱、本地搜索和可审查的工件。
+**面向 AI 代理的本地优先知识编译器。** 把原始文件、URL、代码、转录稿、邮件导出、日历、数据集和文档编译成持久化知识库。你不再把工作丢在聊天记录里，而是得到可以长期保存在磁盘上的 Markdown wiki、知识图谱、本地搜索、仪表盘和可审查的工件。
 
 网站文档目前仍以英文为主。如果不同语言版本之间的表述出现偏差，请以 [README.md](README.md) 为准。
 
@@ -58,6 +58,7 @@ my-vault/
 swarmvault init --obsidian
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
+swarmvault ingest ./meeting.srt --review
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -117,18 +118,19 @@ swarmvault graph push neo4j --dry-run
 }
 ```
 
-## 直接指向仓库或文档中心
+## 直接指向可重复使用的来源
 
 最容易感受到 SwarmVault 价值的方式，是使用 managed-source 工作流：
 
 ```bash
+swarmvault source add ./exports/customer-call.srt --review
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source list
 swarmvault source reload --all
 ```
 
-`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
+`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。它现在同样适用于可重复同步的本地文件，而不仅是目录、公开仓库或文档站点。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
 
 <!-- readme-section:agent-setup -->
 ## Agent 与 MCP 设置
@@ -168,6 +170,10 @@ clawhub install swarmvault
 | 数据集 | `.csv .tsv` | 本地表格摘要与有限预览 |
 | 电子表格 | `.xlsx` | 本地工作簿与工作表预览提取 |
 | 幻灯片 | `.pptx` | 本地提取幻灯片文本与备注 |
+| 转录稿 | `.srt .vtt` | 本地提取带时间戳的转录文本 |
+| 聊天导出 | Slack 导出 `.zip`、解压后的 Slack 导出目录 | 本地提取按频道/日期分组的对话 |
+| 邮件 | `.eml .mbox` | 本地提取单封邮件并展开邮箱文件 |
+| 日历 | `.ics` | 本地展开 `VEVENT` 事件 |
 | HTML | `.html`、URL | Readability + Turndown 转 Markdown |
 | Images | `.png .jpg .webp` | Vision provider（已配置时） |
 | Research | arXiv、DOI、文章、X/Twitter | 通过 `swarmvault add` 标准化为 Markdown |
@@ -189,6 +195,10 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
+**引导式来源审查** - `ingest --review`、`source add --review` 和 `source review <id>` 会在 `wiki/outputs/source-reviews/` 下生成来源级审查页，并在真正更新规范 wiki 之前先进入 approval bundle。
+
+**知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、timeline、contradictions 和 open questions 页面。即使只是普通 Markdown 也可直接使用，在 Obsidian + Dataview 中会更强。
+
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
 **9 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider 和 GitHub Copilot CLI。可选 graph-first hooks 会先引导代理读取 wiki，再进行大范围搜索。
@@ -197,7 +207,7 @@ clawhub install swarmvault
 
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 
-**托管来源** - `swarmvault source add|list|reload|delete` 可以把重复使用的目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`。
+**托管来源** - `swarmvault source add|list|reload|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，可选的来源审查页写入 `wiki/outputs/source-reviews/`。
 
 **外部图谱输出** - 可导出为 HTML、SVG、GraphML、Cypher，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
 
