@@ -13,6 +13,7 @@ swarmvault --version
 ```bash
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add ./exports/customer-call.srt --guide
+swarmvault source session <source-id-or-session-id>
 swarmvault source list
 swarmvault source reload --all
 swarmvault source review <source-id>

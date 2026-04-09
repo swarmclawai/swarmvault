@@ -46,8 +46,9 @@ export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
 export type ApprovalChangeType = "create" | "update" | "delete" | "promote";
-export type ApprovalBundleType = "compile" | "generated_output" | "source_review" | "guided_source";
+export type ApprovalBundleType = "compile" | "generated_output" | "source_review" | "guided_source" | "guided_session";
 export type ApprovalEntryLabel = "source-brief" | "source-review" | "source-guide" | "guided-update";
+export type GuidedSourceSessionStatus = "awaiting_input" | "ready_to_stage" | "staged" | "accepted" | "rejected";
 export type SourceKind =
   | "markdown"
   | "text"
@@ -260,6 +261,7 @@ export interface ResolvedPaths {
   benchmarkPath: string;
   jobsLogPath: string;
   sessionsDir: string;
+  sourceSessionsDir: string;
   approvalsDir: string;
   watchDir: string;
   watchStatusPath: string;
@@ -685,6 +687,7 @@ export interface ApprovalManifest {
   createdAt: string;
   bundleType?: ApprovalBundleType;
   title?: string;
+  sourceSessionId?: string;
   entries: ApprovalEntry[];
 }
 
@@ -693,6 +696,7 @@ export interface ApprovalSummary {
   createdAt: string;
   bundleType?: ApprovalBundleType;
   title?: string;
+  sourceSessionId?: string;
   entryCount: number;
   pendingCount: number;
   acceptedCount: number;
@@ -887,6 +891,7 @@ export interface ManagedSourceAddOptions {
   brief?: boolean;
   review?: boolean;
   guide?: boolean;
+  guideAnswers?: GuidedSourceSessionAnswers;
   maxPages?: number;
   maxDepth?: number;
 }
@@ -916,6 +921,34 @@ export interface ManagedSourceDeleteResult {
   removed: ManagedSourceRecord;
 }
 
+export interface GuidedSourceSessionQuestion {
+  id: string;
+  prompt: string;
+  answer?: string;
+}
+
+export type GuidedSourceSessionAnswers = Record<string, string> | string[];
+
+export interface GuidedSourceSessionRecord {
+  sessionId: string;
+  scopeId: string;
+  scopeTitle: string;
+  sourceIds: string[];
+  kind?: string;
+  status: GuidedSourceSessionStatus;
+  createdAt: string;
+  updatedAt: string;
+  questions: GuidedSourceSessionQuestion[];
+  briefPath?: string;
+  reviewPath?: string;
+  guidePath?: string;
+  sessionPath?: string;
+  approvalId?: string;
+  approvalDir?: string;
+  targetedPagePaths: string[];
+  stagedUpdatePaths: string[];
+}
+
 export interface SourceReviewResult {
   sourceId: string;
   pageId: string;
@@ -927,10 +960,18 @@ export interface SourceReviewResult {
 
 export interface SourceGuideResult {
   sourceId: string;
-  pageId: string;
-  guidePath: string;
-  reviewPageId: string;
-  reviewPath: string;
+  pageId?: string;
+  guidePath?: string;
+  reviewPageId?: string;
+  reviewPath?: string;
+  sessionId: string;
+  sessionPath: string;
+  sessionStatePath: string;
+  status: GuidedSourceSessionStatus;
+  questions: GuidedSourceSessionQuestion[];
+  awaitingInput?: boolean;
+  targetedPagePaths: string[];
+  stagedUpdatePaths: string[];
   briefPath?: string;
   staged: boolean;
   approvalId?: string;

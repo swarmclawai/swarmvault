@@ -60,9 +60,9 @@ Prompt:
 
 Expected shape:
 
-- uses `swarmvault ingest --guide`, `swarmvault source add --guide`, or `swarmvault source guide`
-- points at `wiki/outputs/source-guides/`
-- points at `wiki/dashboards/source-guides.md`, `wiki/dashboards/timeline.md`, or `wiki/dashboards/reading-log.md`
+- uses `swarmvault ingest --guide`, `swarmvault source add --guide`, or `swarmvault source session`
+- points at `wiki/outputs/source-sessions/` and `wiki/outputs/source-guides/`
+- points at `wiki/dashboards/source-sessions.md`, `wiki/dashboards/source-guides.md`, `wiki/dashboards/timeline.md`, or `wiki/dashboards/reading-log.md`
 - treats the approval queue as part of the workflow instead of silently overwriting canonical pages
 
 ## Graph prompt

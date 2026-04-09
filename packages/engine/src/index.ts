@@ -26,6 +26,7 @@ export {
   guideSourceScope,
   listManagedSourceRecords,
   reloadManagedSources,
+  resumeSourceSession,
   reviewManagedSource,
   reviewSourceScope
 } from "./sources.js";

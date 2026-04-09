@@ -1,15 +1,26 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import matter from "gray-matter";
 import { JSDOM } from "jsdom";
 import { loadVaultConfig } from "./config.js";
 import { ingestDirectory, ingestInputDetailed, listManifests, removeManifestBySourceId, validateUrlSafety } from "./ingest.js";
 import { buildOutputPage } from "./markdown.js";
+import { parseStoredPage } from "./pages.js";
 import { getProviderForTask } from "./providers/registry.js";
 import { buildSchemaPrompt, loadVaultSchemas } from "./schema.js";
 import { ensureManagedSourcesArtifact, loadManagedSources, managedSourceWorkingDir, saveManagedSources } from "./source-registry.js";
+import {
+  findLatestGuidedSourceSessionByScope,
+  guidedSourceSessionStatePath,
+  readGuidedSourceSession,
+  writeGuidedSourceSession
+} from "./source-sessions.js";
 import type {
   GraphArtifact,
+  GuidedSourceSessionAnswers,
+  GuidedSourceSessionQuestion,
+  GuidedSourceSessionRecord,
   ManagedSourceAddOptions,
   ManagedSourceAddResult,
   ManagedSourceDeleteResult,
@@ -793,6 +804,70 @@ type SourceScope = {
   briefPath?: string;
 };
 
+const GUIDED_SESSION_QUESTIONS: Array<{ id: string; prompt: string }> = [
+  {
+    id: "importance",
+    prompt: "What matters most from this source for your wiki right now?"
+  },
+  {
+    id: "exclude",
+    prompt: "What should stay provisional, be ignored, or be kept out for now?"
+  },
+  {
+    id: "targets",
+    prompt: "Which canonical pages or topics should this source update?"
+  },
+  {
+    id: "conflicts",
+    prompt: "What feels new, reinforcing, or conflicting compared with what you already believe?"
+  },
+  {
+    id: "followups",
+    prompt: "What follow-up questions or next sources should stay open?"
+  }
+];
+
+function defaultGuidedSessionQuestions(): GuidedSourceSessionQuestion[] {
+  return GUIDED_SESSION_QUESTIONS.map((question) => ({ ...question }));
+}
+
+function normalizeGuidedAnswerValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeGuidedAnswers(input: GuidedSourceSessionAnswers | undefined): Record<string, string> {
+  if (!input) {
+    return {};
+  }
+  if (Array.isArray(input)) {
+    return Object.fromEntries(
+      GUIDED_SESSION_QUESTIONS.map((question, index) => [question.id, normalizeGuidedAnswerValue(input[index])]).filter(
+        (entry): entry is [string, string] => Boolean(entry[1])
+      )
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(input)
+      .map(([key, value]) => [key, normalizeGuidedAnswerValue(value)] as const)
+      .filter((entry): entry is [string, string] => Boolean(entry[1]))
+  );
+}
+
+function mergeGuidedSessionQuestions(
+  questions: GuidedSourceSessionQuestion[],
+  answers: GuidedSourceSessionAnswers | undefined
+): GuidedSourceSessionQuestion[] {
+  const normalizedAnswers = normalizeGuidedAnswers(answers);
+  return questions.map((question) => ({
+    ...question,
+    answer: normalizedAnswers[question.id] ?? question.answer
+  }));
+}
+
+function answeredGuidedSessionQuestions(questions: GuidedSourceSessionQuestion[]): GuidedSourceSessionQuestion[] {
+  return questions.filter((question) => typeof question.answer === "string" && question.answer.trim().length > 0);
+}
+
 function renderDeterministicSourceReview(input: {
   scope: SourceScope;
   sourcePages: GraphArtifact["pages"];
@@ -969,6 +1044,84 @@ function classifySourceGuidePageBuckets(sourcePages: GraphArtifact["pages"], sco
   const newPages = canonicalPages.filter((page) => page.sourceIds.every((sourceId) => scopeSet.has(sourceId))).slice(0, 6);
   const reinforcingPages = canonicalPages.filter((page) => page.sourceIds.some((sourceId) => !scopeSet.has(sourceId))).slice(0, 6);
   return { canonicalPages, newPages, reinforcingPages };
+}
+
+function findContradictionsForScope(scope: SourceScope, report: Awaited<ReturnType<typeof readGraphReport>>) {
+  return (
+    report?.contradictions.filter(
+      (contradiction) => scope.sourceIds.includes(contradiction.sourceIdA) || scope.sourceIds.includes(contradiction.sourceIdB)
+    ) ?? []
+  );
+}
+
+function selectGuidedTargetPages(
+  scope: SourceScope,
+  sourcePages: GraphArtifact["pages"],
+  questions: GuidedSourceSessionQuestion[]
+): GraphArtifact["pages"] {
+  const { canonicalPages } = classifySourceGuidePageBuckets(sourcePages, scope.sourceIds);
+  if (!canonicalPages.length) {
+    return [];
+  }
+  const desiredTargets = normalizeWhitespace(
+    questions.find((question) => question.id === "targets")?.answer ??
+      questions.find((question) => question.id === "importance")?.answer ??
+      ""
+  ).toLowerCase();
+  const matchedTargets = desiredTargets
+    ? canonicalPages.filter((page) => {
+        const title = page.title.toLowerCase();
+        const relative = page.path.replace(/\.md$/, "").toLowerCase();
+        return desiredTargets.includes(title) || desiredTargets.includes(relative) || title.includes(desiredTargets);
+      })
+    : [];
+  return (matchedTargets.length ? matchedTargets : canonicalPages).slice(0, 6);
+}
+
+function insightRelativePathForTarget(page: GraphArtifact["pages"][number], scope: SourceScope): string {
+  const basename = path.basename(page.path);
+  if (page.kind === "concept") {
+    return `insights/concepts/${basename}`;
+  }
+  if (page.kind === "entity") {
+    return `insights/entities/${basename}`;
+  }
+  if (page.kind === "source") {
+    return `insights/sources/${slugify(page.title || scope.title)}.md`;
+  }
+  return `insights/topics/${slugify(page.title || scope.title)}.md`;
+}
+
+function insightTitleForTarget(page: GraphArtifact["pages"][number], scope: SourceScope): string {
+  if (page.kind === "concept" || page.kind === "entity") {
+    return page.title;
+  }
+  if (page.kind === "source") {
+    return `Source Notes: ${page.title}`;
+  }
+  return `${scope.title} Notes`;
+}
+
+function insightTagsForTarget(page: GraphArtifact["pages"][number] | null): string[] {
+  return uniqueStrings(["insight", "guided-session", `guided/${page?.kind ?? "topic"}`]);
+}
+
+function guidedUpdateMarker(scopeId: string) {
+  return {
+    start: `<!-- swarmvault-guided-source:${scopeId}:start -->`,
+    end: `<!-- swarmvault-guided-source:${scopeId}:end -->`
+  };
+}
+
+function replaceMarkedSection(content: string, scopeId: string, replacement: string): string {
+  const marker = guidedUpdateMarker(scopeId);
+  const block = `${marker.start}\n${replacement.trim()}\n${marker.end}`;
+  const startIndex = content.indexOf(marker.start);
+  const endIndex = content.indexOf(marker.end);
+  if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+    return `${content.slice(0, startIndex).trimEnd()}\n\n${block}\n`;
+  }
+  return `${content.trimEnd()}\n\n${block}\n`;
 }
 
 function renderDeterministicSourceGuide(input: {
@@ -1182,34 +1335,404 @@ async function stageSourceReviewForScope(rootDir: string, scope: SourceScope): P
   };
 }
 
-async function stageSourceGuideForScope(rootDir: string, scope: SourceScope): Promise<SourceGuideResult> {
-  const briefPath = scope.briefPath ?? (await writeSourceBriefForScope(rootDir, scope)) ?? undefined;
+function nextGuidedSourceSessionId(scope: SourceScope): string {
+  return `source-session-${slugify(scope.id)}-${sha256(`${scope.id}:${new Date().toISOString()}`).slice(0, 8)}`;
+}
+
+function shouldReuseGuidedSourceSession(
+  session: GuidedSourceSessionRecord | null
+): session is GuidedSourceSessionRecord & { status: "awaiting_input" } {
+  return Boolean(session && session.status === "awaiting_input");
+}
+
+function questionAnswer(questions: GuidedSourceSessionQuestion[], id: string, fallback: string): string {
+  return normalizeGuidedAnswerValue(questions.find((question) => question.id === id)?.answer) ?? fallback;
+}
+
+async function prepareGuidedSourceSession(
+  rootDir: string,
+  scope: SourceScope,
+  answers?: GuidedSourceSessionAnswers
+): Promise<{ session: GuidedSourceSessionRecord; statePath: string }> {
+  const existing = await findLatestGuidedSourceSessionByScope(rootDir, scope.id);
+  const now = new Date().toISOString();
+  const session: GuidedSourceSessionRecord = shouldReuseGuidedSourceSession(existing)
+    ? {
+        ...existing,
+        scopeTitle: scope.title,
+        sourceIds: scope.sourceIds,
+        kind: scope.kind,
+        questions: mergeGuidedSessionQuestions(existing.questions, answers),
+        updatedAt: now
+      }
+    : {
+        sessionId: nextGuidedSourceSessionId(scope),
+        scopeId: scope.id,
+        scopeTitle: scope.title,
+        sourceIds: scope.sourceIds,
+        kind: scope.kind,
+        status: "awaiting_input",
+        createdAt: now,
+        updatedAt: now,
+        questions: mergeGuidedSessionQuestions(defaultGuidedSessionQuestions(), answers),
+        briefPath: scope.briefPath,
+        targetedPagePaths: [],
+        stagedUpdatePaths: []
+      };
+  const statePath = await guidedSourceSessionStatePath(rootDir, session.sessionId);
+  return { session, statePath };
+}
+
+async function buildSourceSessionSavedPage(
+  rootDir: string,
+  scope: SourceScope,
+  session: GuidedSourceSessionRecord
+): Promise<{ page: GraphArtifact["pages"][number]; content: string }> {
+  const { paths } = await loadVaultConfig(rootDir);
+  let graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  if (!graph) {
+    await compileVault(rootDir, {});
+    graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  }
+  const sourcePages = graph ? scopedSourcePages(graph, scope.sourceIds) : [];
+  const analyses = await loadSourceAnalyses(rootDir, scope.sourceIds);
+  const report = await readGraphReport(rootDir);
+  const contradictions = findContradictionsForScope(scope, report);
+  const relatedPageIds = uniqueStrings([
+    ...sourcePages.slice(0, 18).map((page) => page.id),
+    ...session.targetedPagePaths.map((relativePath) => {
+      const page = graph?.pages.find((candidate) => candidate.path === relativePath);
+      return page?.id ?? "";
+    })
+  ]);
+  const relatedNodeIds = graph ? scopedNodeIds(graph, scope.sourceIds).slice(0, 28) : [];
+  const projectIds = uniqueStrings(sourcePages.flatMap((page) => page.projectIds));
+  const relativeBriefPath =
+    session.briefPath && path.isAbsolute(session.briefPath) ? path.relative(paths.wikiDir, session.briefPath) : session.briefPath;
+  const sessionMarkdown = [
+    `# Guided Session: ${scope.title}`,
+    "",
+    `Status: \`${session.status}\``,
+    `Session ID: \`${session.sessionId}\``,
+    ...(session.approvalId ? [`Approval Bundle: \`${session.approvalId}\``] : []),
+    ...(relativeBriefPath ? [`Brief: \`${relativeBriefPath}\``] : []),
+    "",
+    "## What This Source Is",
+    "",
+    ...(analyses.length
+      ? analyses.slice(0, 6).map((analysis) => `- ${analysis.title}: ${analysis.summary}`)
+      : ["- Awaiting compile context."]),
+    "",
+    "## Guided Questions",
+    "",
+    ...session.questions.flatMap((question) => [`### ${question.prompt}`, "", question.answer ?? "_Awaiting input._", ""]),
+    "## Proposed Wiki Targets",
+    "",
+    ...(session.targetedPagePaths.length
+      ? session.targetedPagePaths.map((targetPath) => `- [[${targetPath.replace(/\.md$/, "")}]]`)
+      : ["- No canonical update targets selected yet."]),
+    "",
+    "## Conflicts And Judgment Calls",
+    "",
+    ...(contradictions.length
+      ? contradictions.map((contradiction) => `- ${contradiction.claimA} / ${contradiction.claimB}`)
+      : ["- No contradictions are currently flagged for this source scope."]),
+    "",
+    "## Follow-up Questions",
+    "",
+    ...(() => {
+      const followups = questionAnswer(session.questions, "followups", "");
+      if (followups) {
+        return followups
+          .split(/\n+/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => `- ${line.replace(/^-+\s*/, "")}`);
+      }
+      const analysisQuestions = uniqueStrings(analyses.flatMap((analysis) => analysis.questions)).slice(0, 6);
+      return analysisQuestions.length ? analysisQuestions.map((question) => `- ${question}`) : ["- No follow-up questions recorded yet."];
+    })(),
+    "",
+    "## Related Artifacts",
+    "",
+    `- [[outputs/source-briefs/${scope.id}|Source Brief]]`,
+    `- [[outputs/source-reviews/${scope.id}|Source Review]]`,
+    `- [[outputs/source-guides/${scope.id}|Source Guide]]`,
+    ""
+  ].join("\n");
+  const now = new Date().toISOString();
+  const output = buildOutputPage({
+    title: `Guided Session: ${scope.title}`,
+    question: `Guided Session ${scope.title}`,
+    answer: sessionMarkdown,
+    citations: scope.sourceIds,
+    schemaHash: graph?.generatedAt ?? "",
+    outputFormat: "report",
+    relatedPageIds,
+    relatedNodeIds,
+    relatedSourceIds: scope.sourceIds,
+    projectIds,
+    extraTags: ["source-session", "guided-session"],
+    origin: "query",
+    slug: `source-sessions/${scope.id}`,
+    metadata: {
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      compiledFrom: scope.sourceIds,
+      managedBy: "system",
+      confidence: 0.81
+    }
+  });
+  return { page: output.page, content: output.content };
+}
+
+async function persistSourceSessionPage(
+  rootDir: string,
+  scope: SourceScope,
+  session: GuidedSourceSessionRecord
+): Promise<{ pageId: string; sessionPath: string }> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const output = await buildSourceSessionSavedPage(rootDir, scope, session);
+  const absolutePath = path.join(paths.wikiDir, output.page.path);
+  await ensureDir(path.dirname(absolutePath));
+  await fs.writeFile(absolutePath, output.content, "utf8");
+  return { pageId: output.page.id, sessionPath: absolutePath };
+}
+
+async function buildGuidedInsightUpdatePages(
+  rootDir: string,
+  scope: SourceScope,
+  session: GuidedSourceSessionRecord
+): Promise<Array<{ page: GraphArtifact["pages"][number]; content: string; label: "guided-update" }>> {
+  const { paths } = await loadVaultConfig(rootDir);
+  let graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  if (!graph) {
+    await compileVault(rootDir, {});
+    graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  }
+  if (!graph) {
+    return [];
+  }
+  const sourcePages = scopedSourcePages(graph, scope.sourceIds);
+  const analyses = await loadSourceAnalyses(rootDir, scope.sourceIds);
+  const report = await readGraphReport(rootDir);
+  const contradictions = findContradictionsForScope(scope, report);
+  const selectedTargets = selectGuidedTargetPages(scope, sourcePages, session.questions);
+  const targetPages = selectedTargets.length ? selectedTargets : [null];
+
+  return await Promise.all(
+    targetPages.map(async (targetPage, index) => {
+      const relativePath = targetPage ? insightRelativePathForTarget(targetPage, scope) : `insights/topics/${slugify(scope.title)}.md`;
+      const absolutePath = path.join(paths.wikiDir, relativePath);
+      const existingContent = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : "";
+      const parsed = existingContent ? matter(existingContent) : { data: {}, content: "" };
+      const existingData = parsed.data as Record<string, unknown>;
+      const existingSourceIds = Array.isArray(existingData.source_ids)
+        ? existingData.source_ids.filter((value): value is string => typeof value === "string")
+        : [];
+      const existingProjectIds = Array.isArray(existingData.project_ids)
+        ? existingData.project_ids.filter((value): value is string => typeof value === "string")
+        : [];
+      const existingNodeIds = Array.isArray(existingData.node_ids)
+        ? existingData.node_ids.filter((value): value is string => typeof value === "string")
+        : [];
+      const existingBacklinks = Array.isArray(existingData.backlinks)
+        ? existingData.backlinks.filter((value): value is string => typeof value === "string")
+        : [];
+      const createdAt =
+        typeof existingData.created_at === "string" && existingData.created_at.trim() ? existingData.created_at : new Date().toISOString();
+      const title =
+        (typeof existingData.title === "string" && existingData.title.trim()) ||
+        (targetPage ? insightTitleForTarget(targetPage, scope) : `${scope.title} Notes`);
+      const baseBody = parsed.content.trim()
+        ? parsed.content.trim()
+        : [`# ${title}`, "", "Human-curated insight page. Guided sessions stage replaceable update blocks here.", ""].join("\n");
+      const importance = questionAnswer(
+        session.questions,
+        "importance",
+        "Capture the most important new ideas from this source before treating them as canonical."
+      );
+      const exclude = questionAnswer(
+        session.questions,
+        "exclude",
+        "Keep uncertain or incidental details provisional until they matter to the research thread."
+      );
+      const conflictNotes = questionAnswer(
+        session.questions,
+        "conflicts",
+        contradictions.length
+          ? "Review the conflicting evidence before accepting any canonical summary changes."
+          : "No explicit conflicts were called out."
+      );
+      const followups = questionAnswer(session.questions, "followups", "Track follow-up questions on the source session page.");
+      const updateBlock = [
+        `## Guided Session Update: ${scope.title}`,
+        "",
+        `Session: [[outputs/source-sessions/${scope.id}|Guided Session]]`,
+        `Source Guide: [[outputs/source-guides/${scope.id}|Source Guide]]`,
+        "",
+        "### What Matters Now",
+        "",
+        importance,
+        "",
+        "### Proposed Integration",
+        "",
+        targetPage
+          ? `- Fold the strongest source-backed takeaways into [[${targetPage.path.replace(/\.md$/, "")}|${targetPage.title}]].`
+          : `- Start a durable topic note for ${scope.title}.`,
+        ...analyses.slice(0, 5).map((analysis) => `- ${truncate(normalizeWhitespace(analysis.summary), 180)}`),
+        "",
+        "### Keep Provisional Or Out",
+        "",
+        exclude,
+        "",
+        "### Reinforcing Or Conflicting Notes",
+        "",
+        conflictNotes,
+        ...(contradictions.length
+          ? ["", ...contradictions.slice(0, 4).map((contradiction) => `- ${contradiction.claimA} / ${contradiction.claimB}`)]
+          : []),
+        "",
+        "### Follow-up Questions",
+        "",
+        followups,
+        ""
+      ].join("\n");
+      const nextBody = replaceMarkedSection(baseBody, scope.id, updateBlock);
+      const content = matter.stringify(`${nextBody.trimEnd()}\n`, {
+        ...existingData,
+        page_id:
+          (typeof existingData.page_id === "string" && existingData.page_id.trim()) ||
+          `insight:${slugify(relativePath.replace(/\.md$/, ""))}`,
+        kind: "insight",
+        title,
+        tags: uniqueStrings([
+          ...(Array.isArray(existingData.tags) ? existingData.tags.filter((value): value is string => typeof value === "string") : []),
+          ...insightTagsForTarget(targetPage)
+        ]),
+        source_ids: uniqueStrings([...existingSourceIds, ...scope.sourceIds]),
+        project_ids: uniqueStrings([...existingProjectIds, ...(targetPage?.projectIds ?? [])]),
+        node_ids: uniqueStrings([...existingNodeIds, ...(targetPage?.nodeIds ?? [])]),
+        freshness: "fresh",
+        status: existingData.status === "archived" ? "archived" : "active",
+        confidence: 0.83,
+        created_at: createdAt,
+        updated_at: new Date().toISOString(),
+        compiled_from: uniqueStrings([
+          ...(Array.isArray(existingData.compiled_from)
+            ? existingData.compiled_from.filter((value): value is string => typeof value === "string")
+            : []),
+          ...scope.sourceIds
+        ]),
+        managed_by: "human",
+        backlinks: uniqueStrings([
+          ...existingBacklinks,
+          ...(targetPage ? [targetPage.id] : []),
+          `output:source-sessions/${scope.id}`,
+          `output:source-guides/${scope.id}`
+        ]),
+        schema_hash: typeof existingData.schema_hash === "string" ? existingData.schema_hash : "",
+        source_hashes: existingData.source_hashes && typeof existingData.source_hashes === "object" ? existingData.source_hashes : {},
+        source_semantic_hashes:
+          existingData.source_semantic_hashes && typeof existingData.source_semantic_hashes === "object"
+            ? existingData.source_semantic_hashes
+            : {}
+      });
+      const page = parseStoredPage(relativePath, content, {
+        createdAt,
+        updatedAt: new Date().toISOString()
+      });
+      if (index === 0) {
+        session.targetedPagePaths = uniqueStrings([
+          ...session.targetedPagePaths,
+          ...(selectedTargets.length ? selectedTargets.map((page) => page.path) : [relativePath])
+        ]);
+      }
+      return { page, content, label: "guided-update" as const };
+    })
+  );
+}
+
+async function stageSourceGuideForScope(
+  rootDir: string,
+  scope: SourceScope,
+  options: { answers?: GuidedSourceSessionAnswers } = {}
+): Promise<SourceGuideResult> {
+  const { session, statePath } = await prepareGuidedSourceSession(rootDir, scope, options.answers);
+  const briefPath = scope.briefPath ?? session.briefPath ?? (await writeSourceBriefForScope(rootDir, scope)) ?? undefined;
+  session.briefPath = briefPath;
+
   if (briefPath) {
     await refreshVaultAfterOutputSave(rootDir);
   }
+
+  if (answeredGuidedSessionQuestions(session.questions).length === 0) {
+    session.status = "awaiting_input";
+    const persisted = await persistSourceSessionPage(rootDir, scope, session);
+    session.sessionPath = persisted.sessionPath;
+    await writeGuidedSourceSession(rootDir, session);
+    await refreshVaultAfterOutputSave(rootDir);
+    return {
+      sourceId: scope.id,
+      sessionId: session.sessionId,
+      sessionPath: persisted.sessionPath,
+      sessionStatePath: statePath,
+      status: session.status,
+      questions: session.questions,
+      awaitingInput: true,
+      targetedPagePaths: session.targetedPagePaths,
+      stagedUpdatePaths: session.stagedUpdatePaths,
+      briefPath,
+      staged: false
+    };
+  }
+
+  session.status = "ready_to_stage";
+  await writeGuidedSourceSession(rootDir, session);
+
   const reviewOutput = await buildSourceReviewStagedPage(rootDir, scope);
   const guideOutput = await buildSourceGuideStagedPage(rootDir, {
     ...scope,
     briefPath
   });
+  const guidedUpdates = await buildGuidedInsightUpdatePages(rootDir, scope, session);
+  session.stagedUpdatePaths = guidedUpdates.map((item) => item.page.path);
   const approval = await stageGeneratedOutputPages(
     rootDir,
     [
       { page: reviewOutput.page, content: reviewOutput.content, label: "source-review" },
-      { page: guideOutput.page, content: guideOutput.content, label: "source-guide" }
+      { page: guideOutput.page, content: guideOutput.content, label: "source-guide" },
+      ...guidedUpdates
     ],
     {
-      bundleType: "guided_source",
-      title: `Guided Source: ${scope.title}`
+      bundleType: "guided_session",
+      title: `Guided Session: ${scope.title}`,
+      sourceSessionId: session.sessionId
     }
   );
+  session.status = "staged";
+  session.reviewPath = path.join(approval.approvalDir, "wiki", reviewOutput.page.path);
+  session.guidePath = path.join(approval.approvalDir, "wiki", guideOutput.page.path);
+  session.approvalId = approval.approvalId;
+  session.approvalDir = approval.approvalDir;
+  const persisted = await persistSourceSessionPage(rootDir, scope, session);
+  session.sessionPath = persisted.sessionPath;
+  await writeGuidedSourceSession(rootDir, session);
   await refreshVaultAfterOutputSave(rootDir);
   return {
     sourceId: scope.id,
     pageId: guideOutput.page.id,
-    guidePath: path.join(approval.approvalDir, "wiki", guideOutput.page.path),
+    guidePath: session.guidePath,
     reviewPageId: reviewOutput.page.id,
-    reviewPath: path.join(approval.approvalDir, "wiki", reviewOutput.page.path),
+    reviewPath: session.reviewPath,
+    sessionId: session.sessionId,
+    sessionPath: persisted.sessionPath,
+    sessionStatePath: statePath,
+    status: session.status,
+    questions: session.questions,
+    targetedPagePaths: session.targetedPagePaths,
+    stagedUpdatePaths: session.stagedUpdatePaths,
     briefPath,
     staged: true,
     approvalId: approval.approvalId,
@@ -1227,62 +1750,106 @@ function scopeFromManagedSource(source: ManagedSourceRecord): SourceScope {
   };
 }
 
+function scopeFromManifest(manifest: SourceManifest, manifests: SourceManifest[]): SourceScope {
+  const groupId = manifest.sourceGroupId ?? manifest.sourceId;
+  return {
+    id: groupId,
+    title: manifest.sourceGroupTitle ?? manifest.title,
+    sourceIds: manifest.sourceGroupId
+      ? manifests.filter((candidate) => candidate.sourceGroupId === manifest.sourceGroupId).map((candidate) => candidate.sourceId)
+      : [manifest.sourceId],
+    kind: manifest.sourceKind
+  };
+}
+
+async function resolveSourceScope(rootDir: string, id: string): Promise<SourceScope | null> {
+  const managedSources = await loadManagedSources(rootDir);
+  const managedSource = managedSources.find((source) => source.id === id);
+  if (managedSource) {
+    return scopeFromManagedSource(managedSource);
+  }
+
+  const latestSession = await findLatestGuidedSourceSessionByScope(rootDir, id);
+  if (latestSession) {
+    return {
+      id: latestSession.scopeId,
+      title: latestSession.scopeTitle,
+      sourceIds: latestSession.sourceIds
+    };
+  }
+
+  const manifests = await listManifests(rootDir);
+  const manifest =
+    manifests.find((candidate) => candidate.sourceId === id) ?? manifests.find((candidate) => candidate.sourceGroupId === id);
+  if (!manifest) {
+    return null;
+  }
+  return scopeFromManifest(manifest, manifests);
+}
+
 export async function reviewSourceScope(rootDir: string, scope: SourceScope): Promise<SourceReviewResult> {
   return await stageSourceReviewForScope(rootDir, scope);
 }
 
-export async function guideSourceScope(rootDir: string, scope: SourceScope): Promise<SourceGuideResult> {
-  return await stageSourceGuideForScope(rootDir, scope);
+export async function guideSourceScope(
+  rootDir: string,
+  scope: SourceScope,
+  options: { answers?: GuidedSourceSessionAnswers } = {}
+): Promise<SourceGuideResult> {
+  return await stageSourceGuideForScope(rootDir, scope, options);
 }
 
 export async function reviewManagedSource(rootDir: string, id: string): Promise<SourceReviewResult> {
-  const managedSources = await loadManagedSources(rootDir);
-  const managedSource = managedSources.find((source) => source.id === id);
-  if (managedSource) {
-    if (!(await loadVaultConfig(rootDir).then(({ paths }) => fileExists(paths.graphPath)))) {
-      await compileVault(rootDir, {});
-    }
-    return await stageSourceReviewForScope(rootDir, scopeFromManagedSource(managedSource));
-  }
-
-  const manifests = await listManifests(rootDir);
-  const manifest = manifests.find((candidate) => candidate.sourceId === id);
-  if (!manifest) {
+  const scope = await resolveSourceScope(rootDir, id);
+  if (!scope) {
     throw new Error(`Managed source or source id not found: ${id}`);
   }
-  return await stageSourceReviewForScope(rootDir, {
-    id: manifest.sourceGroupId ?? manifest.sourceId,
-    title: manifest.sourceGroupTitle ?? manifest.title,
-    sourceIds: manifest.sourceGroupId
-      ? manifests.filter((candidate) => candidate.sourceGroupId === manifest.sourceGroupId).map((candidate) => candidate.sourceId)
-      : [manifest.sourceId],
-    kind: manifest.sourceKind
-  });
+  if (!(await loadVaultConfig(rootDir).then(({ paths }) => fileExists(paths.graphPath)))) {
+    await compileVault(rootDir, {});
+  }
+  return await stageSourceReviewForScope(rootDir, scope);
 }
 
-export async function guideManagedSource(rootDir: string, id: string): Promise<SourceGuideResult> {
-  const managedSources = await loadManagedSources(rootDir);
-  const managedSource = managedSources.find((source) => source.id === id);
-  if (managedSource) {
-    if (!(await loadVaultConfig(rootDir).then(({ paths }) => fileExists(paths.graphPath)))) {
-      await compileVault(rootDir, {});
-    }
-    return await stageSourceGuideForScope(rootDir, scopeFromManagedSource(managedSource));
-  }
-
-  const manifests = await listManifests(rootDir);
-  const manifest = manifests.find((candidate) => candidate.sourceId === id);
-  if (!manifest) {
+export async function guideManagedSource(
+  rootDir: string,
+  id: string,
+  options: { answers?: GuidedSourceSessionAnswers } = {}
+): Promise<SourceGuideResult> {
+  const scope = await resolveSourceScope(rootDir, id);
+  if (!scope) {
     throw new Error(`Managed source or source id not found: ${id}`);
   }
-  return await stageSourceGuideForScope(rootDir, {
-    id: manifest.sourceGroupId ?? manifest.sourceId,
-    title: manifest.sourceGroupTitle ?? manifest.title,
-    sourceIds: manifest.sourceGroupId
-      ? manifests.filter((candidate) => candidate.sourceGroupId === manifest.sourceGroupId).map((candidate) => candidate.sourceId)
-      : [manifest.sourceId],
-    kind: manifest.sourceKind
-  });
+  if (!(await loadVaultConfig(rootDir).then(({ paths }) => fileExists(paths.graphPath)))) {
+    await compileVault(rootDir, {});
+  }
+  return await stageSourceGuideForScope(rootDir, scope, options);
+}
+
+export async function resumeSourceSession(
+  rootDir: string,
+  id: string,
+  options: { answers?: GuidedSourceSessionAnswers } = {}
+): Promise<SourceGuideResult> {
+  const existingSession = await readGuidedSourceSession(rootDir, id);
+  if (existingSession) {
+    return await stageSourceGuideForScope(
+      rootDir,
+      {
+        id: existingSession.scopeId,
+        title: existingSession.scopeTitle,
+        sourceIds: existingSession.sourceIds,
+        kind: existingSession.kind,
+        briefPath: existingSession.briefPath
+      },
+      options
+    );
+  }
+
+  const scope = await resolveSourceScope(rootDir, id);
+  if (!scope) {
+    throw new Error(`Managed source, source scope, or guided session not found: ${id}`);
+  }
+  return await stageSourceGuideForScope(rootDir, scope, options);
 }
 
 function shouldCompile(changedSources: ManagedSourceRecord[], graphExists: boolean, compileRequested: boolean): boolean {
@@ -1357,10 +1924,14 @@ export async function addManagedSource(
       : undefined;
   const guide =
     guideRequested && nextSource.status === "ready"
-      ? await stageSourceGuideForScope(rootDir, {
-          ...scopeFromManagedSource(nextSource),
-          briefPath: nextSource.briefPath
-        })
+      ? await stageSourceGuideForScope(
+          rootDir,
+          {
+            ...scopeFromManagedSource(nextSource),
+            briefPath: nextSource.briefPath
+          },
+          { answers: options.guideAnswers }
+        )
       : undefined;
 
   return {
@@ -1433,10 +2004,14 @@ export async function reloadManagedSources(rootDir: string, options: ManagedSour
           .filter((source) => source.status === "ready")
           .map(
             async (source) =>
-              await stageSourceGuideForScope(rootDir, {
-                ...scopeFromManagedSource(source),
-                briefPath: source.briefPath
-              })
+              await stageSourceGuideForScope(
+                rootDir,
+                {
+                  ...scopeFromManagedSource(source),
+                  briefPath: source.briefPath
+                },
+                { answers: options.guideAnswers }
+              )
           )
       )
     : [];

@@ -34,15 +34,17 @@ If you expected a source-scoped guide or review page, use one of these flows:
 ```bash
 swarmvault ingest <input> --guide
 swarmvault source add <input> --guide
-swarmvault source guide <source-id>
+swarmvault source session <source-id-or-session-id>
 ```
 
 Then verify:
 
 - `wiki/outputs/source-briefs/`
+- `wiki/outputs/source-sessions/`
 - `wiki/outputs/source-guides/`
 - `wiki/dashboards/index.md`
 - `wiki/dashboards/timeline.md`
+- `wiki/dashboards/source-sessions.md`
 - `wiki/dashboards/source-guides.md`
 - `state/approvals/`
 

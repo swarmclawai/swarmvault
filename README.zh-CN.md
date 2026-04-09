@@ -59,6 +59,7 @@ swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./meeting.srt --guide
+swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
@@ -127,11 +128,11 @@ swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source list
-swarmvault source guide file-customer-call-srt-12345678
+swarmvault source session file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
-`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。它现在同样适用于可重复同步的本地文件，而不仅是目录、公开仓库或文档站点。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
+`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。加入 `--guide` 后，会额外创建一个可恢复的引导式 session，写入 `wiki/outputs/source-sessions/`，并通过 approval queue 阶段化 source review、source guide 以及面向 `wiki/insights/` 的更新提案。它现在同样适用于可重复同步的本地文件，而不仅是目录、公开仓库或文档站点。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
 
 <!-- readme-section:agent-setup -->
 ## Agent 与 MCP 设置
@@ -196,9 +197,9 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
-**引导式 ingest** - `ingest --guide`、`source add --guide`、`source reload --guide` 和 `source guide <id>` 会生成 source brief、source review 与面向整合的 source guide 页面，写入 `wiki/outputs/source-guides/`，并在你接受之前先通过 approval bundle 阶段化。
+**引导式 session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` 和 `source session <id>` 会创建可恢复的 source session，写入 `wiki/outputs/source-sessions/`，并在你接受之前阶段化 source review、source guide 与面向 `wiki/insights/` 的更新提案。
 
-**知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source guides、research map、contradictions 和 open questions 页面。即使只是普通 Markdown 也可直接使用，在 Obsidian + Dataview 中会更强。
+**知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。即使只是普通 Markdown 也可直接使用，在 Obsidian + Dataview 中会更强。
 
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
@@ -208,7 +209,7 @@ clawhub install swarmvault
 
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 
-**托管来源** - `swarmvault source add|list|reload|review|guide|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，引导式整合产物写入 `wiki/outputs/source-guides/`。
+**托管来源** - `swarmvault source add|list|reload|review|guide|session|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，可恢复的 session 锚点写入 `wiki/outputs/source-sessions/`，引导式整合产物写入 `wiki/outputs/source-guides/`。
 
 **外部图谱输出** - 可导出为 HTML、SVG、GraphML、Cypher，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
 

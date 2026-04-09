@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, dashboard, review, and MCP artifacts to disk from books, notes, transcripts, exports, datasets, slide decks, files, URLs, code, and recurring source workflows."
-version: "0.5.0"
+version: "0.6.0"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -24,7 +24,7 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 2. Update `swarmvault.schema.md` before a serious compile. Use it for naming rules, categories, grounding, freshness expectations, and exclusions.
 3. Use `swarmvault source add <input>` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Ingest one-off inputs with `swarmvault ingest <path-or-url>`, or ingest a whole repo tree with `swarmvault ingest <directory>`.
-5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, or `swarmvault source guide <id>` when the human should integrate one source at a time before canonical pages change. Use `--review` only for the lighter review-only path.
+5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when the human should integrate one source at a time before canonical pages change. Use `--review` only for the lighter review-only path.
 6. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint --repo` when the workflow should stay automated. Install `swarmvault hook install` when git checkouts and commits should trigger repo-aware refreshes automatically.
 7. Compile with `swarmvault compile`, or use `swarmvault compile --approve` when changes should go through the local review queue first.
 8. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
@@ -50,9 +50,10 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 - `raw/sources/` and `raw/assets/`: canonical source storage.
 - `wiki/`: generated pages plus saved outputs.
 - `wiki/outputs/source-briefs/`: saved onboarding briefs for managed sources.
+- `wiki/outputs/source-sessions/`: resumable guided-session anchors plus question/answer history for one-source-at-a-time integration.
 - `wiki/outputs/source-reviews/`: staged source-scoped review pages.
 - `wiki/outputs/source-guides/`: staged source-integration guides for one-source-at-a-time workflows.
-- `wiki/dashboards/`: recent sources, reading log, timeline, source guides, research map, contradiction, and open-question dashboards.
+- `wiki/dashboards/`: recent sources, reading log, timeline, source sessions, source guides, research map, contradiction, and open-question dashboards.
 - `wiki/code/`: module pages for ingested JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell sources.
 - `state/extracts/`: extracted markdown and JSON sidecars for PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, transcripts, Slack exports, email, calendar, and image sources.
 - `state/code-index.json`: repo-aware code aliases and local import resolution data.

@@ -59,6 +59,7 @@ import {
 } from "./schema.js";
 import { rebuildSearchIndex, searchPages } from "./search.js";
 import { aggregateManifestSourceClass } from "./source-classification.js";
+import { listGuidedSourceSessions, updateGuidedSourceSessionStatus } from "./source-sessions.js";
 import type {
   ApprovalBundleType,
   ApprovalChangeType,
@@ -823,6 +824,7 @@ function approvalSummary(manifest: ApprovalManifest): ApprovalSummary {
     createdAt: manifest.createdAt,
     bundleType: manifest.bundleType,
     title: manifest.title,
+    sourceSessionId: manifest.sourceSessionId,
     entryCount: manifest.entries.length,
     pendingCount: manifest.entries.filter((entry) => entry.status === "pending").length,
     acceptedCount: manifest.entries.filter((entry) => entry.status === "accepted").length,
@@ -977,6 +979,7 @@ async function buildDashboardRecords(
   const reviewPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-reviews/"));
   const briefPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-briefs/"));
   const guidePages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-guides/"));
+  const sessionPages = graph.pages.filter((page) => page.kind === "output" && page.path.startsWith("outputs/source-sessions/"));
   const conceptPages = graph.pages.filter((page) => page.kind === "concept" && page.status !== "candidate").slice(0, 16);
   const entityPages = graph.pages.filter((page) => page.kind === "entity" && page.status !== "candidate").slice(0, 16);
   const manifests = graph.sources;
@@ -990,6 +993,7 @@ async function buildDashboardRecords(
   const openQuestions = uniqueStrings(
     analyses.flatMap((analysis) => analysis.questions.map((question) => `${analysis.title}: ${question}`))
   ).slice(0, 20);
+  const sourceSessions = await listGuidedSourceSessions(paths.rootDir);
   const stagedGuideBundles = (
     await Promise.all(
       (
@@ -1000,7 +1004,7 @@ async function buildDashboardRecords(
     )
   )
     .filter((manifest): manifest is ApprovalManifest => Boolean(manifest))
-    .filter((manifest) => manifest.bundleType === "guided_source")
+    .filter((manifest) => manifest.bundleType === "guided_source" || manifest.bundleType === "guided_session")
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .slice(0, 12);
 
@@ -1016,6 +1020,7 @@ async function buildDashboardRecords(
             "- [[dashboards/recent-sources|Recent Sources]]",
             "- [[dashboards/reading-log|Reading Log]]",
             "- [[dashboards/timeline|Timeline]]",
+            "- [[dashboards/source-sessions|Source Sessions]]",
             "- [[dashboards/source-guides|Source Guides]]",
             "- [[dashboards/research-map|Research Map]]",
             "- [[dashboards/contradictions|Contradictions]]",
@@ -1108,6 +1113,19 @@ async function buildDashboardRecords(
                   return `- ${occurredAt}: ${manifest.title}${participants ? ` (${participants})` : ""}`;
                 })
               : recentSourcePages.map((page) => `- ${page.updatedAt}: [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)),
+            ...(sourceSessions.length
+              ? [
+                  "",
+                  "## Active Guided Sessions",
+                  "",
+                  ...sourceSessions
+                    .slice(0, 8)
+                    .map(
+                      (session) =>
+                        `- ${session.updatedAt}: \`${session.status}\` [[outputs/source-sessions/${session.scopeId}|${session.scopeTitle}]]`
+                    )
+                ]
+              : []),
             "",
             "```dataview",
             "TABLE occurred_at, source_type, participants, container_title",
@@ -1177,6 +1195,68 @@ async function buildDashboardRecords(
             created_at: metadata.createdAt,
             updated_at: metadata.updatedAt,
             compiled_from: timelineManifests.map((manifest) => manifest.sourceId),
+            managed_by: metadata.managedBy,
+            backlinks: [],
+            schema_hash: schemaHash,
+            source_hashes: {},
+            source_semantic_hashes: {}
+          }
+        )
+    },
+    {
+      relativePath: "dashboards/source-sessions.md",
+      title: "Source Sessions",
+      content: (metadata) =>
+        matter.stringify(
+          [
+            "# Source Sessions",
+            "",
+            "## Active Sessions",
+            "",
+            ...(sourceSessions.length
+              ? sourceSessions
+                  .slice(0, 16)
+                  .map(
+                    (session) =>
+                      `- ${session.updatedAt}: \`${session.status}\` \`${session.sessionId}\` [[outputs/source-sessions/${session.scopeId}|${session.scopeTitle}]]`
+                  )
+              : ["- No guided source sessions yet."]),
+            "",
+            "## Pending Guided Bundles",
+            "",
+            ...(stagedGuideBundles.length
+              ? stagedGuideBundles.map(
+                  (bundle) =>
+                    `- ${bundle.createdAt}: \`${bundle.approvalId}\`${bundle.title ? ` ${bundle.title}` : ""} (${bundle.entries.length} staged entr${bundle.entries.length === 1 ? "y" : "ies"})`
+                )
+              : ["- No staged guided bundles right now."]),
+            "",
+            "```dataview",
+            'LIST FROM "outputs/source-sessions"',
+            "SORT file.mtime desc",
+            "```",
+            ""
+          ].join("\n"),
+          {
+            page_id: "dashboards:source-sessions",
+            kind: "index",
+            title: "Source Sessions",
+            tags: ["index", "dashboard", "source-sessions"],
+            source_ids: uniqueStrings([
+              ...sessionPages.flatMap((page) => page.sourceIds),
+              ...sourceSessions.flatMap((session) => session.sourceIds)
+            ]),
+            project_ids: [],
+            node_ids: [],
+            freshness: "fresh",
+            status: metadata.status,
+            confidence: 1,
+            created_at: metadata.createdAt,
+            updated_at: metadata.updatedAt,
+            compiled_from: uniqueStrings([
+              ...sessionPages.flatMap((page) => page.sourceIds),
+              ...sourceSessions.flatMap((session) => session.sourceIds)
+            ]),
             managed_by: metadata.managedBy,
             backlinks: [],
             schema_hash: schemaHash,
@@ -1265,6 +1345,14 @@ async function buildDashboardRecords(
             ...(guidePages.length
               ? guidePages.slice(0, 8).map((page) => `- [[${page.path.replace(/\.md$/, "")}|${page.title}]]`)
               : ["- No accepted source guides yet."]),
+            "",
+            "## Active Source Sessions",
+            "",
+            ...(sourceSessions.length
+              ? sourceSessions
+                  .slice(0, 8)
+                  .map((session) => `- \`${session.status}\` [[outputs/source-sessions/${session.scopeId}|${session.scopeTitle}]]`)
+              : ["- No active source sessions yet."]),
             ...(report?.suggestedQuestions?.length
               ? ["", "## Suggested Questions", "", ...report.suggestedQuestions.slice(0, 8).map((question) => `- ${question}`)]
               : []),
@@ -1369,9 +1457,20 @@ async function buildDashboardRecords(
             "# Open Questions",
             "",
             ...(openQuestions.length ? openQuestions.map((question) => `- ${question}`) : ["- No open questions are currently extracted."]),
+            ...(sourceSessions.length
+              ? [
+                  "",
+                  "## Active Guided Sessions",
+                  "",
+                  ...sourceSessions
+                    .filter((session) => session.status === "awaiting_input" || session.status === "staged")
+                    .slice(0, 8)
+                    .map((session) => `- \`${session.status}\` [[outputs/source-sessions/${session.scopeId}|${session.scopeTitle}]]`)
+                ]
+              : []),
             "",
             "```dataview",
-            'LIST FROM "outputs/source-briefs" OR "outputs/source-reviews" OR "outputs/source-guides"',
+            'LIST FROM "outputs/source-briefs" OR "outputs/source-reviews" OR "outputs/source-guides" OR "outputs/source-sessions"',
             "SORT file.mtime desc",
             "```",
             ""
@@ -3271,6 +3370,7 @@ async function stageOutputApprovalBundle(
   options: {
     bundleType?: ApprovalBundleType;
     title?: string;
+    sourceSessionId?: string;
   } = {}
 ): Promise<{ approvalId: string; approvalDir: string }> {
   const { paths } = await loadVaultConfig(rootDir);
@@ -3319,6 +3419,7 @@ async function stageOutputApprovalBundle(
     createdAt: new Date().toISOString(),
     bundleType: options.bundleType ?? "generated_output",
     title: options.title,
+    sourceSessionId: options.sourceSessionId,
     entries: await buildApprovalEntries(
       paths,
       stagedPages.map((item) => ({ relativePath: item.page.path, content: item.content })),
@@ -3338,6 +3439,7 @@ export async function stageGeneratedOutputPages(
   options: {
     bundleType?: ApprovalBundleType;
     title?: string;
+    sourceSessionId?: string;
   } = {}
 ): Promise<{ approvalId: string; approvalDir: string }> {
   return await stageOutputApprovalBundle(rootDir, stagedPages, options);
@@ -3751,6 +3853,9 @@ export async function acceptApproval(rootDir: string, approvalId: string, target
   await writeJsonFile(paths.compileStatePath, compileState);
   await refreshIndexesAndSearch(rootDir, nextGraph.pages);
   await writeApprovalManifest(paths, manifest);
+  if (manifest.sourceSessionId) {
+    await updateGuidedSourceSessionStatus(rootDir, manifest.sourceSessionId, "accepted");
+  }
   await recordSession(rootDir, {
     operation: "review",
     title: `Accepted review entries from ${approvalId}`,
@@ -3779,6 +3884,9 @@ export async function rejectApproval(rootDir: string, approvalId: string, target
     entry.status = "rejected";
   }
   await writeApprovalManifest(paths, manifest);
+  if (manifest.sourceSessionId) {
+    await updateGuidedSourceSessionStatus(rootDir, manifest.sourceSessionId, "rejected");
+  }
   await recordSession(rootDir, {
     operation: "review",
     title: `Rejected review entries from ${approvalId}`,
@@ -3998,7 +4106,7 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
             "Human-authored research notes live here.",
             "",
             "- Use this folder for thesis notes, reading reflections, synthesis drafts, and decisions you want to keep explicitly human-authored.",
-            "- Guided ingest can propose updates elsewhere, but SwarmVault does not rewrite files inside `wiki/insights/` after initialization.",
+            "- Guided sessions can stage `wiki/insights/` updates through the approval queue, but SwarmVault never applies them without review.",
             "- Treat these pages as the human judgment layer for your vault.",
             ""
           ]
@@ -4008,7 +4116,7 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
             "Human-authored notes live here.",
             "",
             "- SwarmVault can read these pages during compile and query.",
-            "- SwarmVault does not rewrite files inside `wiki/insights/` after initialization.",
+            "- SwarmVault can stage insight-page updates through guided sessions, but it never applies them without review.",
             ""
           ]
       ).join("\n"),
@@ -4092,7 +4200,8 @@ export async function initVault(rootDir: string, options: InitOptions = {}): Pro
           "# Personal Research Playbook",
           "",
           "- Add one source at a time with `swarmvault ingest <input> --guide` or `swarmvault source add <input> --guide`.",
-          "- Review `wiki/outputs/source-briefs/`, `wiki/outputs/source-reviews/`, and `wiki/outputs/source-guides/` before accepting staged updates.",
+          "- Resume a guided session with `swarmvault source session <source-id-or-session-id>` whenever you want to answer the session prompts directly.",
+          "- Review `wiki/outputs/source-briefs/`, `wiki/outputs/source-reviews/`, `wiki/outputs/source-guides/`, and `wiki/outputs/source-sessions/` before accepting staged updates.",
           "- Keep unresolved questions visible in `wiki/dashboards/open-questions.md`.",
           "- Use `swarmvault review list` and `swarmvault review show --diff` to decide what becomes canonical.",
           ""

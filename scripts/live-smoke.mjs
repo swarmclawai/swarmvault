@@ -384,11 +384,32 @@ try {
         "utf8"
       );
       await fs.writeFile(path.join(personalDir, "slack-export.zip"), createSimpleSlackExportZip());
+      const guideAnswersPath = path.join(personalDir, "guide-answers.json");
+      await fs.writeFile(
+        guideAnswersPath,
+        `${JSON.stringify(
+          {
+            importance: "Capture the strongest research takeaways before accepting any canonical summary change.",
+            exclude: "Keep speculative or low-signal details out until they are reinforced.",
+            targets: "Update the research summary and the transcript notes.",
+            conflicts: "Flag anything that changes the current understanding or conflicts with the transcript.",
+            followups: "Keep the next contradiction review and reading questions visible."
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
 
       const ingested = await runCliJson(["ingest", personalDir, "--guide"]);
-      assert.ok(ingested.guide?.approvalId, "ingest --guide did not stage a guided source approval bundle");
-      await assertExists(ingested.guide.guidePath);
-      await assertExists(ingested.guide.reviewPath);
+      assert.equal(ingested.guide?.awaitingInput, true, "ingest --guide did not create an awaiting guided session");
+      await assertExists(ingested.guide.sessionPath);
+      await assertExists(ingested.guide.sessionStatePath);
+      const guidedIngest = await runCliJson(["source", "session", ingested.guide.sessionId, "--answers-file", guideAnswersPath]);
+      assert.ok(guidedIngest.approvalId, "source session did not stage a guided source approval bundle");
+      await assertExists(guidedIngest.guidePath);
+      await assertExists(guidedIngest.reviewPath);
+      await assertExists(guidedIngest.sessionPath);
       const importedKinds = new Set((ingested.ingest.imported ?? []).map((manifest) => manifest.sourceKind));
       for (const kind of ["transcript", "email", "calendar", "chat_export"]) {
         assert.ok(importedKinds.has(kind), `personal knowledge ingest did not preserve source kind ${kind}`);
@@ -398,26 +419,34 @@ try {
       await assertExists(path.join(workspaceDir, "wiki", "dashboards", "reading-log.md"));
       await assertExists(path.join(workspaceDir, "wiki", "dashboards", "timeline.md"));
       await assertExists(path.join(workspaceDir, "wiki", "dashboards", "recent-sources.md"));
+      await assertExists(path.join(workspaceDir, "wiki", "dashboards", "source-sessions.md"));
       await assertExists(path.join(workspaceDir, "wiki", "dashboards", "source-guides.md"));
       await assertExists(path.join(workspaceDir, "wiki", "dashboards", "research-map.md"));
       const timelinePage = await fs.readFile(path.join(workspaceDir, "wiki", "dashboards", "timeline.md"), "utf8");
       assert.ok(timelinePage.includes("Research sync") || timelinePage.includes("call"), "dashboard timeline did not include personal knowledge sources");
+      const sourceSessionsPage = await fs.readFile(path.join(workspaceDir, "wiki", "dashboards", "source-sessions.md"), "utf8");
+      assert.ok(sourceSessionsPage.includes("Pending Guided Bundles"), "source sessions dashboard did not render the pending guided bundle section");
       const sourceGuidesPage = await fs.readFile(path.join(workspaceDir, "wiki", "dashboards", "source-guides.md"), "utf8");
       assert.ok(sourceGuidesPage.includes("Pending Guided Bundles"), "source guides dashboard did not render the pending guided bundle section");
 
       const managedFile = await runCliJson(["source", "add", path.join(personalDir, "call.srt"), "--guide"]);
       assert.equal(managedFile.source.kind, "file", "source add did not classify the local file as a managed file source");
-      assert.ok(managedFile.guide?.approvalId, "source add --guide did not stage a managed-file guided bundle");
-      await assertExists(managedFile.guide.guidePath);
-      await assertExists(managedFile.guide.reviewPath);
+      assert.equal(managedFile.guide?.awaitingInput, true, "source add --guide did not create an awaiting managed-file guided session");
+      await assertExists(managedFile.guide.sessionPath);
+      const managedSession = await runCliJson(["source", "session", managedFile.guide.sessionId, "--answers-file", guideAnswersPath]);
+      assert.ok(managedSession.approvalId, "source session did not stage a managed-file guided bundle");
+      await assertExists(managedSession.guidePath);
+      await assertExists(managedSession.reviewPath);
 
       const sourceReview = await runCliJson(["source", "review", managedFile.source.sourceIds[0]]);
       assert.ok(sourceReview.approvalId, "source review did not stage an approval bundle for the raw source id");
       await assertExists(sourceReview.reviewPath);
 
       const sourceGuide = await runCliJson(["source", "guide", managedFile.source.sourceIds[0]]);
-      assert.ok(sourceGuide.approvalId, "source guide did not stage an approval bundle for the raw source id");
-      await assertExists(sourceGuide.guidePath);
+      assert.equal(sourceGuide.awaitingInput, true, "source guide should create an awaiting guided session without answers");
+      const resumedGuide = await runCliJson(["source", "session", sourceGuide.sessionId, "--answers-file", guideAnswersPath]);
+      assert.ok(resumedGuide.approvalId, "resumed source session did not stage an approval bundle for the raw source id");
+      await assertExists(resumedGuide.guidePath);
     });
 
     if (usesPublishedRegistryInstall(installSpecs)) {

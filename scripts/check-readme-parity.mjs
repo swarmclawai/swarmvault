@@ -38,7 +38,9 @@ const requiredSubstrings = [
   "swarmvault init --obsidian",
   "swarmvault source add https://github.com/karpathy/micrograd",
   "swarmvault source add https://example.com/docs/getting-started",
+  "swarmvault source session transcript-or-session-id",
   "swarmvault source list",
+  "swarmvault source session file-customer-call-srt-12345678",
   "swarmvault source reload --all",
   "swarmvault ingest ./src --repo-root .",
   "swarmvault add https://arxiv.org/abs/2401.12345",
@@ -66,7 +68,8 @@ const requiredSubstrings = [
   "https://www.swarmvault.ai/docs/providers",
   "https://www.swarmvault.ai/docs/getting-started/troubleshooting",
   "https://www.npmjs.com/package/@swarmvaultai/cli",
-  "https://github.com/swarmclawai/swarmvault"
+  "https://github.com/swarmclawai/swarmvault",
+  "wiki/outputs/source-sessions/"
 ];
 
 function assertCondition(condition, message) {

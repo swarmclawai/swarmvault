@@ -4,17 +4,26 @@ import path from "node:path";
 import { zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  acceptApproval,
   addManagedSource,
   compileVault,
   guideManagedSource,
   ingestDirectory,
   initVault,
   readApproval,
+  resumeSourceSession,
   reviewManagedSource
 } from "../src/index.js";
 import type { SourceManifest } from "../src/types.js";
 
 const tempDirs: string[] = [];
+const GUIDE_ANSWERS = {
+  importance: "Focus on the source-backed changes that should inform the durable research notes.",
+  exclude: "Leave speculative conclusions out until they are reinforced by more than one source.",
+  targets: "Update the transcript notes and the main research summary.",
+  conflicts: "Call out anything that changes the current summary or conflicts with the existing thesis.",
+  followups: "Keep the next source and contradiction review questions visible."
+};
 
 async function createTempWorkspace(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-personal-"));
@@ -136,7 +145,7 @@ describe("personal knowledge workflows", () => {
 
     const playbook = await fs.readFile(path.join(rootDir, "wiki", "insights", "research-playbook.md"), "utf8");
     expect(playbook).toContain("swarmvault ingest <input> --guide");
-    expect(playbook).toContain("wiki/outputs/source-guides/");
+    expect(playbook).toContain("wiki/outputs/source-sessions/");
   });
 
   it("extracts human export sources and generates dashboards", async () => {
@@ -227,7 +236,7 @@ describe("personal knowledge workflows", () => {
     expect(rawDetail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${added.source.sourceIds[0]}.md`)).toBe(true);
   });
 
-  it("stages guided source bundles with review and guide pages plus dashboard visibility", async () => {
+  it("creates resumable guided sessions that stage insight updates through approvals", async () => {
     const rootDir = await createTempWorkspace();
     const transcriptPath = path.join(rootDir, "call.srt");
     await fs.writeFile(
@@ -237,29 +246,43 @@ describe("personal knowledge workflows", () => {
     );
 
     await initVault(rootDir, { profile: "personal-research" });
-    const added = await addManagedSource(rootDir, transcriptPath, { guide: true });
-    expect(added.source.kind).toBe("file");
-    expect(added.briefGenerated).toBe(true);
-    expect(added.guide?.approvalId).toBeTruthy();
-    await fs.access(added.guide?.guidePath ?? "");
-    await fs.access(added.guide?.reviewPath ?? "");
-    await fs.access(added.guide?.briefPath ?? "");
+    const awaiting = await addManagedSource(rootDir, transcriptPath, { guide: true });
+    expect(awaiting.guide?.awaitingInput).toBe(true);
+    expect(awaiting.guide?.approvalId).toBeUndefined();
+    await fs.access(awaiting.guide?.sessionPath ?? "");
 
-    const detail = await readApproval(rootDir, added.guide?.approvalId ?? "");
-    expect(detail.bundleType).toBe("guided_source");
-    expect(detail.title).toContain("Guided Source");
+    const added = await resumeSourceSession(rootDir, awaiting.guide?.sessionId ?? "", { answers: GUIDE_ANSWERS });
+    expect(awaiting.source.kind).toBe("file");
+    expect(added.approvalId).toBeTruthy();
+    await fs.access(added.guidePath ?? "");
+    await fs.access(added.reviewPath ?? "");
+    await fs.access(added.briefPath ?? "");
+    await fs.access(added.sessionPath ?? "");
+
+    const detail = await readApproval(rootDir, added.approvalId ?? "");
+    expect(detail.bundleType).toBe("guided_session");
+    expect(detail.title).toContain("Guided Session");
+    expect(detail.sourceSessionId).toBe(added.sessionId);
     expect(detail.entries.some((entry) => entry.label === "source-review")).toBe(true);
     expect(detail.entries.some((entry) => entry.label === "source-guide")).toBe(true);
-    expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-guides/${added.source.id}.md`)).toBe(true);
-    expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${added.source.id}.md`)).toBe(true);
+    expect(detail.entries.some((entry) => entry.label === "guided-update")).toBe(true);
+    expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-guides/${awaiting.source.id}.md`)).toBe(true);
+    expect(detail.entries.some((entry) => entry.nextPath === `outputs/source-reviews/${awaiting.source.id}.md`)).toBe(true);
 
+    const sourceSessionsDashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "source-sessions.md"), "utf8");
+    expect(sourceSessionsDashboard).toContain("Pending Guided Bundles");
+    expect(sourceSessionsDashboard).toContain(added.sessionId);
     const sourceGuidesDashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "source-guides.md"), "utf8");
     expect(sourceGuidesDashboard).toContain("Pending Guided Bundles");
-    expect(sourceGuidesDashboard).toContain(added.guide?.approvalId ?? "");
+    expect(sourceGuidesDashboard).toContain(added.approvalId ?? "");
 
-    const guidedAgain = await guideManagedSource(rootDir, added.source.sourceIds[0]!);
-    expect(guidedAgain.approvalId).toBeTruthy();
-    await fs.access(guidedAgain.guidePath);
+    await acceptApproval(rootDir, added.approvalId ?? "");
+    const sessionState = JSON.parse(await fs.readFile(added.sessionStatePath, "utf8")) as { status: string };
+    expect(sessionState.status).toBe("accepted");
+
+    const guidedAgain = await guideManagedSource(rootDir, awaiting.source.sourceIds[0]!);
+    expect(guidedAgain.awaitingInput).toBe(true);
+    await fs.access(guidedAgain.sessionPath ?? "");
   });
 
   it("ingests workspace-local directories even when a parent repo gitignores the workspace", async () => {

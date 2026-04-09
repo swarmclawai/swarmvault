@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- Turned guided ingest into durable guided source sessions, so `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, and the new `swarmvault source session <id>` now create resumable session state under `state/source-sessions/` and markdown anchors under `wiki/outputs/source-sessions/`
+- Kept guided work inside the existing approval queue while upgrading it to stage real durable `wiki/insights/` updates by default, with clear labeling for source-review, source-guide, and guided-update entries plus accept/reject status flowing back into the saved session state
+- Expanded the personal-research profile and dashboards so research-oriented vaults surface active source sessions, pending guided bundles, accepted guided updates, and reading/thesis activity directly in `wiki/dashboards/`
+- Updated packaged smoke coverage, skill docs, localized README parity, and site docs so the installed CLI proves the full guided-session path instead of the older one-shot guide wording
+
 ## 0.5.0
 
 - Added guided-ingest workflows with `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, and `swarmvault source guide <id>`, all built on the existing approval system with labeled guided bundles instead of a separate review subsystem

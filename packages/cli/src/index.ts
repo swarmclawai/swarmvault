@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import process from "node:process";
-import type { SourceClass } from "@swarmvaultai/engine";
+import { createInterface } from "node:readline/promises";
+import type { GuidedSourceSessionQuestion, SourceClass } from "@swarmvaultai/engine";
 import {
   acceptApproval,
   addInput,
@@ -40,6 +41,7 @@ import {
   readApproval,
   rejectApproval,
   reloadManagedSources,
+  resumeSourceSession,
   reviewManagedSource,
   reviewSourceScope,
   runSchedule,
@@ -65,9 +67,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.5.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.6.0";
   } catch {
-    return "0.5.0";
+    return "0.6.0";
   }
 }
 
@@ -129,6 +131,63 @@ function emitNotice(message: string): void {
   process.stderr.write(`[swarmvault] ${message}\n`);
 }
 
+function canPromptGuide(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY && !isJson());
+}
+
+function readGuideAnswersFile(filePath: string | undefined): Record<string, string> | string[] | undefined {
+  if (!filePath) {
+    return undefined;
+  }
+  const raw = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+  if (Array.isArray(raw)) {
+    return raw.filter((value): value is string => typeof value === "string");
+  }
+  if (raw && typeof raw === "object") {
+    return Object.fromEntries(
+      Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string")
+    );
+  }
+  throw new Error("Guide answers files must contain either a JSON object keyed by question id or a JSON array of answers.");
+}
+
+async function promptGuideAnswers(questions: GuidedSourceSessionQuestion[]): Promise<Record<string, string>> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  try {
+    const answers: Record<string, string> = {};
+    for (const question of questions) {
+      const promptLines = [question.prompt];
+      if (question.answer) {
+        promptLines.push(`Current: ${question.answer}`);
+        promptLines.push("Press Enter to keep the current answer.");
+      }
+      const answer = (await rl.question(`${promptLines.join("\n")}\n> `)).trim();
+      if (answer) {
+        answers[question.id] = answer;
+      } else if (question.answer) {
+        answers[question.id] = question.answer;
+      }
+    }
+    return answers;
+  } finally {
+    rl.close();
+  }
+}
+
+async function completeGuideInteractively(
+  guide: Awaited<ReturnType<typeof guideSourceScope>>,
+  fallbackTarget: string
+): Promise<Awaited<ReturnType<typeof guideSourceScope>>> {
+  if (!guide.awaitingInput || !canPromptGuide()) {
+    return guide;
+  }
+  const answers = await promptGuideAnswers(guide.questions);
+  return await resumeSourceSession(process.cwd(), guide.sessionId || fallbackTarget, { answers });
+}
+
 function getCommandPath(command: Command): string[] {
   const names: string[] = [];
   let current: Command | null = command;
@@ -178,6 +237,7 @@ program
   .argument("<input>", "Local file path, directory path, or URL")
   .option("--review", "Stage a source review artifact after ingest and compile", false)
   .option("--guide", "Stage a guided source integration bundle after ingest and compile", false)
+  .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
   .option("--include-assets", "Download remote image assets when ingesting URLs", true)
   .option("--no-include-assets", "Skip downloading remote image assets when ingesting URLs")
   .option("--max-asset-size <bytes>", "Maximum number of bytes to fetch for a single remote image asset")
@@ -205,8 +265,10 @@ program
         gitignore?: boolean;
         review?: boolean;
         guide?: boolean;
+        answersFile?: string;
       }
     ) => {
+      const guideAnswers = readGuideAnswersFile(options.answersFile);
       const maxAssetSize =
         typeof options.maxAssetSize === "string" && options.maxAssetSize.trim()
           ? parsePositiveInt(options.maxAssetSize, 0) || undefined
@@ -274,11 +336,18 @@ program
           shouldStage && options.guide
             ? await (async () => {
                 await compileVault(process.cwd(), {});
-                return await guideSourceScope(process.cwd(), scope!);
+                return await guideSourceScope(process.cwd(), scope!, { answers: guideAnswers });
               })()
             : undefined;
+        const completedGuide = guide && !options.answersFile ? await completeGuideInteractively(guide, scope?.id ?? input) : guide;
         if (isJson()) {
-          emitJson(guide ? { ingest: directoryResult, guide } : review ? { ingest: directoryResult, review } : directoryResult);
+          emitJson(
+            completedGuide
+              ? { ingest: directoryResult, guide: completedGuide }
+              : review
+                ? { ingest: directoryResult, review }
+                : directoryResult
+          );
         } else {
           log(
             `Imported ${directoryResult.imported.length} file(s), updated ${directoryResult.updated.length}, skipped ${directoryResult.skipped.length}.`
@@ -286,8 +355,12 @@ program
           if (review) {
             log(`Staged source review at ${review.reviewPath}.`);
           }
-          if (guide) {
-            log(`Staged source guide at ${guide.guidePath}.`);
+          if (completedGuide?.awaitingInput) {
+            log(
+              `Created guided session at ${completedGuide.sessionPath}. Resume with \`swarmvault source session ${completedGuide.sessionId}\`.`
+            );
+          } else if (completedGuide?.guidePath) {
+            log(`Staged guided session at ${completedGuide.guidePath}.`);
           }
         }
         return;
@@ -305,11 +378,12 @@ program
         options.guide && scope && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
           ? await (async () => {
               await compileVault(process.cwd(), {});
-              return await guideSourceScope(process.cwd(), scope);
+              return await guideSourceScope(process.cwd(), scope, { answers: guideAnswers });
             })()
           : undefined;
+      const completedGuide = guide && !options.answersFile ? await completeGuideInteractively(guide, scope?.id ?? input) : guide;
       if (isJson()) {
-        emitJson(guide ? { ingest, guide } : review ? { ingest, review } : ingest);
+        emitJson(completedGuide ? { ingest, guide: completedGuide } : review ? { ingest, review } : ingest);
       } else {
         const primary = [...ingest.created, ...ingest.updated, ...ingest.unchanged][0];
         if (ingest.created.length + ingest.updated.length + ingest.removed.length <= 1 && primary) {
@@ -322,8 +396,12 @@ program
         if (review) {
           log(`Staged source review at ${review.reviewPath}.`);
         }
-        if (guide) {
-          log(`Staged source guide at ${guide.guidePath}.`);
+        if (completedGuide?.awaitingInput) {
+          log(
+            `Created guided session at ${completedGuide.sessionPath}. Resume with \`swarmvault source session ${completedGuide.sessionId}\`.`
+          );
+        } else if (completedGuide?.guidePath) {
+          log(`Staged guided session at ${completedGuide.guidePath}.`);
         }
       }
     }
@@ -357,21 +435,35 @@ source
   .option("--no-brief", "Skip source brief generation after sync")
   .option("--review", "Stage a source review artifact after sync and compile", false)
   .option("--guide", "Stage a guided source integration bundle after sync and compile", false)
+  .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
   .action(
     async (
       input: string,
-      options: { compile?: boolean; brief?: boolean; review?: boolean; guide?: boolean; maxPages?: string; maxDepth?: string }
+      options: {
+        compile?: boolean;
+        brief?: boolean;
+        review?: boolean;
+        guide?: boolean;
+        answersFile?: string;
+        maxPages?: string;
+        maxDepth?: string;
+      }
     ) => {
+      const guideAnswers = readGuideAnswersFile(options.answersFile);
       const result = await addManagedSource(process.cwd(), input, {
         compile: options.compile,
         brief: options.brief,
         review: options.review,
         guide: options.guide,
+        guideAnswers,
         maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
         maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
       });
+      if (result.guide && !options.answersFile) {
+        result.guide = await completeGuideInteractively(result.guide, result.source.id);
+      }
       if (isJson()) {
         emitJson(result);
       } else {
@@ -380,7 +472,13 @@ source
             `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
             `${result.briefGenerated ? ` Brief: ${result.source.briefPath}` : ""}` +
             `${result.review ? ` Review: ${result.review.reviewPath}` : ""}` +
-            `${result.guide ? ` Guide: ${result.guide.guidePath}` : ""}`
+            `${
+              result.guide?.awaitingInput
+                ? ` Session: ${result.guide.sessionPath}. Resume with \`swarmvault source session ${result.guide.sessionId}\`.`
+                : result.guide?.guidePath
+                  ? ` Guide: ${result.guide.guidePath}`
+                  : ""
+            }`
         );
       }
     }
@@ -411,6 +509,7 @@ source
   .option("--no-brief", "Skip source brief generation after sync")
   .option("--review", "Stage a source review artifact after sync and compile", false)
   .option("--guide", "Stage a guided source integration bundle after sync and compile", false)
+  .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
   .action(
@@ -422,10 +521,12 @@ source
         brief?: boolean;
         review?: boolean;
         guide?: boolean;
+        answersFile?: string;
         maxPages?: string;
         maxDepth?: string;
       }
     ) => {
+      const guideAnswers = readGuideAnswersFile(options.answersFile);
       const result = await reloadManagedSources(process.cwd(), {
         id,
         all: options.all ?? false,
@@ -433,9 +534,13 @@ source
         brief: options.brief,
         review: options.review,
         guide: options.guide,
+        guideAnswers,
         maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
         maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
       });
+      if (!options.answersFile && result.guides.length === 1) {
+        result.guides = [await completeGuideInteractively(result.guides[0]!, result.sources[0]?.id ?? id ?? "source")];
+      }
       if (isJson()) {
         emitJson(result);
       } else {
@@ -444,7 +549,7 @@ source
             `${result.compile ? ` Compiled ${result.compile.sourceCount} source(s).` : ""}` +
             `${result.briefPaths.length ? ` Briefs: ${result.briefPaths.length}.` : ""}` +
             `${result.reviews.length ? ` Reviews: ${result.reviews.length}.` : ""}` +
-            `${result.guides.length ? ` Guides: ${result.guides.length}.` : ""}`
+            `${result.guides.length ? ` Guides/Sessions: ${result.guides.length}.` : ""}`
         );
       }
     }
@@ -478,14 +583,43 @@ source
 
 source
   .command("guide")
-  .description("Stage a guided source integration bundle for a managed source id or raw source id.")
+  .description("Create or resume a guided source session for a managed source id or raw source id.")
   .argument("<id>", "Managed source id or raw source id")
-  .action(async (id: string) => {
-    const result = await guideManagedSource(process.cwd(), id);
+  .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
+  .action(async (id: string, options: { answersFile?: string }) => {
+    const guideAnswers = readGuideAnswersFile(options.answersFile);
+    let result = await guideManagedSource(process.cwd(), id, { answers: guideAnswers });
+    if (!options.answersFile) {
+      result = await completeGuideInteractively(result, id);
+    }
     if (isJson()) {
       emitJson(result);
     } else {
-      log(`Staged source guide at ${result.guidePath}.`);
+      if (result.awaitingInput) {
+        log(`Created guided session at ${result.sessionPath}. Resume with \`swarmvault source session ${result.sessionId}\`.`);
+      } else {
+        log(`Staged guided session at ${result.guidePath}.`);
+      }
+    }
+  });
+
+source
+  .command("session")
+  .description("Resume the latest guided source session for a managed source id, raw source id, source scope id, or session id.")
+  .argument("<id>", "Managed source id, raw source id, source scope id, or guided session id")
+  .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
+  .action(async (id: string, options: { answersFile?: string }) => {
+    const guideAnswers = readGuideAnswersFile(options.answersFile);
+    let result = await resumeSourceSession(process.cwd(), id, { answers: guideAnswers });
+    if (!options.answersFile) {
+      result = await completeGuideInteractively(result, id);
+    }
+    if (isJson()) {
+      emitJson(result);
+    } else if (result.awaitingInput) {
+      log(`Updated guided session at ${result.sessionPath}. Resume with \`swarmvault source session ${result.sessionId}\` when ready.`);
+    } else {
+      log(`Staged guided session at ${result.guidePath}.`);
     }
   });
 
