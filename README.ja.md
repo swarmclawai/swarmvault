@@ -182,7 +182,7 @@ clawhub install swarmvault
 | Images | `.png .jpg .webp` | Vision provider（設定されている場合） |
 | Research | arXiv, DOI, articles, X/Twitter | `swarmvault add` による正規化 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest と軽量な `.rst` 見出し正規化 |
-| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | tree-sitter ベースの AST とモジュール解決 |
+| Code | `.js .jsx .ts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .php .rb .ps1` | tree-sitter ベースの AST とモジュール解決 |
 | Browser clips | inbox bundles | `inbox import` によるアセット書き換え済み Markdown |
 | Managed sources | ローカルディレクトリ、公開 GitHub リポジトリ root URL、docs ハブ URL | `swarmvault source add` によるレジストリ同期 |
 

@@ -214,12 +214,14 @@ describe("tiny validation matrix", () => {
       "jsx",
       "typescript",
       "tsx",
+      "bash",
       "python",
       "go",
       "rust",
       "java",
       "kotlin",
       "scala",
+      "dart",
       "lua",
       "zig",
       "csharp",
@@ -248,6 +250,14 @@ describe("tiny validation matrix", () => {
     const zigManifest = manifests.find((manifest) => manifest.repoRelativePath === "zig/Widget.zig");
     const zigModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${zigManifest?.sourceId}.md`), "utf8");
     expect(zigModulePage).toContain("Language: `zig`");
+
+    const bashManifest = manifests.find((manifest) => manifest.repoRelativePath === "bash/widget.sh");
+    const bashModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${bashManifest?.sourceId}.md`), "utf8");
+    expect(bashModulePage).toContain("Language: `bash`");
+
+    const dartManifest = manifests.find((manifest) => manifest.repoRelativePath === "dart/lib/widget.dart");
+    const dartModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${dartManifest?.sourceId}.md`), "utf8");
+    expect(dartModulePage).toContain("Language: `dart`");
 
     const luaManifest = manifests.find((manifest) => manifest.repoRelativePath === "lua/widget.lua");
     const luaModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${luaManifest?.sourceId}.md`), "utf8");

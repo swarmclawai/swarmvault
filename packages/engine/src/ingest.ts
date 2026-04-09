@@ -142,8 +142,10 @@ type NormalizedIngestOptions = {
   repoAnalysis?: VaultConfig["repoAnalysis"];
 };
 
-function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKind"] {
-  if (inferCodeLanguage(filePath, mimeType)) {
+type CodeLanguageDetectionOptions = Parameters<typeof inferCodeLanguage>[2];
+
+function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLanguageDetectionOptions = {}): SourceManifest["sourceKind"] {
+  if (inferCodeLanguage(filePath, mimeType, detectionOptions)) {
     return "code";
   }
   if (isRstFilePath(filePath)) {
@@ -197,6 +199,26 @@ function inferKind(mimeType: string, filePath: string): SourceManifest["sourceKi
     return "image";
   }
   return "binary";
+}
+
+async function localCodeDetectionOptions(absolutePath: string, payloadBytes?: Buffer): Promise<CodeLanguageDetectionOptions> {
+  if (path.extname(absolutePath)) {
+    return {};
+  }
+  try {
+    const stat = await fs.stat(absolutePath);
+    const executable = Boolean(stat.mode & 0o111);
+    if (!executable) {
+      return { executable: false };
+    }
+    const bytes = payloadBytes ?? (await fs.readFile(absolutePath));
+    return {
+      executable,
+      content: bytes.subarray(0, 256).toString("utf8")
+    };
+  } catch {
+    return {};
+  }
 }
 
 function isRstFilePath(filePath: string): boolean {
@@ -1275,7 +1297,8 @@ async function collectDirectoryFiles(
       }
 
       const mimeType = guessMimeType(absolutePath);
-      let sourceKind = inferKind(mimeType, absolutePath);
+      const detectionOptions = await localCodeDetectionOptions(absolutePath);
+      let sourceKind = inferKind(mimeType, absolutePath, detectionOptions);
       if (sourceKind === "binary" && path.extname(absolutePath).toLowerCase() === ".zip") {
         const bytes = await fs.readFile(absolutePath);
         if (isSlackExportArchive(bytes)) {
@@ -2058,8 +2081,9 @@ async function prepareFileInputs(
     }
   }
   const mimeType = guessMimeType(absoluteInput);
-  const sourceKind = inferKind(mimeType, absoluteInput);
-  const language = inferCodeLanguage(absoluteInput, mimeType);
+  const detectionOptions = await localCodeDetectionOptions(absoluteInput, payloadBytes);
+  const sourceKind = inferKind(mimeType, absoluteInput, detectionOptions);
+  const language = inferCodeLanguage(absoluteInput, mimeType, detectionOptions);
   const storedExtension = path.extname(absoluteInput) || `.${mime.extension(mimeType) || "bin"}`;
 
   let title: string;
@@ -2522,7 +2546,8 @@ async function collectInboxAttachmentRefs(inputDir: string, files: string[]): Pr
 
   for (const absolutePath of files) {
     const mimeType = guessMimeType(absolutePath);
-    const sourceKind = inferKind(mimeType, absolutePath);
+    const detectionOptions = await localCodeDetectionOptions(absolutePath);
+    const sourceKind = inferKind(mimeType, absolutePath, detectionOptions);
     if (sourceKind !== "markdown" && sourceKind !== "html") {
       continue;
     }
@@ -2917,7 +2942,8 @@ export async function importInbox(rootDir: string, inputDir?: string): Promise<I
     }
 
     const mimeType = guessMimeType(absolutePath);
-    let sourceKind = inferKind(mimeType, absolutePath);
+    const detectionOptions = await localCodeDetectionOptions(absolutePath);
+    let sourceKind = inferKind(mimeType, absolutePath, detectionOptions);
     if (sourceKind === "binary" && path.extname(absolutePath).toLowerCase() === ".zip") {
       const bytes = await fs.readFile(absolutePath);
       if (isSlackExportArchive(bytes)) {

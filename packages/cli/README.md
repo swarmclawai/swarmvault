@@ -109,7 +109,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - URL ingest still localizes remote image references by default
 - local file ingest supports markdown, text, reStructuredText, HTML, PDF, DOCX, images, and code
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
-- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Scala, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell
+- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell
 
 Useful flags:
 

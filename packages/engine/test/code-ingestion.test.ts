@@ -451,6 +451,132 @@ describe("code-aware ingestion", () => {
     expect(searchResults.some((result) => result.path === `code/${luaWidgetManifest.sourceId}.md`)).toBe(true);
   });
 
+  it("builds parser-backed module pages for Bash and Dart sources", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, "bash"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, "dart", "lib"), { recursive: true });
+
+    await fs.writeFile(path.join(repoDir, "bash", "helper.sh"), ["format_name() {", '  printf "Bash:%s\\n" "$1"', "}"].join("\n"), "utf8");
+    await fs.writeFile(
+      path.join(repoDir, "bash", "widget.sh"),
+      ["source ./helper.sh", "", "invoke_format() {", '  format_name "$1"', "}", "", "run_widget() {", '  invoke_format "$1"', "}"].join(
+        "\n"
+      ),
+      "utf8"
+    );
+
+    await fs.writeFile(path.join(repoDir, "dart", "pubspec.yaml"), ["name: tiny_app", "description: tiny dart repo"].join("\n"), "utf8");
+    await fs.writeFile(
+      path.join(repoDir, "dart", "lib", "helper.dart"),
+      ["library tiny.app.helper;", "", 'String formatName(String value) => "Dart:$value";'].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "dart", "lib", "widget.dart"),
+      [
+        "library tiny.app.widget;",
+        "",
+        "import 'package:tiny_app/helper.dart';",
+        "",
+        "mixin Loggable {}",
+        "",
+        "class BaseWidget {}",
+        "class Runner {}",
+        "",
+        "extension WidgetLabels on Widget {",
+        "  String label() => decorate('label');",
+        "}",
+        "",
+        "String decorate(String value) => formatName(value);",
+        "",
+        "class Widget extends BaseWidget with Loggable implements Runner {",
+        "  Widget();",
+        "",
+        "  String run() {",
+        "    return decorate('run');",
+        "  }",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    const bashHelperManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("bash/helper.sh"));
+    const bashWidgetManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("bash/widget.sh"));
+    const dartHelperManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("dart/lib/helper.dart"));
+    const dartWidgetManifest = result.imported.find((manifest) => manifest.originalPath?.endsWith("dart/lib/widget.dart"));
+
+    if (!bashHelperManifest || !bashWidgetManifest || !dartHelperManifest || !dartWidgetManifest) {
+      throw new Error("repo-aware ingest did not return the expected Bash and Dart manifests");
+    }
+
+    expect(bashHelperManifest.language).toBe("bash");
+    expect(bashWidgetManifest.language).toBe("bash");
+    expect(dartHelperManifest.language).toBe("dart");
+    expect(dartWidgetManifest.language).toBe("dart");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "bash")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "dart")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "invoke_format")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "run_widget")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget.run")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "Widget.label")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "decorate")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "imports")).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "calls" &&
+          nodeById.get(edge.source)?.label === "run_widget" &&
+          nodeById.get(edge.target)?.label === "invoke_format"
+      )
+    ).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "calls" && nodeById.get(edge.source)?.label === "Widget.run" && nodeById.get(edge.target)?.label === "decorate"
+      )
+    ).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "extends" && nodeById.get(edge.source)?.label === "Widget" && nodeById.get(edge.target)?.label === "BaseWidget"
+      )
+    ).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.relation === "implements" &&
+          nodeById.get(edge.source)?.label === "Widget" &&
+          ["Loggable", "Runner"].includes(nodeById.get(edge.target)?.label ?? "")
+      )
+    ).toBe(true);
+
+    const bashModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${bashWidgetManifest.sourceId}.md`), "utf8");
+    const dartModulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${dartWidgetManifest.sourceId}.md`), "utf8");
+
+    expect(bashModulePage).toContain("Language: `bash`");
+    expect(bashModulePage).toContain("## Imports");
+    expect(bashModulePage).toContain(`code/${bashHelperManifest.sourceId}`);
+
+    expect(dartModulePage).toContain("Language: `dart`");
+    expect(dartModulePage).toContain("Namespace/Package: `tiny.app.widget`");
+    expect(dartModulePage).toContain("## Imports");
+    expect(dartModulePage).toContain(`code/${dartHelperManifest.sourceId}`);
+    expect(dartModulePage).toContain("Widget.label");
+
+    const searchResults = await searchVault(rootDir, "Widget.label", 20);
+    expect(searchResults.some((result) => result.path === `code/${dartWidgetManifest.sourceId}.md`)).toBe(true);
+  });
+
   it("builds parser-backed module pages for C#, PHP, C, and C++ sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -568,6 +694,23 @@ describe("code-aware ingestion", () => {
     expect(kotlinScript.language).toBe("kotlin");
     expect(scalaScript.sourceKind).toBe("code");
     expect(scalaScript.language).toBe("scala");
+  });
+
+  it("detects executable shell scripts by shebang even without an extension", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    const scriptPath = path.join(repoDir, "run-widget");
+    await fs.writeFile(scriptPath, ["#!/usr/bin/env bash", "run_widget() {", "  echo ok", "}"].join("\n"), "utf8");
+    await fs.chmod(scriptPath, 0o755);
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    const manifest = result.imported.find((entry) => entry.originalPath?.endsWith("run-widget"));
+
+    expect(manifest?.sourceKind).toBe("code");
+    expect(manifest?.language).toBe("bash");
   });
 
   it("records a clear diagnostic when a tree-sitter grammar asset is missing without failing unrelated sources", async () => {

@@ -56,7 +56,7 @@ const requiredSubstrings = [
   "clawhub install swarmvault",
   "LLM Wiki",
   "https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f",
-  ".js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1",
+  ".js .jsx .ts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .php .rb .ps1",
   ".epub",
   ".csv .tsv",
   ".xlsx",

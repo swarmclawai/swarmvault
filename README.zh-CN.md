@@ -182,7 +182,7 @@ clawhub install swarmvault
 | Images | `.png .jpg .webp` | Vision provider（已配置时） |
 | Research | arXiv、DOI、文章、X/Twitter | 通过 `swarmvault add` 标准化为 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
-| Code | `.js .jsx .ts .tsx .py .go .rs .java .kt .kts .scala .sc .lua .zig .cs .c .cpp .php .rb .ps1` | 基于 tree-sitter 的 AST 与模块解析 |
+| Code | `.js .jsx .ts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cpp .php .rb .ps1` | 基于 tree-sitter 的 AST 与模块解析 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 | Managed sources | 本地目录、公开 GitHub 仓库根 URL、文档中心 URL | 通过 `swarmvault source add` 的 registry 同步 |
 
