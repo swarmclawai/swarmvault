@@ -246,6 +246,12 @@ try {
       assert.equal(added.briefGenerated, true, "source add did not generate a brief for the local directory source");
       await assertExists(added.source.briefPath);
 
+      const addedAgain = await runCliJson(["source", "add", managedDir]);
+      assert.equal(addedAgain.source.id, added.source.id, "re-adding the same managed directory created a second source id");
+      assert.equal(addedAgain.source.changed, false, "re-adding an unchanged managed directory should report changed=false");
+      assert.equal(addedAgain.compile, undefined, "re-adding an unchanged managed directory should not trigger a compile");
+      assert.equal(addedAgain.briefGenerated, false, "re-adding an unchanged managed directory should not regenerate the brief");
+
       const listed = await runCliJson(["source", "list"]);
       assert.ok(Array.isArray(listed) && listed.some((entry) => entry.id === added.source.id), "source list did not include the managed directory source");
 
@@ -420,6 +426,17 @@ try {
       for (const kind of ["transcript", "email", "calendar", "chat_export"]) {
         assert.ok(importedKinds.has(kind), `personal knowledge ingest did not preserve source kind ${kind}`);
       }
+
+      const transcriptManifest = (ingested.ingest.imported ?? []).find((manifest) => manifest.sourceKind === "transcript");
+      const emailManifest = (ingested.ingest.imported ?? []).find((manifest) => manifest.sourceKind === "email");
+      assert.ok(transcriptManifest?.sourceId, "personal knowledge ingest did not produce a transcript manifest");
+      assert.ok(emailManifest?.sourceId, "personal knowledge ingest did not produce an email manifest");
+      const transcriptPage = await fs.readFile(path.join(workspaceDir, "wiki", "sources", `${transcriptManifest.sourceId}.md`), "utf8");
+      const emailPage = await fs.readFile(path.join(workspaceDir, "wiki", "sources", `${emailManifest.sourceId}.md`), "utf8");
+      assert.ok(transcriptPage.includes("# call"), "transcript source page did not keep a clean title");
+      assert.ok(!transcriptPage.includes("# call Format:"), "transcript source page title leaked extraction metadata into the heading");
+      assert.ok(emailPage.includes("# Research follow-up"), "email source page did not keep the subject as the title");
+      assert.ok(!emailPage.includes("# Research follow-up Date:"), "email source page title leaked extraction metadata into the heading");
 
       await assertExists(path.join(workspaceDir, "wiki", "dashboards", "index.md"));
       await assertExists(path.join(workspaceDir, "wiki", "dashboards", "reading-log.md"));

@@ -2035,6 +2035,19 @@ function shouldCompile(changedSources: ManagedSourceRecord[], graphExists: boole
   return compileRequested && (!graphExists || changedSources.length > 0);
 }
 
+async function shouldRefreshBriefForManagedSource(
+  source: ManagedSourceRecord,
+  options: { compilePerformed: boolean; changed: boolean }
+): Promise<boolean> {
+  if (options.compilePerformed || options.changed) {
+    return true;
+  }
+  if (!source.briefPath) {
+    return true;
+  }
+  return !(await fileExists(source.briefPath));
+}
+
 export async function listManagedSourceRecords(rootDir: string): Promise<ManagedSourceRecord[]> {
   await ensureManagedSourcesArtifact(rootDir);
   return await loadManagedSources(rootDir);
@@ -2075,13 +2088,21 @@ export async function addManagedSource(
   }
   const graphExists = await loadVaultConfig(rootDir).then(({ paths }) => fileExists(paths.graphPath));
   let compile: Awaited<ReturnType<typeof compileVault>> | undefined;
-  if (shouldCompile([synced], graphExists, compileRequested)) {
+  if (shouldCompile(synced.changed ? [synced] : [], graphExists, compileRequested)) {
     compile = await compileVault(rootDir, {});
   }
 
   let briefGenerated = false;
   let briefPath: string | undefined;
-  if (compileRequested && briefRequested && synced.status === "ready") {
+  if (
+    compileRequested &&
+    briefRequested &&
+    synced.status === "ready" &&
+    (await shouldRefreshBriefForManagedSource(synced, {
+      compilePerformed: Boolean(compile),
+      changed: synced.changed
+    }))
+  ) {
     const briefs = await generateBriefsForSources(rootDir, [synced]);
     briefPath = briefs.get(synced.id);
     briefGenerated = Boolean(briefPath);

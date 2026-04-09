@@ -231,9 +231,20 @@ describe("personal knowledge workflows", () => {
 
     const emailManifest = manifests.find((manifest) => manifest.originalPath?.endsWith("message.eml"));
     const emailPage = await fs.readFile(path.join(rootDir, "wiki", "sources", `${emailManifest?.sourceId}.md`), "utf8");
+    const emailPageMatter = matter(emailPage);
+    expect(emailPageMatter.data.title).toBe("Research direction");
+    expect(emailPage).toContain("# Research direction");
+    expect(emailPage).not.toContain("# Research direction Date:");
     expect(emailPage).toContain("occurred_at:");
     expect(emailPage).toContain("participants:");
     expect(emailPage).toContain("conversation_id:");
+
+    const transcriptManifest = manifests.find((manifest) => manifest.sourceKind === "transcript");
+    const transcriptPage = await fs.readFile(path.join(rootDir, "wiki", "sources", `${transcriptManifest?.sourceId}.md`), "utf8");
+    const transcriptPageMatter = matter(transcriptPage);
+    expect(transcriptPageMatter.data.title).toBe("call");
+    expect(transcriptPage).toContain("# call");
+    expect(transcriptPage).not.toContain("# call Format:");
 
     const timelineDashboard = await fs.readFile(path.join(rootDir, "wiki", "dashboards", "timeline.md"), "utf8");
     expect(timelineDashboard).toContain("Research Sync");

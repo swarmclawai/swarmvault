@@ -187,6 +187,27 @@ describe("managed sources", () => {
     expect(missing?.lastError).toContain("File not found");
   });
 
+  it("does not compile or regenerate a brief when re-adding an unchanged managed file source", async () => {
+    const rootDir = await createTempWorkspace();
+    const filePath = path.join(rootDir, "call.srt");
+    await fs.writeFile(filePath, ["1", "00:00:01,000 --> 00:00:02,000", "Managed file source.", ""].join("\n"), "utf8");
+
+    await initVault(rootDir);
+    const first = await addManagedSource(rootDir, filePath);
+    expect(first.source.kind).toBe("file");
+    expect(first.source.changed).toBe(true);
+    expect(first.compile).toBeTruthy();
+    expect(first.briefGenerated).toBe(true);
+    await fs.access(first.source.briefPath ?? "");
+
+    const second = await addManagedSource(rootDir, filePath);
+    expect(second.source.id).toBe(first.source.id);
+    expect(second.source.changed).toBe(false);
+    expect(second.compile).toBeUndefined();
+    expect(second.briefGenerated).toBe(false);
+    expect(second.source.briefPath).toBe(first.source.briefPath);
+  });
+
   it("does not inherit a parent repo root outside the vault for in-vault managed directories", async () => {
     const hostRoot = await createTempWorkspace();
     const rootDir = path.join(hostRoot, "workspace");
