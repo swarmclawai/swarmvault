@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.5
+
+- Fixed source-page, source-brief, source-review, and query context shaping so non-code sources keep their stable manifest titles instead of leaking body snippets and extracted metadata into headings, summaries, and review artifacts
+- Replaced brittle markdown title cleanup in source analysis with a markdown-AST-backed path, reducing false title/body conflation on normal markdown and other text-heavy sources
+- Fixed no-op managed file re-adds so unchanged `source add` runs no longer trigger compile/brief side effects or promote unrelated pages
+- Tightened packaged smoke coverage for the installed CLI path, including clean source-page title assertions for markdown, transcript, and email sources plus a less brittle semantic-graph query check based on seeded source nodes and embedding-backed traversal
+
 ## 0.6.4
 
 - Suppressed the noisy Node 24 `node:sqlite` ExperimentalWarning during normal CLI search-index and search-query runs so installed-package users no longer get spurious stderr output on the default local path
