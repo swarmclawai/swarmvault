@@ -1,3 +1,5 @@
+/// <reference path="./shims.d.ts" />
+
 export { installAgent, installConfiguredAgents } from "./agents.js";
 export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
 export { exportGraphFormat } from "./graph-export.js";

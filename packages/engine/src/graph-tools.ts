@@ -128,6 +128,31 @@ function graphAdjacency(graph: GraphArtifact): Map<string, EdgeNeighbor[]> {
   return adjacency;
 }
 
+const NODE_TYPE_PRIORITY: Record<string, number> = {
+  concept: 6,
+  entity: 5,
+  source: 4,
+  module: 3,
+  symbol: 2,
+  rationale: 1
+};
+
+function nodeTypePriority(type: string): number {
+  return NODE_TYPE_PRIORITY[type] ?? 0;
+}
+
+function compareLabelCandidates(left: GraphNode, right: GraphNode): number {
+  const priorityDelta = nodeTypePriority(right.type) - nodeTypePriority(left.type);
+  if (priorityDelta !== 0) {
+    return priorityDelta;
+  }
+  const degreeDelta = (right.degree ?? 0) - (left.degree ?? 0);
+  if (degreeDelta !== 0) {
+    return degreeDelta;
+  }
+  return left.id.localeCompare(right.id);
+}
+
 function resolveNode(graph: GraphArtifact, target: string): GraphNode | undefined {
   const normalized = normalizeTarget(target);
   const byId = nodeById(graph);
@@ -135,9 +160,12 @@ function resolveNode(graph: GraphArtifact, target: string): GraphNode | undefine
     return byId.get(target);
   }
 
-  const exact = graph.nodes.find((node) => normalizeTarget(node.label) === normalized || normalizeTarget(node.id) === normalized);
-  if (exact) {
-    return exact;
+  // Prefer the most central node when multiple share a label. Previously the
+  // resolver returned the first match, which silently picked leaf nodes over
+  // hub concepts and broke graph path/explain on ambiguous labels.
+  const labelMatches = graph.nodes.filter((node) => normalizeTarget(node.label) === normalized || normalizeTarget(node.id) === normalized);
+  if (labelMatches.length) {
+    return labelMatches.sort(compareLabelCandidates)[0];
   }
 
   const pages = graph.pages
@@ -154,7 +182,7 @@ function resolveNode(graph: GraphArtifact, target: string): GraphNode | undefine
   return graph.nodes
     .map((node) => ({ node, score: Math.max(scoreMatch(target, node.label), scoreMatch(target, node.id)) }))
     .filter((item) => item.score > 0)
-    .sort((left, right) => right.score - left.score || left.node.label.localeCompare(right.node.label))[0]?.node;
+    .sort((left, right) => right.score - left.score || compareLabelCandidates(left.node, right.node))[0]?.node;
 }
 
 function communityLabel(graph: GraphArtifact, communityId: string | undefined): { id: string; label: string } | undefined {

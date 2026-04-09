@@ -162,12 +162,15 @@ export function buildBenchmarkArtifact(input: {
     .filter((entry) => entry.queryTokens > 0)
     .map((entry) => ({
       ...entry,
-      reduction: Number(Math.max(0, 1 - entry.queryTokens / Math.max(1, corpusTokens)).toFixed(3))
+      // Honest reduction: negative values mean graph context is larger than the
+      // full corpus, which is the truth on very small vaults. Clamping to zero
+      // hid that signal.
+      reduction: Number((1 - entry.queryTokens / Math.max(1, corpusTokens)).toFixed(3))
     }));
   const avgQueryTokens = perQuestion.length
     ? Math.max(1, Math.round(perQuestion.reduce((total, entry) => total + entry.queryTokens, 0) / perQuestion.length))
     : 0;
-  const reductionRatio = avgQueryTokens ? Number(Math.max(0, 1 - avgQueryTokens / Math.max(1, corpusTokens)).toFixed(3)) : 0;
+  const reductionRatio = avgQueryTokens ? Number((1 - avgQueryTokens / Math.max(1, corpusTokens)).toFixed(3)) : 0;
   const uniqueVisitedNodes = new Set(perQuestion.flatMap((entry) => entry.visitedNodeIds)).size;
   const summary = {
     questionCount: input.questions.length,

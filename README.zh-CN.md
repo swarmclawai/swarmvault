@@ -98,6 +98,33 @@ swarmvault graph push neo4j --dry-run
 
 其他可选后端、任务路由方式与能力配置请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
 
+### 推荐：通过 Ollama + Gemma 在本地运行 LLM
+
+如果你想要一个完全本地的环境，并获得高质量的 concept、entity 和 claim 提取，推荐搭配使用免费的 [Ollama](https://ollama.com) 运行时和 Google 的 Gemma 模型。不需要 API key。
+
+```bash
+ollama pull gemma4
+```
+
+```json
+{
+  "providers": {
+    "llm": {
+      "type": "ollama",
+      "model": "gemma4",
+      "baseUrl": "http://localhost:11434/v1"
+    }
+  },
+  "tasks": {
+    "compileProvider": "llm",
+    "queryProvider": "llm",
+    "lintProvider": "llm"
+  }
+}
+```
+
+当你只配置 heuristic provider 时，SwarmVault 在 compile/query 命令中会显示一次性提示指向此配置。设置 `SWARMVAULT_NO_NOTICES=1` 可以关闭该提示。任何其他已支持的 provider（OpenAI、Anthropic、Gemini、OpenRouter、Groq、Together、xAI、Cerebras、openai-compatible、custom）同样可用。
+
 如果你想在不使用 API key 的情况下启用本地语义图查询，请使用具备 embeddings 能力的本地后端，例如 Ollama，而不是 `heuristic`：
 
 ```json

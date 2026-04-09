@@ -100,6 +100,33 @@ Add a model provider when you want richer synthesis quality or extra capabilitie
 
 See the [provider docs](https://www.swarmvault.ai/docs/providers) for optional backends, task routing, and capability-specific configuration examples.
 
+### Recommended: local LLM via Ollama + Gemma
+
+If you want a fully local setup with sharp concept, entity, and claim extraction, pair the free [Ollama](https://ollama.com) runtime with Google's Gemma model. No API keys required.
+
+```bash
+ollama pull gemma4
+```
+
+```json
+{
+  "providers": {
+    "llm": {
+      "type": "ollama",
+      "model": "gemma4",
+      "baseUrl": "http://localhost:11434/v1"
+    }
+  },
+  "tasks": {
+    "compileProvider": "llm",
+    "queryProvider": "llm",
+    "lintProvider": "llm"
+  }
+}
+```
+
+When you run compile/query with only the heuristic provider, SwarmVault surfaces a one-time notice pointing you here. Set `SWARMVAULT_NO_NOTICES=1` to silence it. Any other supported provider (OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, custom) works too.
+
 For local semantic graph query without API keys, use an embedding-capable local backend such as Ollama instead of `heuristic`:
 
 ```json

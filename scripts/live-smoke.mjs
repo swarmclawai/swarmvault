@@ -867,7 +867,7 @@ try {
     await assertExists(autoBenchmarkPath);
     const autoBenchmark = JSON.parse(await fs.readFile(autoBenchmarkPath, "utf8"));
     assert.ok(autoBenchmark.graphHash, "compile did not write graphHash into benchmark.json");
-    assert.ok(autoBenchmark.summary?.reductionRatio >= 0, "compile benchmark summary missing reduction ratio");
+    assert.ok(Number.isFinite(autoBenchmark.summary?.reductionRatio), "compile benchmark summary missing reduction ratio");
 
     const graphReportJsonPath = path.join(workspaceDir, "wiki", "graph", "report.json");
     await assertExists(graphReportJsonPath);
@@ -1641,6 +1641,7 @@ try {
       const claude = await runCliJson(["install", "--agent", "claude", "--hook"]);
       const opencode = await runCliJson(["install", "--agent", "opencode", "--hook"]);
       const gemini = await runCliJson(["install", "--agent", "gemini", "--hook"]);
+      const cursor = await runCliJson(["install", "--agent", "cursor"]);
       const copilot = await runCliJson(["install", "--agent", "copilot", "--hook"]);
       const aider = await runCliJson(["install", "--agent", "aider"]);
 
@@ -1648,6 +1649,7 @@ try {
       assert.equal(claude.agent, "claude", "install command returned wrong claude agent");
       assert.equal(opencode.agent, "opencode", "install command returned wrong opencode agent");
       assert.equal(gemini.agent, "gemini", "install command returned wrong gemini agent");
+      assert.equal(cursor.agent, "cursor", "install command returned wrong cursor agent");
       assert.equal(copilot.agent, "copilot", "install command returned wrong copilot agent");
       assert.equal(aider.agent, "aider", "install command returned wrong aider agent");
 
@@ -1655,6 +1657,7 @@ try {
       await assertSamePath(claude.target, path.join(workspaceDir, "CLAUDE.md"), "claude target path mismatch");
       await assertSamePath(opencode.target, path.join(workspaceDir, "AGENTS.md"), "opencode target path mismatch");
       await assertSamePath(gemini.target, path.join(workspaceDir, "GEMINI.md"), "gemini target path mismatch");
+      await assertSamePath(cursor.target, path.join(workspaceDir, ".cursor", "rules", "swarmvault.mdc"), "cursor target path mismatch");
       await assertSamePath(
         copilot.target,
         path.join(workspaceDir, ".github", "copilot-instructions.md"),
@@ -1667,6 +1670,7 @@ try {
       await assertExists(path.join(workspaceDir, ".claude", "settings.json"));
       await assertExists(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js"));
       await assertExists(path.join(workspaceDir, "GEMINI.md"));
+      await assertExists(path.join(workspaceDir, ".cursor", "rules", "swarmvault.mdc"));
       await assertExists(path.join(workspaceDir, "CONVENTIONS.md"));
       await assertExists(path.join(workspaceDir, ".gemini", "settings.json"));
       await assertExists(path.join(workspaceDir, ".gemini", "hooks", "swarmvault-graph-first.js"));
@@ -1680,6 +1684,7 @@ try {
       const claudeSettingsContent = await fs.readFile(path.join(workspaceDir, ".claude", "settings.json"), "utf8");
       const claudeHookContent = await fs.readFile(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js"), "utf8");
       const geminiContent = await fs.readFile(path.join(workspaceDir, "GEMINI.md"), "utf8");
+      const cursorContent = await fs.readFile(path.join(workspaceDir, ".cursor", "rules", "swarmvault.mdc"), "utf8");
       const copilotContent = await fs.readFile(path.join(workspaceDir, ".github", "copilot-instructions.md"), "utf8");
       const conventionsContent = await fs.readFile(path.join(workspaceDir, "CONVENTIONS.md"), "utf8");
       assert.ok(agentsContent.includes("# SwarmVault Rules"), "AGENTS.md missing managed rules");
@@ -1687,6 +1692,9 @@ try {
       assert.ok(claudeSettingsContent.includes("swarmvault-graph-first.js"), "claude settings missing hook helper");
       assert.ok(claudeHookContent.includes("additionalContext"), "claude hook helper missing additionalContext output");
       assert.ok(geminiContent.includes("# SwarmVault Rules"), "GEMINI.md missing managed rules");
+      assert.ok(cursorContent.includes("alwaysApply: true"), "cursor rule missing alwaysApply frontmatter");
+      assert.ok(cursorContent.includes("description: SwarmVault graph-first repository instructions."), "cursor rule missing description");
+      assert.ok(cursorContent.includes("# SwarmVault Rules"), "cursor rule missing managed rules");
       assert.ok(copilotContent.includes("# SwarmVault Repository Instructions"), "copilot instructions missing managed rules");
       assert.ok(conventionsContent.includes("# SwarmVault Conventions"), "CONVENTIONS.md missing managed rules");
       assert.ok(
@@ -1699,6 +1707,7 @@ try {
       assert.ok(
         Array.isArray(gemini.targets) && (await targetListIncludesPath(gemini.targets, path.join(workspaceDir, ".gemini", "settings.json")))
       );
+      assert.ok(Array.isArray(cursor.targets) && (await targetListIncludesPath(cursor.targets, path.join(workspaceDir, ".cursor", "rules", "swarmvault.mdc"))));
       assert.ok(Array.isArray(copilot.targets) && (await targetListIncludesPath(copilot.targets, path.join(workspaceDir, "AGENTS.md"))));
       assert.ok(Array.isArray(aider.targets) && (await targetListIncludesPath(aider.targets, path.join(workspaceDir, ".aider.conf.yml"))));
     });

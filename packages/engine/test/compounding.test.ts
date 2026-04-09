@@ -22,6 +22,7 @@ import {
   searchVault,
   watchVault
 } from "../src/index.js";
+import type { GraphArtifact } from "../src/types.js";
 
 const tempDirs: string[] = [];
 const fixtureDirs: string[] = [];
@@ -702,5 +703,103 @@ describe("compounding loop", () => {
     const exportedHtml = await fs.readFile(exportPath, "utf8");
     expect(exportedHtml).toContain("__SWARMVAULT_EMBEDDED_DATA__");
     expect(exportedHtml).toContain("SwarmVault Graph Export");
+  });
+
+  it("escapes hostile graph and page strings in standalone HTML exports", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await ensureViewerDistFixture();
+
+    const hostilePagePath = path.join(rootDir, "wiki", "outputs", "hostile.md");
+    await fs.mkdir(path.dirname(hostilePagePath), { recursive: true });
+    await fs.writeFile(
+      hostilePagePath,
+      [
+        "---",
+        'title: "</script><img src=x onerror=alert(\\"page-title\\")>"',
+        "---",
+        "",
+        '# </script><img src=x onerror=alert("page-heading")>',
+        "",
+        '</script><img src=x onerror=alert("page-body")>'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const graph: GraphArtifact = {
+      generatedAt: new Date().toISOString(),
+      nodes: [
+        {
+          id: 'node:</script><img src=x onerror=alert("node")>',
+          type: "concept",
+          label: '</script><img src=x onerror=alert("label")>',
+          pageId: "page:hostile",
+          freshness: "fresh",
+          confidence: 1,
+          sourceIds: ["source:hostile"],
+          projectIds: []
+        },
+        {
+          id: "node:beta",
+          type: "entity",
+          label: "Beta",
+          freshness: "fresh",
+          confidence: 1,
+          sourceIds: ["source:beta"],
+          projectIds: []
+        }
+      ],
+      edges: [
+        {
+          id: 'edge:</script><img src=x onerror=alert("edge")>',
+          source: 'node:</script><img src=x onerror=alert("node")>',
+          target: "node:beta",
+          relation: '</script><img src=x onerror=alert("relation")>',
+          status: "extracted",
+          evidenceClass: "extracted",
+          confidence: 1,
+          provenance: ["prov:hostile"]
+        }
+      ],
+      hyperedges: [],
+      communities: [],
+      sources: [],
+      pages: [
+        {
+          id: "page:hostile",
+          path: "outputs/hostile.md",
+          title: "Hostile Output",
+          kind: "output",
+          sourceIds: ["source:hostile"],
+          projectIds: [],
+          nodeIds: ['node:</script><img src=x onerror=alert("node")>'],
+          freshness: "fresh",
+          status: "active",
+          confidence: 1,
+          backlinks: [],
+          schemaHash: "schema",
+          sourceHashes: {},
+          sourceSemanticHashes: {},
+          relatedPageIds: [],
+          relatedNodeIds: [],
+          relatedSourceIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          compiledFrom: [],
+          managedBy: "system"
+        }
+      ]
+    };
+
+    await fs.writeFile(path.join(rootDir, "state", "graph.json"), `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const exportPath = await exportGraphHtml(rootDir, path.join(rootDir, "exports", "graph.html"));
+    const exportedHtml = await fs.readFile(exportPath, "utf8");
+
+    expect(exportedHtml).toContain('"label": "\\u003c/script>\\u003cimg src=x onerror=alert(\\"label\\")>"');
+    expect(exportedHtml).toContain('"title": "\\u003c/script>\\u003cimg src=x onerror=alert(\\"page-title\\")>"');
+    expect(exportedHtml).not.toContain('</script><img src=x onerror=alert("label")>');
+    expect(exportedHtml).not.toContain('</script><img src=x onerror=alert("relation")>');
+    expect(exportedHtml).not.toContain('</script><img src=x onerror=alert("page-body")>');
   });
 });

@@ -795,6 +795,177 @@ describe("code-aware ingestion", () => {
     expect(result.skipped.filter((entry) => entry.reason.startsWith("unsupported_kind"))).toHaveLength(0);
   });
 
+  it("parses multiple Lua sources without emitting spurious tree-sitter diagnostics", async () => {
+    // tree-sitter-lua@0.1.13 leaks wasm state across parses: the first Lua source in a
+    // session parses cleanly, but every subsequent Lua source inherits poisoned state and
+    // reports bogus "syntax error" nodes on fundamentally valid code. The descendant-based
+    // symbol and import walkers still work against the corrupted tree, so we keep those
+    // results and suppress the unreliable grammar diagnostics for Lua specifically.
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "widget.lua"),
+      ['local helper = require("helper")', "", "function renderWidget(name)", "  return helper.formatName(name)", "end", ""].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "helper.lua"),
+      ["local M = {}", "", "function M.formatName(name)", '  return "Lua:" .. name', "end", "", "return M", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    expect(result.imported).toHaveLength(2);
+
+    await compileVault(rootDir);
+
+    for (const entry of result.imported) {
+      const analysisPath = path.join(rootDir, "state", "analyses", `${entry.sourceId}.json`);
+      const analysis = JSON.parse(await fs.readFile(analysisPath, "utf8")) as SourceAnalysis;
+      expect(analysis.code?.diagnostics ?? [], `${entry.repoRelativePath} should have no diagnostics`).toHaveLength(0);
+      expect(analysis.code?.symbols.length, `${entry.repoRelativePath} should extract symbols`).toBeGreaterThan(0);
+    }
+  });
+
+  it("tracks Rust `mod` declarations as local module imports that resolve to sibling files", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, "src"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "src", "lib.rs"),
+      [
+        "mod fmt;",
+        "",
+        "pub trait Renderable {}",
+        "pub struct Widget;",
+        "impl Renderable for Widget {}",
+        "",
+        "pub fn render(name: &str) -> String {",
+        "    fmt::format_name(name)",
+        "}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "src", "fmt.rs"),
+      ["pub fn format_name(name: &str) -> String {", '    format!("Rust:{name}")', "}", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    expect(result.imported).toHaveLength(2);
+
+    await compileVault(rootDir);
+
+    const libManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("lib.rs"));
+    const fmtManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("fmt.rs"));
+    expect(libManifest).toBeDefined();
+    expect(fmtManifest).toBeDefined();
+
+    const libAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${libManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const modImport = libAnalysis.code?.imports.find((entry) => entry.specifier === "self::fmt");
+    expect(modImport, "mod fmt; should appear as a local import with specifier self::fmt").toBeDefined();
+    expect(modImport?.isExternal).toBe(false);
+    expect(modImport?.resolvedSourceId).toBe(fmtManifest?.sourceId);
+  });
+
+  it("resolves Ruby `require_relative` sibling files even when the specifier is a bare name", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, "lib"), { recursive: true });
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "lib", "widget.rb"),
+      [
+        'require_relative "helper"',
+        "",
+        "module Tiny",
+        "  class Widget",
+        "    def render(name)",
+        "      Tiny.format_label(name)",
+        "    end",
+        "  end",
+        "end",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "lib", "helper.rb"),
+      ["module Tiny", "  def self.format_label(name)", '    "Ruby:#{name}"', "  end", "end", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    expect(result.imported).toHaveLength(2);
+
+    await compileVault(rootDir);
+
+    const widgetManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("widget.rb"));
+    const helperManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("helper.rb"));
+    const widgetAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${widgetManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+
+    const requireRelative = widgetAnalysis.code?.imports[0];
+    expect(requireRelative, "widget.rb should record the require_relative import").toBeDefined();
+    expect(requireRelative?.isExternal).toBe(false);
+    expect(requireRelative?.resolvedSourceId).toBe(helperManifest?.sourceId);
+  });
+
+  it("resolves PowerShell dot-source imports that reference $PSScriptRoot", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const repoDir = path.join(rootDir, "repo");
+    await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoDir, "Widget.ps1"),
+      [
+        '. "$PSScriptRoot/Helper.ps1"',
+        "",
+        "function Invoke-Widget {",
+        "  param([string]$Name)",
+        "  return Format-Label -Name $Name",
+        "}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(repoDir, "Helper.ps1"),
+      ["function Format-Label {", "  param([string]$Name)", '  return "PS:$Name"', "}", ""].join("\n"),
+      "utf8"
+    );
+
+    const result = await ingestDirectory(rootDir, repoDir, { repoRoot: repoDir });
+    expect(result.imported).toHaveLength(2);
+
+    await compileVault(rootDir);
+
+    const widgetManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("Widget.ps1"));
+    const helperManifest = result.imported.find((entry) => entry.repoRelativePath?.endsWith("Helper.ps1"));
+    const widgetAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${widgetManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+
+    const dotSource = widgetAnalysis.code?.imports[0];
+    expect(dotSource, "Widget.ps1 should record the dot-source import").toBeDefined();
+    expect(dotSource?.isExternal).toBe(false);
+    expect(dotSource?.resolvedSourceId).toBe(helperManifest?.sourceId);
+  });
+
   it("records a clear diagnostic when a tree-sitter grammar asset is missing without failing unrelated sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

@@ -986,6 +986,15 @@ function rubyStringContent(node: TreeNode | null | undefined): string | undefine
   return contentNode?.text.trim() || undefined;
 }
 
+function normalizePowerShellDotSourceSpecifier(raw: string): string {
+  const unquoted = raw.replace(/^['"]+|['"]+$/g, "").trim();
+  // `$PSScriptRoot` is the directory containing the currently-executing script in
+  // PowerShell, so it is equivalent to a sibling path relative to the current file.
+  // Normalize both `$PSScriptRoot/Foo.ps1` and the rarer `$PSScriptRoot\Foo.ps1` to
+  // `./Foo.ps1` so the downstream local-path resolver can find them.
+  return unquoted.replace(/^\$PSScriptRoot(?:[\\/]+|$)/i, "./");
+}
+
 function parsePowerShellImport(commandNode: TreeNode): CodeImport | undefined {
   const commandName = commandNode
     .descendantsOfType(["command_name", "command_name_expr"])
@@ -997,10 +1006,10 @@ function parsePowerShellImport(commandNode: TreeNode): CodeImport | undefined {
     .map((item) => item.text.trim());
 
   if (commandNode.namedChildren.some((child) => child?.type === "command_invokation_operator")) {
-    const specifier = commandName?.trim();
-    if (specifier) {
+    const raw = commandName?.trim();
+    if (raw) {
       return {
-        specifier,
+        specifier: normalizePowerShellDotSourceSpecifier(raw),
         importedSymbols: [],
         isExternal: false,
         reExport: false
@@ -1519,6 +1528,24 @@ function rustCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
     }
     if (child.type === "use_declaration") {
       imports.push(parseRustUse(child.text));
+      continue;
+    }
+    if (child.type === "mod_item") {
+      // `mod foo;` declares a child module that lives in a sibling file; this is the Rust
+      // equivalent of a local import. An inline module `mod foo { ... }` has a
+      // declaration_list child and is not an import of a sibling file.
+      const hasInlineBody = child.namedChildren.some((item) => item?.type === "declaration_list");
+      if (!hasInlineBody) {
+        const modName = extractIdentifier(child.childForFieldName("name") ?? findNamedChild(child, "identifier"));
+        if (modName) {
+          imports.push({
+            specifier: `self::${modName}`,
+            importedSymbols: [],
+            isExternal: false,
+            reExport: false
+          });
+        }
+      }
       continue;
     }
 
@@ -2186,8 +2213,13 @@ function rubyCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
         if (callee === "require" || callee === "require_relative") {
           const specifier = rubyStringContent(child.childForFieldName("arguments") ?? child.namedChildren.at(1) ?? null);
           if (specifier) {
+            // `require_relative` is always resolved relative to the current file, even
+            // for bare names like `require_relative "helper"`. Normalize bare names to a
+            // `./` prefix so the downstream local-path resolver recognizes them.
+            const normalizedSpecifier =
+              callee === "require_relative" && !specifier.startsWith(".") && !specifier.startsWith("/") ? `./${specifier}` : specifier;
             imports.push({
-              specifier,
+              specifier: normalizedSpecifier,
               importedSymbols: [],
               isExternal: callee === "require" && !specifier.startsWith("."),
               reExport: false
@@ -2487,7 +2519,14 @@ export async function analyzeTreeSitterCode(
   }
 
   try {
-    const diagnostics = diagnosticsFromTree(tree.rootNode);
+    // tree-sitter-lua@0.1.13 leaks wasm state across parses: the first Lua source in a
+    // session parses cleanly, but every subsequent Lua source inherits a poisoned parser
+    // state and reports spurious "syntax error" nodes on fundamentally valid code (e.g.
+    // `require(...)` calls or empty `{}` table constructors). The descendant-based symbol
+    // and import walkers below still work against the corrupted tree because they find
+    // nodes by type rather than by structural position, so the actual extraction stays
+    // correct; only the grammar-level diagnostics are unreliable. Suppress them for Lua.
+    const diagnostics = language === "lua" ? [] : diagnosticsFromTree(tree.rootNode);
     const rationales = extractTreeSitterRationales(manifest, language, tree.rootNode);
     switch (language) {
       case "bash":

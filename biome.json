@@ -41,7 +41,14 @@
       "!node_modules",
       "!.next",
       "!out",
-      "!pnpm-lock.yaml"
+      "!pnpm-lock.yaml",
+      "!**/raw",
+      "!**/wiki",
+      "!**/state",
+      "!**/agent",
+      "!**/inbox",
+      "!**/.claude",
+      "!**/.cursor"
     ]
   }
 }

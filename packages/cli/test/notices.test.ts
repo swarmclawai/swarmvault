@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { collectCliNotices, shouldEmitCliNotices } from "../src/notices.js";
+import { collectCliNotices, collectHeuristicProviderNotice, shouldEmitCliNotices } from "../src/notices.js";
 
 const tempDirs: string[] = [];
 
@@ -127,6 +127,77 @@ describe("collectCliNotices", () => {
 
     expect(notices).toEqual([]);
     expect(fetchLatestVersion).not.toHaveBeenCalled();
+  });
+});
+
+describe("collectHeuristicProviderNotice", () => {
+  it("emits a notice recommending ollama gemma4 and throttles to one per week", async () => {
+    const { statePath } = await createStatePath();
+    const baseOptions = {
+      env: {},
+      statePath,
+      stderrIsTTY: true,
+      stdoutIsTTY: true
+    } as const;
+
+    const first = await collectHeuristicProviderNotice({
+      ...baseOptions,
+      now: new Date("2026-04-08T12:00:00.000Z")
+    });
+    expect(first).toBeTruthy();
+    expect(first).toContain("ollama pull gemma4");
+    expect(first).toContain("heuristic analyzer");
+
+    const second = await collectHeuristicProviderNotice({
+      ...baseOptions,
+      now: new Date("2026-04-09T12:00:00.000Z")
+    });
+    expect(second).toBeNull();
+
+    const third = await collectHeuristicProviderNotice({
+      ...baseOptions,
+      now: new Date("2026-04-16T13:00:00.000Z")
+    });
+    expect(third).toBeTruthy();
+  });
+
+  it("suppresses the heuristic notice in json, CI, and non-tty modes", async () => {
+    const { statePath } = await createStatePath();
+    const jsonResult = await collectHeuristicProviderNotice({
+      env: {},
+      statePath,
+      stderrIsTTY: true,
+      stdoutIsTTY: true,
+      json: true
+    });
+    expect(jsonResult).toBeNull();
+
+    const ciResult = await collectHeuristicProviderNotice({
+      env: { CI: "1" },
+      statePath,
+      stderrIsTTY: true,
+      stdoutIsTTY: true
+    });
+    expect(ciResult).toBeNull();
+
+    const nonTtyResult = await collectHeuristicProviderNotice({
+      env: {},
+      statePath,
+      stderrIsTTY: false,
+      stdoutIsTTY: true
+    });
+    expect(nonTtyResult).toBeNull();
+  });
+
+  it("honors SWARMVAULT_NO_NOTICES", async () => {
+    const { statePath } = await createStatePath();
+    const result = await collectHeuristicProviderNotice({
+      env: { SWARMVAULT_NO_NOTICES: "1" },
+      statePath,
+      stderrIsTTY: true,
+      stdoutIsTTY: true
+    });
+    expect(result).toBeNull();
   });
 });
 

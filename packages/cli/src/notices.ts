@@ -4,15 +4,30 @@ import os from "node:os";
 import path from "node:path";
 
 const NOTICE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const HEURISTIC_NOTICE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NOTICE_TIMEOUT_MS = 2_000;
 const STAR_URL = "https://github.com/swarmclawai/swarmvault";
 const NPM_PACKAGE = "@swarmvaultai/cli";
 const SUPPRESSED_COMMANDS = new Set(["graph serve", "mcp", "schedule serve", "watch"]);
 
+export const HEURISTIC_NOTICE_MESSAGE = [
+  "SwarmVault is using the heuristic analyzer for compile/query.",
+  "For much sharper concepts, entities, and summaries, configure an LLM provider.",
+  "Recommended local setup:",
+  "  ollama pull gemma4",
+  "then add to swarmvault.config.json:",
+  '  "providers": { "llm": { "type": "ollama", "model": "gemma4" } },',
+  '  "tasks": { "compileProvider": "llm", "queryProvider": "llm" }',
+  "You can also configure openai, anthropic, gemini, openrouter, groq, together, xai,",
+  "cerebras, or any openai-compatible endpoint as a provider.",
+  "Set SWARMVAULT_NO_NOTICES=1 to hide this notice."
+].join("\n");
+
 export interface CliNoticeState {
   lastUpdateCheckAt?: string;
   lastSeenLatestVersion?: string;
   starPromptShown?: boolean;
+  lastHeuristicNoticeAt?: string;
 }
 
 export interface CliNoticeOptions {
@@ -55,6 +70,54 @@ export function shouldEmitCliNotices(options: CliNoticeOptions): boolean {
   }
   const commandKey = options.commandPath.join(" ").trim();
   return !SUPPRESSED_COMMANDS.has(commandKey);
+}
+
+export interface HeuristicNoticeOptions {
+  json?: boolean;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+  statePath?: string;
+  commandPath?: string[];
+  stderrIsTTY?: boolean;
+  stdoutIsTTY?: boolean;
+}
+
+/**
+ * Emits the heuristic-provider notice at most once per week per install.
+ * Returns the notice string if it should be surfaced, otherwise null.
+ * Respects the same suppression rules as `shouldEmitCliNotices`.
+ */
+export async function collectHeuristicProviderNotice(options: HeuristicNoticeOptions): Promise<string | null> {
+  if (
+    !shouldEmitCliNotices({
+      commandPath: options.commandPath ?? ["compile"],
+      currentVersion: "",
+      json: options.json,
+      env: options.env,
+      stderrIsTTY: options.stderrIsTTY,
+      stdoutIsTTY: options.stdoutIsTTY
+    })
+  ) {
+    return null;
+  }
+
+  const env = options.env ?? process.env;
+  const statePath = options.statePath ?? resolveCliStatePath(env);
+  if (!statePath) {
+    return null;
+  }
+
+  const state = await readNoticeState(statePath);
+  const now = options.now ?? new Date();
+  const lastMs = state.lastHeuristicNoticeAt ? Date.parse(state.lastHeuristicNoticeAt) : Number.NaN;
+  const dueForReminder = !Number.isFinite(lastMs) || now.getTime() - lastMs >= HEURISTIC_NOTICE_TTL_MS;
+  if (!dueForReminder) {
+    return null;
+  }
+
+  const nextState: CliNoticeState = { ...state, lastHeuristicNoticeAt: now.toISOString() };
+  await writeNoticeState(statePath, nextState);
+  return HEURISTIC_NOTICE_MESSAGE;
 }
 
 export async function collectCliNotices(options: CliNoticeOptions): Promise<string[]> {

@@ -1,4 +1,5 @@
 import path from "node:path";
+import nlp from "compromise";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { z } from "zod";
 import { analyzeCodeSource } from "./code-analysis.js";
@@ -108,11 +109,40 @@ function extractTopTerms(text: string, count: number): string[] {
 }
 
 function extractEntities(text: string, count: number): string[] {
-  const matches = text.match(/\b[A-Z][A-Za-z0-9-]+(?:\s+[A-Z][A-Za-z0-9-]+){0,2}\b/g) ?? [];
-  return uniqueBy(
-    matches.map((value) => normalizeWhitespace(value)),
-    (value) => value.toLowerCase()
-  ).slice(0, count);
+  // Prefer compromise's POS tagger so common determiners/pronouns ("The",
+  // "This", "Each") are never treated as named entities. We pull a union of
+  // proper nouns, people, places, organizations, and topics then preserve
+  // original insertion order so higher-signal terms appear first.
+  const candidates: string[] = [];
+  try {
+    const doc = nlp(text);
+    const segments = [
+      doc.match("#ProperNoun+").out("array") as string[],
+      doc.people().out("array") as string[],
+      doc.places().out("array") as string[],
+      doc.organizations().out("array") as string[],
+      doc.topics().out("array") as string[]
+    ];
+    for (const segment of segments) {
+      for (const term of segment) {
+        const normalized = normalizeWhitespace(term);
+        if (normalized) {
+          candidates.push(normalized);
+        }
+      }
+    }
+  } catch {
+    // compromise failed to parse — fall through to the regex fallback.
+  }
+
+  if (candidates.length === 0) {
+    // Narrow regex fallback for cases where compromise produced nothing
+    // (very short text, non-English prose, etc).
+    const matches = text.match(/\b[A-Z][A-Za-z0-9-]+(?:\s+[A-Z][A-Za-z0-9-]+){0,2}\b/g) ?? [];
+    candidates.push(...matches.map((value) => normalizeWhitespace(value)));
+  }
+
+  return uniqueBy(candidates, (value) => value.toLowerCase()).slice(0, count);
 }
 
 function detectPolarity(text: string): Polarity {

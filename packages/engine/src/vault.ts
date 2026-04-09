@@ -5226,6 +5226,14 @@ function extractClaimSectionLines(content: string): string[] | null {
   return found ? claimLines : null;
 }
 
+function isClaimPlaceholderBullet(line: string): boolean {
+  // Compiler fallbacks emit marker bullets like "- No claims extracted." when
+  // a source has nothing to extract. These are intentional "no claims" markers
+  // rather than genuine uncited claims and should not trigger the linter.
+  const trimmed = line.trim();
+  return /^-\s+No\s+claims\s+extracted\.?$/i.test(trimmed);
+}
+
 function structuralLintFindings(
   _rootDir: string,
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
@@ -5285,7 +5293,9 @@ function structuralLintFindings(
         const content = await fs.readFile(absolutePath, "utf8");
         const claimLines = extractClaimSectionLines(content);
         if (claimLines !== null) {
-          const uncited = claimLines.filter((line) => line.startsWith("- ") && !line.includes("[source:"));
+          const uncited = claimLines.filter(
+            (line) => line.startsWith("- ") && !line.includes("[source:") && !isClaimPlaceholderBullet(line)
+          );
           if (uncited.length) {
             findings.push({
               severity: "warning",

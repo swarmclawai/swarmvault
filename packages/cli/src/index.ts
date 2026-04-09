@@ -53,7 +53,7 @@ import {
   watchVault
 } from "@swarmvaultai/engine";
 import { Command, Option } from "commander";
-import { collectCliNotices } from "./notices.js";
+import { collectCliNotices, collectHeuristicProviderNotice } from "./notices.js";
 
 const program = new Command();
 const CLI_VERSION = readCliVersion();
@@ -67,9 +67,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.6.6";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.6.7";
   } catch {
-    return "0.6.6";
+    return "0.6.7";
   }
 }
 
@@ -129,6 +129,34 @@ function log(message: string): void {
 
 function emitNotice(message: string): void {
   process.stderr.write(`[swarmvault] ${message}\n`);
+}
+
+async function maybeEmitHeuristicNotice(commandPath: string[]): Promise<void> {
+  if (isJson()) {
+    return;
+  }
+  try {
+    const { config } = await loadVaultConfig(process.cwd());
+    const analysisTaskKeys = ["compileProvider", "queryProvider", "lintProvider"] as const;
+    const usingHeuristic = analysisTaskKeys.every((task) => {
+      const providerId = config.tasks[task];
+      const providerConfig = config.providers[providerId];
+      return !providerConfig || providerConfig.type === "heuristic";
+    });
+    if (!usingHeuristic) {
+      return;
+    }
+    const notice = await collectHeuristicProviderNotice({
+      commandPath,
+      json: isJson()
+    });
+    if (notice) {
+      emitNotice(notice);
+    }
+  } catch {
+    // Workspace may not be initialized yet, or config may be unreadable.
+    // Never let notice emission block or fail the real command.
+  }
 }
 
 function canPromptGuide(): boolean {
@@ -657,6 +685,7 @@ program
         log(`Compiled ${result.sourceCount} source(s), ${result.pageCount} page(s). Changed: ${result.changedPages.length}.`);
       }
     }
+    await maybeEmitHeuristicNotice(["compile"]);
   });
 
 program
@@ -681,6 +710,7 @@ program
         log(`Saved to ${result.savedPath}`);
       }
     }
+    await maybeEmitHeuristicNotice(["query"]);
   });
 
 program
@@ -706,6 +736,7 @@ program
       log(`Exploration hub saved to ${result.hubPath}`);
       log(`Completed ${result.stepCount} step(s).`);
     }
+    await maybeEmitHeuristicNotice(["explore"]);
   });
 
 program
@@ -721,7 +752,13 @@ program
     } else {
       log(`Corpus tokens: ${result.corpusTokens}`);
       log(`Average query tokens: ${result.avgQueryTokens}`);
-      log(`Reduction ratio: ${(result.reductionRatio * 100).toFixed(1)}%`);
+      const ratioPercent = (result.reductionRatio * 100).toFixed(1);
+      log(`Reduction ratio: ${ratioPercent}%`);
+      if (result.reductionRatio < 0) {
+        log(
+          "Note: graph-guided context is larger than the full corpus on this vault. The benchmark is only meaningful once the corpus exceeds the graph traversal budget."
+        );
+      }
     }
   });
 
@@ -838,7 +875,7 @@ graph
 
 graph
   .command("export")
-  .description("Export the graph as HTML, SVG, GraphML, or Cypher.")
+  .description("Export the graph as HTML, SVG, GraphML, or Cypher. Combine flags to write multiple formats in one run.")
   .option("--html <output>", "Output HTML file path")
   .option("--svg <output>", "Output SVG file path")
   .option("--graphml <output>", "Output GraphML file path")
@@ -852,19 +889,25 @@ graph
       options.cypher ? ({ format: "cypher", outputPath: options.cypher } as const) : null
     ].filter((target): target is NonNullable<typeof target> => Boolean(target));
 
-    if (targets.length !== 1) {
-      throw new Error("Pass exactly one of --html, --svg, --graphml, or --cypher.");
+    if (targets.length === 0) {
+      throw new Error("Pass at least one of --html, --svg, --graphml, or --cypher.");
     }
 
-    const target = targets[0];
-    const outputPath =
-      target.format === "html"
-        ? await exportGraphHtml(process.cwd(), target.outputPath, { full: options.full ?? false })
-        : (await exportGraphFormat(process.cwd(), target.format, target.outputPath)).outputPath;
+    const results: Array<{ format: string; outputPath: string }> = [];
+    for (const target of targets) {
+      const outputPath =
+        target.format === "html"
+          ? await exportGraphHtml(process.cwd(), target.outputPath, { full: options.full ?? false })
+          : (await exportGraphFormat(process.cwd(), target.format, target.outputPath)).outputPath;
+      results.push({ format: target.format, outputPath });
+    }
+
     if (isJson()) {
-      emitJson({ format: target.format, outputPath });
+      emitJson(results.length === 1 ? results[0] : { exports: results });
     } else {
-      log(`Exported graph ${target.format} to ${outputPath}`);
+      for (const result of results) {
+        log(`Exported graph ${result.format} to ${result.outputPath}`);
+      }
     }
   });
 

@@ -420,7 +420,7 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, ".obsidian", "workspace.json"))).resolves.toBeUndefined();
   });
 
-  it("installs agent instructions for goose, pi, opencode, aider, copilot, and gemini targets", async () => {
+  it("installs agent instructions for goose, pi, opencode, aider, copilot, gemini, and cursor targets", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
 
@@ -430,6 +430,7 @@ describe("swarmvault workflow", () => {
     const aiderTarget = await installAgent(rootDir, "aider");
     const copilotTarget = await installAgent(rootDir, "copilot");
     const geminiTarget = await installAgent(rootDir, "gemini");
+    const cursorTarget = await installAgent(rootDir, "cursor");
 
     expect(gooseTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
     expect(piTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
@@ -437,6 +438,7 @@ describe("swarmvault workflow", () => {
     expect(aiderTarget.target).toBe(path.join(rootDir, "CONVENTIONS.md"));
     expect(copilotTarget.target).toBe(path.join(rootDir, ".github", "copilot-instructions.md"));
     expect(geminiTarget.target).toBe(path.join(rootDir, "GEMINI.md"));
+    expect(cursorTarget.target).toBe(path.join(rootDir, ".cursor", "rules", "swarmvault.mdc"));
     expect(aiderTarget.targets).toContain(path.join(rootDir, ".aider.conf.yml"));
     expect(copilotTarget.targets).toContain(path.join(rootDir, "AGENTS.md"));
 
@@ -444,12 +446,22 @@ describe("swarmvault workflow", () => {
     const geminiContent = await fs.readFile(geminiTarget.target, "utf8");
     const conventionsContent = await fs.readFile(aiderTarget.target, "utf8");
     const copilotContent = await fs.readFile(copilotTarget.target, "utf8");
+    const cursorContent = await fs.readFile(cursorTarget.target, "utf8");
+    const parsedCursor = matter(cursorContent);
     expect(agentsContent).toContain("# SwarmVault Rules");
     expect(agentsContent.match(/swarmvault:managed:start/g)?.length ?? 0).toBe(1);
     expect(geminiContent).toContain("# SwarmVault Rules");
     expect(conventionsContent).toContain("# SwarmVault Conventions");
     expect(copilotContent).toContain("# SwarmVault Repository Instructions");
+    expect(parsedCursor.data.description).toBe("SwarmVault graph-first repository instructions.");
+    expect(parsedCursor.data.alwaysApply).toBe(true);
+    expect(parsedCursor.content).toContain("# SwarmVault Rules");
+    expect(parsedCursor.content.match(/swarmvault:managed:start/g)?.length ?? 0).toBe(1);
     expect(await fs.readFile(path.join(rootDir, ".aider.conf.yml"), "utf8")).toContain("CONVENTIONS.md");
+
+    await installAgent(rootDir, "cursor");
+    const cursorContentAgain = await fs.readFile(cursorTarget.target, "utf8");
+    expect(cursorContentAgain).toBe(cursorContent);
   });
 
   it("installs Claude rules with an optional graph-first pre-search hook", async () => {
@@ -1336,7 +1348,7 @@ describe("swarmvault workflow", () => {
     };
     expect(autoBenchmarkArtifact.graphHash).toBeTruthy();
     expect(autoBenchmarkArtifact.sampleQuestions.length).toBeGreaterThan(0);
-    expect(autoBenchmarkArtifact.summary.reductionRatio).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(autoBenchmarkArtifact.summary.reductionRatio)).toBe(true);
 
     const autoGraphReportArtifact = JSON.parse(await fs.readFile(path.join(rootDir, "wiki", "graph", "report.json"), "utf8")) as {
       benchmark?: { stale: boolean; summary: { reductionRatio: number } };
@@ -1345,7 +1357,7 @@ describe("swarmvault workflow", () => {
     };
     expect(autoGraphReportArtifact.overview.nodes).toBeGreaterThan(0);
     expect(autoGraphReportArtifact.benchmark?.stale).toBe(false);
-    expect(autoGraphReportArtifact.benchmark?.summary.reductionRatio).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(autoGraphReportArtifact.benchmark?.summary.reductionRatio ?? Number.NaN)).toBe(true);
     expect(autoGraphReportArtifact.suggestedQuestions.length).toBeGreaterThan(0);
 
     const benchmark = await benchmarkVault(rootDir, {
@@ -1372,6 +1384,102 @@ describe("swarmvault workflow", () => {
     expect(await fs.readFile(svg.outputPath, "utf8")).toContain("<svg");
     expect(await fs.readFile(graphml.outputPath, "utf8")).toContain("<graphml");
     expect(await fs.readFile(cypher.outputPath, "utf8")).toContain("MERGE (n:SwarmNode");
+  });
+
+  it("escapes hostile graph strings safely in svg and graphml exports", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const graph: GraphArtifact = {
+      generatedAt: new Date().toISOString(),
+      nodes: [
+        {
+          id: 'node:</script><img src=x onerror=alert("node")>',
+          type: "concept",
+          label: '</script><img src=x onerror=alert("label")>',
+          pageId: 'page:</script><svg onload=alert("page")>',
+          freshness: "fresh",
+          confidence: 1,
+          sourceIds: ["source:</script><b>one</b>"],
+          projectIds: [],
+          communityId: 'community:</script><math href="evil">'
+        },
+        {
+          id: "node:beta",
+          type: "entity",
+          label: "Beta",
+          freshness: "fresh",
+          confidence: 1,
+          sourceIds: ["source:two"],
+          projectIds: []
+        }
+      ],
+      edges: [
+        {
+          id: 'edge:</script><img src=x onerror=alert("edge")>',
+          source: 'node:</script><img src=x onerror=alert("node")>',
+          target: "node:beta",
+          relation: '</script><img src=x onerror=alert("relation")>',
+          status: "extracted",
+          evidenceClass: "extracted",
+          confidence: 1,
+          provenance: ['prov:</script><img src=x onerror=alert("prov")>']
+        }
+      ],
+      hyperedges: [],
+      communities: [
+        {
+          id: 'community:</script><math href="evil">',
+          label: '</script><img src=x onerror=alert("community")>',
+          nodeIds: ['node:</script><img src=x onerror=alert("node")>', "node:beta"]
+        }
+      ],
+      sources: [],
+      pages: [
+        {
+          id: 'page:</script><svg onload=alert("page")>',
+          path: 'outputs/</script><img src=x onerror=alert("path")>.md',
+          title: '</script><img src=x onerror=alert("title")>',
+          kind: "output",
+          sourceIds: ["source:</script><b>one</b>"],
+          projectIds: [],
+          nodeIds: ['node:</script><img src=x onerror=alert("node")>'],
+          freshness: "fresh",
+          status: "active",
+          confidence: 1,
+          backlinks: [],
+          schemaHash: "schema",
+          sourceHashes: {},
+          sourceSemanticHashes: {},
+          relatedPageIds: [],
+          relatedNodeIds: [],
+          relatedSourceIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          compiledFrom: [],
+          managedBy: "system"
+        }
+      ]
+    };
+
+    await fs.writeFile(path.join(rootDir, "state", "graph.json"), `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const exportsDir = path.join(rootDir, "exports");
+    const svg = await exportGraphFormat(rootDir, "svg", path.join(exportsDir, "graph.svg"));
+    const graphml = await exportGraphFormat(rootDir, "graphml", path.join(exportsDir, "graph.graphml"));
+
+    const svgContent = await fs.readFile(svg.outputPath, "utf8");
+    const graphmlContent = await fs.readFile(graphml.outputPath, "utf8");
+
+    expect(svgContent).toContain("&lt;/script&gt;&lt;img src=x onerror=alert(&quot;label&quot;)&gt;");
+    expect(svgContent).toContain("page=outputs/&lt;/script&gt;&lt;img src=x onerror=alert(&quot;path&quot;)&gt;.md");
+    expect(svgContent).not.toContain('</script><img src=x onerror=alert("label")>');
+    expect(svgContent).not.toContain('</script><img src=x onerror=alert("relation")>');
+
+    expect(graphmlContent).toContain("&lt;/script&gt;&lt;img src=x onerror=alert(&quot;label&quot;)&gt;");
+    expect(graphmlContent).toContain("outputs/&lt;/script&gt;&lt;img src=x onerror=alert(&quot;path&quot;)&gt;.md");
+    expect(graphmlContent).not.toContain('</script><img src=x onerror=alert("label")>');
+    expect(graphmlContent).not.toContain('</script><img src=x onerror=alert("relation")>');
   });
 
   it("escapes Cypher export string literals safely", async () => {
@@ -2395,6 +2503,39 @@ describe("swarmvault workflow", () => {
 
     const dirtyFindings = await lintVault(rootDir);
     expect(dirtyFindings.some((finding) => finding.code === "uncited_claims" && finding.pagePath === sourcePagePath)).toBe(true);
+  });
+
+  it("does not fire uncited_claims on the 'No claims extracted.' placeholder bullet", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const sourcePath = path.join(rootDir, "placeholder.md");
+    await fs.writeFile(sourcePath, "# Placeholder\n\nbody\n", "utf8");
+
+    const manifest = await ingestInput(rootDir, "placeholder.md");
+    await compileVault(rootDir);
+
+    const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
+    const parsed = matter(await fs.readFile(sourcePagePath, "utf8"));
+
+    // Rewrite the body so the Claims section contains only the no-claims
+    // placeholder bullet that the compiler emits when extraction yields
+    // nothing. The linter used to flag this as uncited.
+    parsed.content = [
+      "# Placeholder",
+      "",
+      "## Claims",
+      "",
+      "- No claims extracted.",
+      "",
+      "## Questions",
+      "",
+      "- What does this page say?",
+      ""
+    ].join("\n");
+    await fs.writeFile(sourcePagePath, matter.stringify(parsed.content, parsed.data), "utf8");
+
+    const findings = await lintVault(rootDir);
+    expect(findings.some((finding) => finding.code === "uncited_claims" && finding.pagePath === sourcePagePath)).toBe(false);
   });
 
   it("does not fire uncited_claims when ## Claims appears only inside embedded source text", async () => {

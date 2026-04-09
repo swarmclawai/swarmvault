@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.7
+
+- Added a one-time interactive heuristic-provider notice for compile/query/explore so default local users are pointed at a stronger fully-local Ollama + Gemma setup without leaking notices into `--json`, CI, MCP, or long-running flows
+- Improved graph benchmark honesty and CLI reporting so reduction ratios can go negative on tiny vaults instead of being silently clamped to zero, making small-corpus graph results easier to interpret correctly
+- Hardened repo-aware code analysis for real-world imports by fixing TypeScript runtime-extension sibling resolution, Rust crate-root `mod` / `crate::` alias handling, Ruby bare `require_relative` sibling resolution, and PowerShell dot-source imports that use `$PSScriptRoot`
+- Added deterministic export-safety coverage for hostile HTML/XML graph strings plus a real Cursor `.mdc` rule file with `alwaysApply: true`, and updated installed-package smoke to verify the published CLI writes the expected Cursor rule artifact
+- Tightened non-code and lint quality by avoiding obvious false entities like `The`/`This` when parser-backed analysis can identify real named terms, and by preventing `uncited_claims` from firing on the compiler's own `No claims extracted.` placeholder bullet
+
 ## 0.6.6
 
 - Fixed installed-CLI handling for common real-world text files and scripts so extensionless executable `node`, `python`, and `ruby` shebang scripts are classified as code, TypeScript family files use a correct `text/typescript` mime, and common config, manifest, lock, license, and dotfiles no longer fall through as unsupported binary sources

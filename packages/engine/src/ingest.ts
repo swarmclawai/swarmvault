@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Readability } from "@mozilla/readability";
 import matter from "gray-matter";
 import ignore from "ignore";
+import { isText } from "istextorbinary";
 import { JSDOM } from "jsdom";
 import mime from "mime-types";
 import TurndownService from "turndown";
@@ -184,7 +185,7 @@ function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLan
   ) {
     return "csv";
   }
-  if (mimeType.startsWith("text/") || isStructuredTextMime(mimeType) || isKnownTextPath(filePath)) {
+  if (mimeType.startsWith("text/") || isStructuredTextMime(mimeType)) {
     return "text";
   }
   if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || filePath.toLowerCase().endsWith(".xlsx")) {
@@ -284,130 +285,45 @@ function guessMimeType(target: string): string {
   if (extension === ".ts" || extension === ".tsx" || extension === ".mts" || extension === ".cts") {
     return "text/typescript";
   }
-  const looked = mime.lookup(target);
-  if (looked) {
-    return looked;
-  }
-  if (isKnownTextPath(target)) {
-    return "text/plain";
-  }
-  return "application/octet-stream";
+  return mime.lookup(target) || "application/octet-stream";
 }
 
-const KNOWN_TEXT_DOTFILE_NAMES = new Set([
-  ".gitignore",
-  ".gitattributes",
-  ".gitkeep",
-  ".gitmodules",
-  ".editorconfig",
-  ".npmrc",
-  ".yarnrc",
-  ".prettierignore",
-  ".prettierrc",
-  ".dockerignore",
-  ".eslintignore",
-  ".eslintrc",
-  ".nvmrc",
-  ".node-version",
-  ".python-version",
-  ".ruby-version",
-  ".tool-versions"
-]);
+// After `inferKind` has rejected a file as binary (meaning its mime did not match any
+// known text pattern), defer to `istextorbinary`. That library combines a large
+// extension allowlist/blocklist with a content sniff, which catches real-world
+// "text-but-no-extension" cases (husky hook scripts without a shebang, empty
+// `.nojekyll` marker files, newer config formats like `.jsonc`, developer files like
+// `LICENSE`/`COPYING`/`uv.lock`) without us having to maintain those lists by hand.
+function refineBinaryKindWithBytes(
+  absolutePath: string,
+  currentKind: SourceManifest["sourceKind"],
+  bytes: Buffer
+): SourceManifest["sourceKind"] {
+  if (currentKind !== "binary") {
+    return currentKind;
+  }
+  const sniffSlice = bytes.length > 4096 ? bytes.subarray(0, 4096) : bytes;
+  return isText(absolutePath, sniffSlice) ? "text" : currentKind;
+}
 
-const KNOWN_TEXT_BASENAMES = new Set([
-  "readme",
-  "license",
-  "licence",
-  "copying",
-  "unlicense",
-  "notice",
-  "authors",
-  "contributors",
-  "patents",
-  "maintainers",
-  "owners",
-  "codeowners",
-  "changelog",
-  "changes",
-  "history",
-  "news",
-  "todo",
-  "install",
-  "dockerfile",
-  "containerfile",
-  "makefile",
-  "gnumakefile",
-  "rakefile",
-  "gemfile",
-  "procfile",
-  "jenkinsfile",
-  "vagrantfile",
-  "brewfile",
-  "go.mod",
-  "go.sum",
-  "go.work",
-  "go.work.sum",
-  "cargo.lock",
-  "pipfile",
-  "pipfile.lock",
-  "poetry.lock",
-  "uv.lock",
-  "py.typed",
-  "package-lock.json",
-  "yarn.lock",
-  "pnpm-lock.yaml",
-  "composer.lock",
-  "requirements.txt"
-]);
-
-const KNOWN_TEXT_BASENAME_PREFIXES = ["license", "licence", "copying", "unlicense", "readme", "changelog", "dockerfile", "containerfile"];
-
-const KNOWN_TEXT_EXTENSIONS = new Set([
-  ".toml",
-  ".lock",
-  ".tmpl",
-  ".template",
-  ".mustache",
-  ".hbs",
-  ".handlebars",
-  ".ejs",
-  ".njk",
-  ".liquid",
-  ".vim",
-  ".typed",
-  ".env",
-  ".properties",
-  ".ini",
-  ".cfg",
-  ".conf",
-  ".config",
-  ".bazel",
-  ".bzl",
-  ".bat",
-  ".cmd"
-]);
-
-function isKnownTextPath(target: string): boolean {
-  const basename = path.basename(target).toLowerCase();
-  if (KNOWN_TEXT_DOTFILE_NAMES.has(basename)) {
-    return true;
+async function refineBinaryKindWithContentSniff(
+  absolutePath: string,
+  currentKind: SourceManifest["sourceKind"]
+): Promise<SourceManifest["sourceKind"]> {
+  if (currentKind !== "binary") {
+    return currentKind;
   }
-  if (basename === ".env" || basename.startsWith(".env.")) {
-    return true;
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    handle = await fs.open(absolutePath, "r");
+    const chunk = Buffer.alloc(4096);
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, 0);
+    return refineBinaryKindWithBytes(absolutePath, currentKind, chunk.subarray(0, bytesRead));
+  } catch {
+    return currentKind;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
-  if (KNOWN_TEXT_BASENAMES.has(basename)) {
-    return true;
-  }
-  for (const prefix of KNOWN_TEXT_BASENAME_PREFIXES) {
-    if (basename === prefix || basename.startsWith(`${prefix}-`) || basename.startsWith(`${prefix}.`)) {
-      return true;
-    }
-  }
-  const extension = path.extname(target).toLowerCase();
-  if (extension && KNOWN_TEXT_EXTENSIONS.has(extension)) {
-    return true;
-  }
-  return false;
 }
 
 function sourceGroupIdFor(prepared: {
@@ -1457,6 +1373,7 @@ async function collectDirectoryFiles(
           sourceKind = "chat_export";
         }
       }
+      sourceKind = await refineBinaryKindWithContentSniff(absolutePath, sourceKind);
       const sourceClass = sourceClassForRelativePath(relativePath, options);
       if (!supportedDirectoryKind(sourceKind)) {
         skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: `unsupported_kind:${sourceKind}` });
@@ -2234,7 +2151,7 @@ async function prepareFileInputs(
   }
   const mimeType = guessMimeType(absoluteInput);
   const detectionOptions = await localCodeDetectionOptions(absoluteInput, payloadBytes);
-  const sourceKind = inferKind(mimeType, absoluteInput, detectionOptions);
+  const sourceKind = refineBinaryKindWithBytes(absoluteInput, inferKind(mimeType, absoluteInput, detectionOptions), payloadBytes);
   const language = inferCodeLanguage(absoluteInput, mimeType, detectionOptions);
   const storedExtension = path.extname(absoluteInput) || `.${mime.extension(mimeType) || "bin"}`;
 
@@ -3102,6 +3019,7 @@ export async function importInbox(rootDir: string, inputDir?: string): Promise<I
         sourceKind = "chat_export";
       }
     }
+    sourceKind = await refineBinaryKindWithContentSniff(absolutePath, sourceKind);
     if (!isSupportedInboxKind(sourceKind)) {
       skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: `unsupported_kind:${sourceKind}` });
       continue;

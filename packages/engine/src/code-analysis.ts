@@ -2006,7 +2006,18 @@ export function modulePageTitle(manifest: SourceManifest): string {
 
 function importResolutionCandidates(basePath: string, specifier: string, extensions: string[]): string[] {
   const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(basePath), specifier));
-  if (path.posix.extname(resolved)) {
+  const resolvedExt = path.posix.extname(resolved);
+  if (resolvedExt) {
+    // Modern TypeScript code (`"type": "module"` or the NodeNext module resolution mode)
+    // imports sibling files using runtime extensions like `.js` / `.mjs` / `.cjs` even
+    // when the source on disk is `.ts` / `.mts` / `.cts`. Likewise `.jsx` may point at
+    // `.tsx`. Retry the candidate list with sibling extensions substituted so those
+    // rewritten specifiers still match the real source file.
+    if (extensions.includes(resolvedExt)) {
+      const resolvedBase = resolved.slice(0, -resolvedExt.length);
+      const candidates = [resolved, ...extensions.map((extension) => `${resolvedBase}${extension}`)];
+      return uniqueBy(candidates, (candidate) => candidate);
+    }
     return [resolved];
   }
 
@@ -2128,7 +2139,14 @@ async function readNearestGoModulePath(startPath: string, cache: Map<string, str
 
 function rustModuleAlias(repoRelativePath: string): string | undefined {
   const withoutExt = stripCodeExtension(normalizeAlias(repoRelativePath));
-  const trimmed = withoutExt.replace(/^src\//, "").replace(/\/mod$/i, "");
+  // A Rust crate root lives at `src/lib.rs` or `src/main.rs`, so the segment after the
+  // right-most `src/` is the module path relative to the crate. Only falling back on
+  // `^src/` would misclassify files in monorepos where the crate lives at, for example,
+  // `packages/engine/src/lib.rs` — those should still alias as `crate`, not
+  // `crate::packages::engine::src::lib`.
+  const srcIdx = withoutExt.lastIndexOf("/src/");
+  const withinCrate = srcIdx >= 0 ? withoutExt.slice(srcIdx + "/src/".length) : withoutExt.replace(/^src\//, "");
+  const trimmed = withinCrate.replace(/\/mod$/i, "");
   if (!trimmed || trimmed === "lib" || trimmed === "main") {
     return "crate";
   }
@@ -2366,7 +2384,7 @@ function resolveRustAliases(manifest: SourceManifest, specifier: string): string
     return [];
   }
   const currentParts = currentAlias
-    .replace(/^crate::?/, "")
+    .replace(/^crate(?:::)?/, "")
     .split("::")
     .filter(Boolean);
   if (specifier.startsWith("self::")) {

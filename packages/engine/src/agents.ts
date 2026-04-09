@@ -99,6 +99,14 @@ function buildManagedBlock(target: keyof typeof agentFileKinds): string {
   ].join("\n");
 }
 
+function buildCursorRule(): string {
+  const frontmatter = YAML.stringify({
+    description: "SwarmVault graph-first repository instructions.",
+    alwaysApply: true
+  }).trimEnd();
+  return ["---", frontmatter, "---", "", buildManagedBlock("cursor").trimEnd(), ""].join("\n");
+}
+
 function supportsAgentHook(agent: AgentType): boolean {
   return agent === "claude" || agent === "opencode" || agent === "gemini" || agent === "copilot";
 }
@@ -768,7 +776,7 @@ export async function installAgent(rootDir: string, agent: AgentType, options: I
       await upsertManagedBlock(target, buildManagedBlock("gemini"));
       break;
     case "cursor":
-      await writeOwnedFile(target, `${buildManagedBlock("cursor")}\n`);
+      await writeOwnedFile(target, buildCursorRule());
       break;
     case "aider":
       await upsertManagedBlock(target, buildManagedBlock("aider"));

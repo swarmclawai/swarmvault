@@ -173,14 +173,9 @@ export async function startGraphServer(
           response.end(JSON.stringify({ error: "Missing explain target." }));
           return;
         }
-        try {
-          const result = await explainGraphVault(rootDir, target);
-          response.writeHead(200, { "content-type": "application/json" });
-          response.end(JSON.stringify(result));
-        } catch (error) {
-          response.writeHead(404, { "content-type": "application/json" });
-          response.end(JSON.stringify({ error: error instanceof Error ? error.message : `Could not resolve graph target: ${target}` }));
-        }
+        const result = await explainGraphVault(rootDir, target);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(result));
         return;
       }
 
@@ -332,7 +327,8 @@ export async function startGraphServer(
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[viewer] ${request.method ?? "GET"} ${url.pathname} failed: ${message}`);
       if (!response.headersSent) {
-        response.writeHead(500, { "content-type": "application/json" });
+        const status = /not found|could not resolve|cannot resolve/i.test(message) ? 404 : 500;
+        response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: message }));
       } else {
         response.end();
