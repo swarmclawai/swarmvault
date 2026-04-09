@@ -89,8 +89,31 @@ function interpreterFromShebang(content: string | undefined): string | undefined
   return basename(parts[0] ?? "");
 }
 
-function isShellInterpreter(value: string | undefined): boolean {
-  return value === "sh" || value === "bash" || value === "zsh";
+function languageFromInterpreter(interpreter: string | undefined): CodeLanguage | undefined {
+  switch (interpreter) {
+    case "sh":
+    case "bash":
+    case "zsh":
+    case "dash":
+    case "ksh":
+    case "ash":
+      return "bash";
+    case "node":
+    case "nodejs":
+      return "javascript";
+    case "python":
+    case "python2":
+    case "python3":
+      return "python";
+    case "ruby":
+      return "ruby";
+    case "php":
+      return "php";
+    case "lua":
+      return "lua";
+    default:
+      return undefined;
+  }
 }
 
 function formatDiagnosticCategory(category: ts.DiagnosticCategory): CodeDiagnostic["category"] {
@@ -1968,8 +1991,11 @@ export function inferCodeLanguage(filePath: string, mimeType = "", options: Code
   if ([".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"].includes(extension)) {
     return "cpp";
   }
-  if (!extension && options.executable && isShellInterpreter(interpreterFromShebang(options.content))) {
-    return "bash";
+  if (!extension && options.executable) {
+    const fromShebang = languageFromInterpreter(interpreterFromShebang(options.content));
+    if (fromShebang) {
+      return fromShebang;
+    }
   }
   return undefined;
 }

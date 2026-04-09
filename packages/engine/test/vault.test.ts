@@ -31,6 +31,7 @@ import {
   queryGraphVault,
   queryVault,
   readApproval,
+  readPage,
   runWatchCycle,
   searchVault,
   uninstallGitHooks,
@@ -2344,5 +2345,130 @@ describe("swarmvault workflow", () => {
 
     const findings = await lintVault(rootDir);
     expect(findings.some((finding) => finding.code === "stale_page" && finding.pagePath === sourcePagePath)).toBe(true);
+  });
+
+  it("scopes uncited_claims lint to the Claims section only", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const sourcePath = path.join(rootDir, "cited.md");
+    await fs.writeFile(sourcePath, "# Cited Page\n\nThis page describes something.\n", "utf8");
+
+    const manifest = await ingestInput(rootDir, "cited.md");
+    await compileVault(rootDir);
+
+    const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
+    const parsed = matter(await fs.readFile(sourcePagePath, "utf8"));
+
+    // Replace the body with a fully cited Claims section plus other bullets in
+    // other sections. The old linter incorrectly flagged these as uncited.
+    parsed.content = [
+      "# Cited Page",
+      "",
+      "## Concepts",
+      "",
+      "- auth: referenced",
+      "- session: referenced",
+      "",
+      "## Claims",
+      "",
+      `- Fully cited claim one. [source:${manifest.sourceId}]`,
+      `- Fully cited claim two. [source:${manifest.sourceId}]`,
+      "",
+      "## Questions",
+      "",
+      "- What about edge cases?",
+      "",
+      "## Related Outputs",
+      "",
+      "- [[outputs/irrelevant|irrelevant]]",
+      ""
+    ].join("\n");
+    await fs.writeFile(sourcePagePath, matter.stringify(parsed.content, parsed.data), "utf8");
+
+    const cleanFindings = await lintVault(rootDir);
+    expect(cleanFindings.some((finding) => finding.code === "uncited_claims" && finding.pagePath === sourcePagePath)).toBe(false);
+
+    // Now inject an actually uncited claim bullet into the Claims section and
+    // confirm the linter still catches it.
+    parsed.content = parsed.content.replace(`- Fully cited claim one. [source:${manifest.sourceId}]`, "- This claim has no citation.");
+    await fs.writeFile(sourcePagePath, matter.stringify(parsed.content, parsed.data), "utf8");
+
+    const dirtyFindings = await lintVault(rootDir);
+    expect(dirtyFindings.some((finding) => finding.code === "uncited_claims" && finding.pagePath === sourcePagePath)).toBe(true);
+  });
+
+  it("does not fire uncited_claims when ## Claims appears only inside embedded source text", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const sourcePath = path.join(rootDir, "embedded.md");
+    await fs.writeFile(sourcePath, "# Embedded\n\nnothing to see.\n", "utf8");
+
+    const manifest = await ingestInput(rootDir, "embedded.md");
+    await compileVault(rootDir);
+
+    // Write an output-style page where the substring "## Claims" only appears
+    // inside a collapsed single-line block of embedded source material (no
+    // Claims section of its own) and has some bullet lists in other sections.
+    const outputPath = path.join(rootDir, "wiki", "outputs", "embedded-output.md");
+    const frontmatter = {
+      page_id: "output:embedded-output",
+      kind: "output",
+      title: "Embedded Output",
+      tags: ["output"],
+      source_ids: [manifest.sourceId],
+      project_ids: [],
+      node_ids: [`source:${manifest.sourceId}`],
+      freshness: "fresh",
+      status: "active",
+      confidence: 1,
+      created_at: "2026-04-09T00:00:00.000Z",
+      updated_at: "2026-04-09T00:00:00.000Z",
+      compiled_from: [manifest.sourceId],
+      managed_by: "system",
+      backlinks: [],
+      schema_hash: "placeholder",
+      source_hashes: {},
+      source_semantic_hashes: {}
+    };
+    const body = [
+      "# Embedded Output",
+      "",
+      "Relevant pages:",
+      "- Page A (sources/page-a.md)",
+      "- Page B (sources/page-b.md)",
+      "",
+      "# Embedded",
+      "# Embedded Source text ## Summary Something. ## Claims - inline bullet with no citation - another inline bullet",
+      ""
+    ].join("\n");
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, matter.stringify(body, frontmatter), "utf8");
+
+    const findings = await lintVault(rootDir);
+    expect(findings.some((finding) => finding.code === "uncited_claims" && finding.pagePath === outputPath)).toBe(false);
+  });
+
+  it("rejects sibling-prefix path traversal in readPage", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    // Create a sibling directory whose name shares a prefix with the wiki
+    // directory. A naive startsWith(wikiDir) fence would be bypassed here.
+    const siblingDir = path.join(rootDir, "wiki-evil");
+    await fs.mkdir(siblingDir, { recursive: true });
+    await fs.writeFile(path.join(siblingDir, "secret.md"), "top-secret-content", "utf8");
+
+    const page = await readPage(rootDir, "../wiki-evil/secret.md");
+    expect(page).toBeNull();
+  });
+
+  it("returns null from readPage for empty or directory paths", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    // Empty relative path would otherwise resolve to the wiki root directory
+    // and surface EISDIR when trying to read it.
+    expect(await readPage(rootDir, "")).toBeNull();
+    expect(await readPage(rootDir, "sources")).toBeNull();
   });
 });

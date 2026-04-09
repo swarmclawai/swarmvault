@@ -51,6 +51,7 @@ import type {
 import {
   ensureDir,
   fileExists,
+  isPathWithin,
   listFilesRecursive,
   normalizeWhitespace,
   readJsonFile,
@@ -183,7 +184,7 @@ function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLan
   ) {
     return "csv";
   }
-  if (mimeType.startsWith("text/")) {
+  if (mimeType.startsWith("text/") || isStructuredTextMime(mimeType) || isKnownTextPath(filePath)) {
     return "text";
   }
   if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || filePath.toLowerCase().endsWith(".xlsx")) {
@@ -199,6 +200,27 @@ function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLan
     return "image";
   }
   return "binary";
+}
+
+function isStructuredTextMime(mimeType: string): boolean {
+  switch (mimeType) {
+    case "application/json":
+    case "application/json5":
+    case "application/ld+json":
+    case "application/manifest+json":
+    case "application/xml":
+    case "application/toml":
+    case "application/yaml":
+    case "application/x-yaml":
+    case "application/javascript":
+    case "application/ecmascript":
+    case "application/typescript":
+    case "application/x-sh":
+    case "application/x-shellscript":
+      return true;
+    default:
+      return false;
+  }
 }
 
 async function localCodeDetectionOptions(absolutePath: string, payloadBytes?: Buffer): Promise<CodeLanguageDetectionOptions> {
@@ -255,7 +277,137 @@ function guessMimeType(target: string): string {
   if (isRstFilePath(target)) {
     return "text/x-rst";
   }
-  return mime.lookup(target) || "application/octet-stream";
+  const extension = path.extname(target).toLowerCase();
+  // `mime-types` returns "video/mp2t" for .ts (MPEG-2 Transport Stream) and `false` for
+  // .tsx / .cts, which is never what developers mean in modern tooling. Override the
+  // TypeScript family explicitly so manifests and downstream consumers see a useful mime.
+  if (extension === ".ts" || extension === ".tsx" || extension === ".mts" || extension === ".cts") {
+    return "text/typescript";
+  }
+  const looked = mime.lookup(target);
+  if (looked) {
+    return looked;
+  }
+  if (isKnownTextPath(target)) {
+    return "text/plain";
+  }
+  return "application/octet-stream";
+}
+
+const KNOWN_TEXT_DOTFILE_NAMES = new Set([
+  ".gitignore",
+  ".gitattributes",
+  ".gitkeep",
+  ".gitmodules",
+  ".editorconfig",
+  ".npmrc",
+  ".yarnrc",
+  ".prettierignore",
+  ".prettierrc",
+  ".dockerignore",
+  ".eslintignore",
+  ".eslintrc",
+  ".nvmrc",
+  ".node-version",
+  ".python-version",
+  ".ruby-version",
+  ".tool-versions"
+]);
+
+const KNOWN_TEXT_BASENAMES = new Set([
+  "readme",
+  "license",
+  "licence",
+  "copying",
+  "unlicense",
+  "notice",
+  "authors",
+  "contributors",
+  "patents",
+  "maintainers",
+  "owners",
+  "codeowners",
+  "changelog",
+  "changes",
+  "history",
+  "news",
+  "todo",
+  "install",
+  "dockerfile",
+  "containerfile",
+  "makefile",
+  "gnumakefile",
+  "rakefile",
+  "gemfile",
+  "procfile",
+  "jenkinsfile",
+  "vagrantfile",
+  "brewfile",
+  "go.mod",
+  "go.sum",
+  "go.work",
+  "go.work.sum",
+  "cargo.lock",
+  "pipfile",
+  "pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "py.typed",
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "composer.lock",
+  "requirements.txt"
+]);
+
+const KNOWN_TEXT_BASENAME_PREFIXES = ["license", "licence", "copying", "unlicense", "readme", "changelog", "dockerfile", "containerfile"];
+
+const KNOWN_TEXT_EXTENSIONS = new Set([
+  ".toml",
+  ".lock",
+  ".tmpl",
+  ".template",
+  ".mustache",
+  ".hbs",
+  ".handlebars",
+  ".ejs",
+  ".njk",
+  ".liquid",
+  ".vim",
+  ".typed",
+  ".env",
+  ".properties",
+  ".ini",
+  ".cfg",
+  ".conf",
+  ".config",
+  ".bazel",
+  ".bzl",
+  ".bat",
+  ".cmd"
+]);
+
+function isKnownTextPath(target: string): boolean {
+  const basename = path.basename(target).toLowerCase();
+  if (KNOWN_TEXT_DOTFILE_NAMES.has(basename)) {
+    return true;
+  }
+  if (basename === ".env" || basename.startsWith(".env.")) {
+    return true;
+  }
+  if (KNOWN_TEXT_BASENAMES.has(basename)) {
+    return true;
+  }
+  for (const prefix of KNOWN_TEXT_BASENAME_PREFIXES) {
+    if (basename === prefix || basename.startsWith(`${prefix}-`) || basename.startsWith(`${prefix}.`)) {
+      return true;
+    }
+  }
+  const extension = path.extname(target).toLowerCase();
+  if (extension && KNOWN_TEXT_EXTENSIONS.has(extension)) {
+    return true;
+  }
+  return false;
 }
 
 function sourceGroupIdFor(prepared: {
@@ -2564,7 +2716,7 @@ async function collectInboxAttachmentRefs(inputDir: string, files: string[]): Pr
     const sourceRefs: InboxAttachmentRef[] = [];
     for (const ref of refs) {
       const resolved = path.resolve(path.dirname(absolutePath), ref);
-      if (!resolved.startsWith(inputDir) || !(await fileExists(resolved))) {
+      if (!isPathWithin(inputDir, resolved) || !(await fileExists(resolved))) {
         continue;
       }
 

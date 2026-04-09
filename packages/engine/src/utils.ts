@@ -67,6 +67,16 @@ export function toPosix(value: string): string {
   return value.split(path.sep).join(path.posix.sep);
 }
 
+export function isPathWithin(rootDir: string, candidate: string): boolean {
+  const normalizedRoot = path.resolve(rootDir);
+  const normalizedCandidate = path.resolve(candidate);
+  if (normalizedCandidate === normalizedRoot) {
+    return true;
+  }
+  const withSep = normalizedRoot.endsWith(path.sep) ? normalizedRoot : normalizedRoot + path.sep;
+  return normalizedCandidate.startsWith(withSep);
+}
+
 export function firstSentences(value: string, count = 3): string {
   const sentences = value
     .replace(/\s+/g, " ")

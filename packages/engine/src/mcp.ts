@@ -8,7 +8,7 @@ import { loadVaultConfig } from "./config.js";
 import { ingestInputDetailed, listManifests } from "./ingest.js";
 import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact } from "./types.js";
-import { fileExists, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
+import { fileExists, isPathWithin, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
 import {
   compileVault,
   explainGraphVault,
@@ -25,7 +25,7 @@ import {
   searchVault
 } from "./vault.js";
 
-const SERVER_VERSION = "0.6.5";
+const SERVER_VERSION = "0.6.6";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -391,7 +391,7 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
       const encodedPath = typeof variables.path === "string" ? variables.path : "";
       const relativePath = decodeURIComponent(encodedPath);
       const absolutePath = path.resolve(paths.sessionsDir, relativePath);
-      if (!absolutePath.startsWith(paths.sessionsDir) || !(await fileExists(absolutePath))) {
+      if (!isPathWithin(paths.sessionsDir, absolutePath) || !(await fileExists(absolutePath))) {
         return asTextResource(`swarmvault://sessions/${encodedPath}`, `Session not found: ${relativePath}`);
       }
 

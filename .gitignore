@@ -11,6 +11,7 @@ raw/
 wiki/
 state/
 agent/
+tmp/
 packages/viewer/dist/
 .live-smoke-artifacts/
 .oss-corpus-artifacts/

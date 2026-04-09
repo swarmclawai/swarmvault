@@ -107,6 +107,7 @@ import type {
 import {
   ensureDir,
   fileExists,
+  isPathWithin,
   listFilesRecursive,
   normalizeWhitespace,
   readJsonFile,
@@ -5149,9 +5150,16 @@ export async function readPage(
   frontmatter: Record<string, unknown>;
   content: string;
 } | null> {
+  if (!relativePath) {
+    return null;
+  }
   const { paths } = await loadVaultConfig(rootDir);
   const absolutePath = path.resolve(paths.wikiDir, relativePath);
-  if (!absolutePath.startsWith(paths.wikiDir) || !(await fileExists(absolutePath))) {
+  if (!isPathWithin(paths.wikiDir, absolutePath)) {
+    return null;
+  }
+  const stats = await fs.stat(absolutePath).catch(() => null);
+  if (!stats?.isFile()) {
     return null;
   }
 
@@ -5193,6 +5201,29 @@ export async function getWorkspaceInfo(rootDir: string): Promise<{
     sourceCount: manifests.length,
     pageCount: pages.length
   };
+}
+
+function extractClaimSectionLines(content: string): string[] | null {
+  const lines = content.split("\n");
+  let inClaims = false;
+  let found = false;
+  const claimLines: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (trimmed === "## Claims") {
+      inClaims = true;
+      found = true;
+      continue;
+    }
+    if (inClaims) {
+      if (/^#{1,2}\s/.test(trimmed)) {
+        inClaims = false;
+        continue;
+      }
+      claimLines.push(line);
+    }
+  }
+  return found ? claimLines : null;
 }
 
 function structuralLintFindings(
@@ -5252,8 +5283,9 @@ function structuralLintFindings(
       const absolutePath = path.join(paths.wikiDir, page.path);
       if (await fileExists(absolutePath)) {
         const content = await fs.readFile(absolutePath, "utf8");
-        if (content.includes("## Claims")) {
-          const uncited = content.split("\n").filter((line) => line.startsWith("- ") && !line.includes("[source:"));
+        const claimLines = extractClaimSectionLines(content);
+        if (claimLines !== null) {
+          const uncited = claimLines.filter((line) => line.startsWith("- ") && !line.includes("[source:"));
           if (uncited.length) {
             findings.push({
               severity: "warning",
