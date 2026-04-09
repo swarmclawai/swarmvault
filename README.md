@@ -12,6 +12,8 @@
 
 Documentation on the website is currently English-first. If wording drifts between translations, [README.md](README.md) is the canonical source.
 
+Discord: https://discord.gg/sbEavS8cPV
+
 > Most "chat with your docs" tools answer a question and throw away the work. SwarmVault treats the vault itself as the product. Every operation writes durable artifacts you can inspect, diff, and keep improving.
 
 SwarmVault is inspired by Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist. The core pattern is the same: keep a durable wiki between you and raw sources. SwarmVault turns that pattern into a local toolchain with graph, search, review, automation, and optional model-backed synthesis.
