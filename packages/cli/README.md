@@ -70,7 +70,7 @@ Create a workspace with:
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
-`--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` starter profile also sets `profile.guidedIngestDefault: true` and `profile.deepLintDefault: true`, so guided ingest/source and lint flows are on by default until you override them with `--no-guide` or `--no-deep`.
+`--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` preset also sets `profile.guidedIngestDefault: true` and `profile.deepLintDefault: true`, so guided ingest/source and lint flows are on by default until you override them with `--no-guide` or `--no-deep`.
 
 ### `swarmvault scan <directory> [--port <port>] [--no-serve]`
 
@@ -111,6 +111,15 @@ Useful flags:
 - `--max-depth <n>`
 
 Managed sources write registry state to `state/sources.json`. Guided sessions write durable anchors to `wiki/outputs/source-sessions/` and session state to `state/source-sessions/`. In an interactive TTY, `--guide` can ask the session questions immediately; otherwise use `source session <id>` or `--answers-file <path>` to resume and stage the approval bundle later. Local directory entries remain compatible with `watch --repo`; remote GitHub and docs-crawl sources are manual `source reload` sources in this release.
+
+Source-scoped artifacts are intentionally split by role:
+
+| Artifact | Created by | Purpose |
+|----------|-----------|---------|
+| Source brief | `source add`, `ingest` (always) | Auto summary written to `wiki/outputs/source-briefs/` |
+| Source review | `source review`, `source add --guide`, `ingest --review`, `ingest --guide` | Lighter staged assessment in `wiki/outputs/source-reviews/` |
+| Source guide | `source guide`, `source add --guide`, `ingest --guide` | Guided walkthrough with approval-bundled updates in `wiki/outputs/source-guides/` |
+| Source session | `source session`, `source add --guide`, `ingest --guide` | Resumable workflow state in `wiki/outputs/source-sessions/` and `state/source-sessions/` |
 
 ### `swarmvault ingest <path-or-url>`
 
@@ -252,7 +261,7 @@ Run anti-drift and vault health checks such as stale pages, missing graph artifa
 
 Set `profile.deepLintDefault: true` when deep lint should be the default for `swarmvault lint`, and use `--no-deep` when one run should stay structural only.
 
-`--web` can only be used when deep lint is enabled, either explicitly with `--deep` or through `profile.deepLintDefault`. It enriches deep-lint findings with external evidence snippets and URLs from a configured web-search provider.
+`--web` can only be used when deep lint is enabled, either explicitly with `--deep` or through `profile.deepLintDefault`. It enriches deep-lint findings with external evidence snippets and URLs from a configured web-search provider. Web search is currently scoped to deep lint; other commands (compile, query, explore) use only local vault state.
 
 `--conflicts` filters the results down to contradiction-focused findings so you can audit conflicting claims without the rest of the lint output.
 

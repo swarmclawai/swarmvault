@@ -82,33 +82,12 @@ Need the fastest first pass over a local repo or docs tree? `swarmvault scan ./p
 
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you want the entire canvas rendered anyway.
 
-`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. The `personal-research` starter profile turns on both `profile.guidedIngestDefault` and `profile.deepLintDefault`, so ingest/source and lint flows start in the stronger path unless you pass `--no-guide` or `--no-deep`. For custom vault behavior, edit the `profile` block in `swarmvault.config.json` and keep `swarmvault.schema.md` as the human-written intent layer.
+`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. The `personal-research` preset turns on both `profile.guidedIngestDefault` and `profile.deepLintDefault`, so ingest/source and lint flows start in the stronger path unless you pass `--no-guide` or `--no-deep`. For custom vault behavior, edit the `profile` block in `swarmvault.config.json` and keep `swarmvault.schema.md` as the human-written intent layer.
 
 <!-- readme-section:provider-setup -->
 ## Optional: Add a Model Provider
 
 You do not need API keys or an external model provider to start using SwarmVault. The built-in `heuristic` provider supports local/offline vault setup, ingest, compile, graph/report/search workflows, and lightweight query or lint defaults.
-
-Add a model provider when you want richer synthesis quality or extra capabilities such as semantic embeddings, vision, or native image generation:
-
-```json
-{
-  "providers": {
-    "primary": {
-      "type": "openai",
-      "model": "gpt-4o",
-      "apiKeyEnv": "OPENAI_API_KEY"
-    }
-  },
-  "tasks": {
-    "compileProvider": "primary",
-    "queryProvider": "primary",
-    "embeddingProvider": "primary"
-  }
-}
-```
-
-See the [provider docs](https://www.swarmvault.ai/docs/providers) for optional backends, task routing, and capability-specific configuration examples.
 
 ### Recommended: local LLM via Ollama + Gemma
 
@@ -137,6 +116,8 @@ ollama pull gemma4
 
 When you run compile/query with only the heuristic provider, SwarmVault surfaces a one-time notice pointing you here. Set `SWARMVAULT_NO_NOTICES=1` to silence it. Any other supported provider (OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, custom) works too.
 
+### Local Semantic Embeddings
+
 For local semantic graph query without API keys, use an embedding-capable local backend such as Ollama instead of `heuristic`:
 
 ```json
@@ -159,6 +140,29 @@ For local semantic graph query without API keys, use an embedding-capable local 
   }
 }
 ```
+
+### Cloud API Providers
+
+For cloud-hosted models, add a provider block with your API key:
+
+```json
+{
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "model": "gpt-4o",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    }
+  },
+  "tasks": {
+    "compileProvider": "primary",
+    "queryProvider": "primary",
+    "embeddingProvider": "primary"
+  }
+}
+```
+
+See the [provider docs](https://www.swarmvault.ai/docs/providers) for optional backends, task routing, and capability-specific configuration examples.
 
 ## Point It At Recurring Sources
 
@@ -253,11 +257,13 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 
-**Configurable profiles** - compose vault behavior with `profile.presets`, `profile.dashboardPack`, `profile.guidedSessionMode`, `profile.guidedIngestDefault`, `profile.deepLintDefault`, and `profile.dataviewBlocks` in `swarmvault.config.json` instead of waiting for hardcoded product modes. `personal-research` is just a starter alias.
+**Configurable profiles** - compose vault behavior with `profile.presets`, `profile.dashboardPack`, `profile.guidedSessionMode`, `profile.guidedIngestDefault`, `profile.deepLintDefault`, and `profile.dataviewBlocks` in `swarmvault.config.json` instead of waiting for hardcoded product modes. `personal-research` is a built-in preset alias.
 
 **Guided sessions** - `ingest --guide`, `source add --guide`, `source reload --guide`, `source guide <id>`, and `source session <id>` create resumable source sessions under `wiki/outputs/source-sessions/`, stage source reviews and source guides, and route approval-bundled updates either to canonical source/concept/entity pages or to `wiki/insights/`, depending on the configured guided-session mode. Set `profile.guidedIngestDefault: true` in `swarmvault.config.json` to make guided mode the default for ingest and source commands; use `--no-guide` to override.
 
 **Deep lint defaults** - set `profile.deepLintDefault: true` in `swarmvault.config.json` to make `swarmvault lint` include the LLM-powered advisory pass by default. Use `--no-deep` when you want one structural-only lint run without changing the profile.
+
+**Web-search augmented lint** — `lint --deep --web` enriches deep-lint findings with external evidence via a configured web-search provider (`http-json` or `custom`). Web search is currently scoped to deep lint; other commands query only local vault state.
 
 **Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source sessions, source guides, a research map, contradictions, and open questions. The pages work as plain markdown first, and `profile.dataviewBlocks` can append Dataview blocks when you want a more Obsidian-native view.
 
@@ -272,6 +278,15 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 **Automation** - watch mode, git hooks, recurring schedules, and inbox import keep the vault current without manual intervention.
 
 **Managed sources** - `swarmvault source add|list|reload|review|guide|session|delete` turns recurring files, directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json`, source briefs under `wiki/outputs/source-briefs/`, resumable session anchors under `wiki/outputs/source-sessions/`, and guided integration artifacts under `wiki/outputs/source-guides/`.
+
+**Source artifact types:**
+
+| Artifact | Created by | Purpose |
+|----------|-----------|---------|
+| Source brief | `source add`, `ingest` (always) | Auto summary written to `wiki/outputs/source-briefs/` |
+| Source review | `source review`, `source add --guide` | Lighter staged assessment in `wiki/outputs/source-reviews/` |
+| Source guide | `source guide`, `source add --guide` | Guided walkthrough with approval-bundled updates in `wiki/outputs/source-guides/` |
+| Source session | `source session`, `source add --guide` | Resumable workflow state in `wiki/outputs/source-sessions/` and `state/source-sessions/` |
 
 **External graph sinks** - export to full HTML, lightweight standalone HTML, SVG, GraphML, Cypher, JSON, Obsidian note bundles, or Obsidian canvas, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
 

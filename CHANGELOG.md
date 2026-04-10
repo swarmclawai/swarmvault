@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.24
+
+- Normalized approval bundle types to hyphenated names such as `generated-output`, `source-review`, and `guided-session`, while keeping legacy underscore manifests readable so existing approval history continues to load cleanly
+- Refreshed the README, package docs, skill bundle docs, and website docs to match the current profile wording, provider setup guidance, source artifact descriptions, and deep-lint web-search scope
+
 ## 0.7.23
 
 - Added `swarmvault scan <directory>` as a one-command scratch path that initializes the current directory as a vault, ingests a local directory, compiles it, and can launch the graph viewer immediately

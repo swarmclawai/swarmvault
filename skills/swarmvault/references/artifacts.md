@@ -19,6 +19,8 @@ SwarmVault is save-first. The files on disk are the product.
 - `wiki/outputs/` - saved query and explore outputs
 - `wiki/outputs/source-briefs/` - source-scoped onboarding briefs for managed sources
 - `wiki/outputs/source-reviews/` - source-scoped review pages staged through approvals
+- `wiki/outputs/source-guides/` - guided source-integration pages that stage broader wiki updates for review
+- `wiki/outputs/source-sessions/` - resumable guided-session anchors plus question and answer state
 - `wiki/dashboards/` - recent sources, timeline, contradiction, and open-question dashboards
 - `wiki/candidates/` - staged concept/entity pages
 - `wiki/graph/report.md` - trust and orientation report

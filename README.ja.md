@@ -82,7 +82,7 @@ swarmvault graph push neo4j --dry-run
 
 とても大きなグラフでは、`swarmvault graph serve` と `swarmvault graph export --html` は自動で overview mode で始まります。全面表示したい場合は `--full` を付けてください。
 
-`swarmvault init --profile` は `default`、`personal-research`、そして `reader,timeline` のようなカンマ区切り preset list を受け付けます。`personal-research` の starter profile は `profile.guidedIngestDefault` と `profile.deepLintDefault` を両方有効にするので、ingest/source と lint は `--no-guide` や `--no-deep` を付けない限り強いパスで始まります。独自のボルト挙動にしたい場合は `swarmvault.config.json` の `profile` ブロックを編集し、`swarmvault.schema.md` は人間が書く意図レイヤーとして使い続けてください。
+`swarmvault init --profile` は `default`、`personal-research`、そして `reader,timeline` のようなカンマ区切り preset list を受け付けます。`personal-research` の preset は `profile.guidedIngestDefault` と `profile.deepLintDefault` を両方有効にするので、ingest/source と lint は `--no-guide` や `--no-deep` を付けない限り強いパスで始まります。独自のボルト挙動にしたい場合は `swarmvault.config.json` の `profile` ブロックを編集し、`swarmvault.schema.md` は人間が書く意図レイヤーとして使い続けてください。
 
 <!-- readme-section:provider-setup -->
 ## 任意: モデルプロバイダーを追加
@@ -90,25 +90,6 @@ swarmvault graph push neo4j --dry-run
 SwarmVault を始めるのに API キーや外部モデルプロバイダーは必須ではありません。組み込みの `heuristic` プロバイダーで、ローカル/オフラインのボルト初期化、ingest、compile、graph/report/search、軽量な query や lint の既定フローを回せます。
 
 より高品質な統合結果や、semantic embeddings、vision、ネイティブ画像生成のような追加機能が欲しいときに、モデルプロバイダーを追加してください:
-
-```json
-{
-  "providers": {
-    "primary": {
-      "type": "openai",
-      "model": "gpt-4o",
-      "apiKeyEnv": "OPENAI_API_KEY"
-    }
-  },
-  "tasks": {
-    "compileProvider": "primary",
-    "queryProvider": "primary",
-    "embeddingProvider": "primary"
-  }
-}
-```
-
-他の任意バックエンド、タスクの振り分け、能力ごとの設定例は [provider docs](https://www.swarmvault.ai/docs/providers) を参照してください。
 
 ### 推奨: Ollama + Gemma によるローカル LLM
 
@@ -137,6 +118,8 @@ ollama pull gemma4
 
 heuristic プロバイダーのみの構成で compile/query を実行すると、SwarmVault はこの設定を勧める一回限りの通知を表示します。`SWARMVAULT_NO_NOTICES=1` を設定すると非表示にできます。サポートしている他のプロバイダー（OpenAI、Anthropic、Gemini、OpenRouter、Groq、Together、xAI、Cerebras、openai-compatible、custom）もそのまま使えます。
 
+### ローカル Semantic Embeddings
+
 API キーなしでローカルの semantic graph query を使いたい場合は、`heuristic` ではなく、Ollama のような embeddings 対応ローカルバックエンドを使ってください:
 
 ```json
@@ -159,6 +142,29 @@ API キーなしでローカルの semantic graph query を使いたい場合は
   }
 }
 ```
+
+### クラウド API プロバイダー
+
+クラウドホスト型モデルを使用する場合は、API キーを含む provider ブロックを追加してください：
+
+```json
+{
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "model": "gpt-4o",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    }
+  },
+  "tasks": {
+    "compileProvider": "primary",
+    "queryProvider": "primary",
+    "embeddingProvider": "primary"
+  }
+}
+```
+
+他の任意バックエンド、タスクの振り分け、能力ごとの設定例は [provider docs](https://www.swarmvault.ai/docs/providers) を参照してください。
 
 ## 継続的なソースをそのまま追加
 
@@ -249,11 +255,13 @@ clawhub install swarmvault
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
-**設定可能な profile** - `swarmvault.config.json` の `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.deepLintDefault`、`profile.dataviewBlocks` を組み合わせて、自分向けの vault mode を作れます。`personal-research` はあくまで starter alias です。
+**設定可能な profile** - `swarmvault.config.json` の `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.deepLintDefault`、`profile.dataviewBlocks` を組み合わせて、自分向けの vault mode を作れます。`personal-research` はあくまで built-in preset alias です。
 
 **ガイド付き session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>`、`source session <id>` は再開可能な source session を作成し、`wiki/outputs/source-sessions/` に残しながら、source review、source guide、そして profile 設定に応じて canonical page あるいは `wiki/insights/` へ向かう更新案を受け入れ前に段階化します。`swarmvault.config.json` で `profile.guidedIngestDefault: true` を設定すると、ingest と source コマンドでガイド付きモードがデフォルトになります。`--no-guide` でオーバーライドできます。
 
 **deep lint の既定値** - `swarmvault.config.json` で `profile.deepLintDefault: true` を設定すると、`swarmvault lint` は LLM ベースの advisory deep lint を既定で含むようになります。特定の実行だけ構造チェックに戻したい場合は `--no-deep` を使ってください。
+
+**Web-search 強化 lint** — `lint --deep --web` は、設定済みの web-search provider（`http-json` または `custom`）を使用して deep-lint の検出結果に外部エビデンスを追加します。Web search は現在 deep lint のみに限定されています。他のコマンドはローカル vault 状態のみを参照します。
 
 **知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source sessions、source guides、research map、contradictions、open questions が出力されます。まず plain markdown として読めることを優先し、`profile.dataviewBlocks` を有効にすると Obsidian Dataview 向けのクエリも追加されます。
 
@@ -268,6 +276,15 @@ clawhub install swarmvault
 **Automation** - watch mode、git hooks、定期実行、inbox import により、ボルトを手動更新なしで最新に保てます。
 
 **Managed sources** - `swarmvault source add|list|reload|review|guide|session|delete` により、繰り返し使うローカルファイル、ディレクトリ、公開 GitHub リポジトリ、docs サイトを名前付き同期ソースとして管理できます。レジストリは `state/sources.json`、ソース別ブリーフは `wiki/outputs/source-briefs/`、再開可能な session アンカーは `wiki/outputs/source-sessions/`、ガイド付き統合成果物は `wiki/outputs/source-guides/` に保存されます。
+
+**Source artifact の種類：**
+
+| Artifact | 作成方法 | 用途 |
+|----------|---------|------|
+| Source brief | `source add`、`ingest`（常に作成） | 自動生成サマリー。`wiki/outputs/source-briefs/` に出力 |
+| Source review | `source review`、`source add --guide` | 軽量なステージド評価。`wiki/outputs/source-reviews/` に出力 |
+| Source guide | `source guide`、`source add --guide` | approval-bundled 更新を伴うガイド付きウォークスルー。`wiki/outputs/source-guides/` に出力 |
+| Source session | `source session`、`source add --guide` | 再開可能なワークフロー状態。`wiki/outputs/source-sessions/` と `state/source-sessions/` に保存 |
 
 **外部グラフ連携** - 完全版 HTML、軽量 standalone HTML、SVG、GraphML、Cypher、JSON、Obsidian note bundle、Obsidian canvas にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
 

@@ -82,33 +82,12 @@ swarmvault graph push neo4j --dry-run
 
 对于非常大的图，`swarmvault graph serve` 和 `swarmvault graph export --html` 会自动进入 overview mode。若你仍想强制渲染完整画布，请添加 `--full`。
 
-`swarmvault init --profile` 支持 `default`、`personal-research`，也支持 `reader,timeline` 这种逗号分隔的 preset 组合。`personal-research` 起步 profile 会同时开启 `profile.guidedIngestDefault` 和 `profile.deepLintDefault`，所以 ingest/source 与 lint 默认都会走更强的路径，除非你显式传入 `--no-guide` 或 `--no-deep`。若要自定义知识库行为，请直接编辑 `swarmvault.config.json` 里的 `profile` 配置块，并把 `swarmvault.schema.md` 继续当作人工维护的意图层。
+`swarmvault init --profile` 支持 `default`、`personal-research`，也支持 `reader,timeline` 这种逗号分隔的 preset 组合。`personal-research` preset 会同时开启 `profile.guidedIngestDefault` 和 `profile.deepLintDefault`，所以 ingest/source 与 lint 默认都会走更强的路径，除非你显式传入 `--no-guide` 或 `--no-deep`。若要自定义知识库行为，请直接编辑 `swarmvault.config.json` 里的 `profile` 配置块，并把 `swarmvault.schema.md` 继续当作人工维护的意图层。
 
 <!-- readme-section:provider-setup -->
 ## 可选：添加模型提供方
 
 开始使用 SwarmVault 并不需要 API key，也不需要外部模型提供方。内置的 `heuristic` 提供方可以支持本地/离线的知识库初始化、ingest、compile、graph/report/search，以及轻量级的 query 和 lint 默认流程。
-
-当你希望获得更强的综合质量，或者需要语义 embeddings、vision、原生图片生成等额外能力时，再接入模型提供方即可：
-
-```json
-{
-  "providers": {
-    "primary": {
-      "type": "openai",
-      "model": "gpt-4o",
-      "apiKeyEnv": "OPENAI_API_KEY"
-    }
-  },
-  "tasks": {
-    "compileProvider": "primary",
-    "queryProvider": "primary",
-    "embeddingProvider": "primary"
-  }
-}
-```
-
-其他可选后端、任务路由方式与能力配置请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
 
 ### 推荐：通过 Ollama + Gemma 在本地运行 LLM
 
@@ -137,6 +116,8 @@ ollama pull gemma4
 
 当你只配置 heuristic provider 时，SwarmVault 在 compile/query 命令中会显示一次性提示指向此配置。设置 `SWARMVAULT_NO_NOTICES=1` 可以关闭该提示。任何其他已支持的 provider（OpenAI、Anthropic、Gemini、OpenRouter、Groq、Together、xAI、Cerebras、openai-compatible、custom）同样可用。
 
+### 本地语义 Embeddings
+
 如果你想在不使用 API key 的情况下启用本地语义图查询，请使用具备 embeddings 能力的本地后端，例如 Ollama，而不是 `heuristic`：
 
 ```json
@@ -159,6 +140,29 @@ ollama pull gemma4
   }
 }
 ```
+
+### 云端 API 提供方
+
+如需使用云端模型，请在配置中添加 provider 并填入 API key：
+
+```json
+{
+  "providers": {
+    "primary": {
+      "type": "openai",
+      "model": "gpt-4o",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    }
+  },
+  "tasks": {
+    "compileProvider": "primary",
+    "queryProvider": "primary",
+    "embeddingProvider": "primary"
+  }
+}
+```
+
+其他可选后端、任务路由方式与能力配置请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
 
 ## 直接指向可重复使用的来源
 
@@ -249,11 +253,13 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
-**可配置 profile** - 通过 `swarmvault.config.json` 中的 `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.deepLintDefault` 和 `profile.dataviewBlocks` 组合出自己的知识库模式，而不是等待新的硬编码产品模式。`personal-research` 只是一个起步别名。
+**可配置 profile** - 通过 `swarmvault.config.json` 中的 `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.deepLintDefault` 和 `profile.dataviewBlocks` 组合出自己的知识库模式，而不是等待新的硬编码产品模式。`personal-research` 只是一个内置 preset 别名。
 
 **引导式 session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` 和 `source session <id>` 会创建可恢复的 source session，写入 `wiki/outputs/source-sessions/`，并在你接受之前阶段化 source review、source guide，以及基于 profile 配置流向 canonical 页面或 `wiki/insights/` 的更新提案。在 `swarmvault.config.json` 中设置 `profile.guidedIngestDefault: true` 可以让 ingest 和 source 命令默认使用引导式模式；用 `--no-guide` 覆盖。
 
 **deep lint 默认值** - 在 `swarmvault.config.json` 中设置 `profile.deepLintDefault: true`，可以让 `swarmvault lint` 默认包含 LLM 驱动的 advisory deep lint；如果某一次只想运行结构性检查，用 `--no-deep` 覆盖即可。
+
+**Web-search 增强 lint** — `lint --deep --web` 使用已配置的 web-search provider（`http-json` 或 `custom`）在 deep-lint 中引入外部证据片段。Web search 目前仅限于 deep lint；其他命令仅查询本地 vault 状态。
 
 **知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。默认先保证普通 Markdown 可读；当 `profile.dataviewBlocks` 打开时，会额外附加适合 Obsidian Dataview 的查询块。
 
@@ -268,6 +274,15 @@ clawhub install swarmvault
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 
 **托管来源** - `swarmvault source add|list|reload|review|guide|session|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，可恢复的 session 锚点写入 `wiki/outputs/source-sessions/`，引导式整合产物写入 `wiki/outputs/source-guides/`。
+
+**Source artifact 类型：**
+
+| Artifact | 创建方式 | 用途 |
+|----------|---------|------|
+| Source brief | `source add`、`ingest`（始终创建） | 自动生成的摘要，写入 `wiki/outputs/source-briefs/` |
+| Source review | `source review`、`source add --guide` | 较轻量的评估，写入 `wiki/outputs/source-reviews/` |
+| Source guide | `source guide`、`source add --guide` | 引导式整合，生成 approval-bundled 更新，写入 `wiki/outputs/source-guides/` |
+| Source session | `source session`、`source add --guide` | 可恢复的工作流状态，保存在 `wiki/outputs/source-sessions/` 和 `state/source-sessions/` |
 
 **外部图谱输出** - 可导出为完整 HTML、轻量 standalone HTML、SVG、GraphML、Cypher、JSON、Obsidian 笔记包或 Obsidian canvas，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
 

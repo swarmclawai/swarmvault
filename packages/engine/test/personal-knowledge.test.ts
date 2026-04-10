@@ -329,7 +329,7 @@ describe("personal knowledge workflows", () => {
     await fs.access(added.sessionPath ?? "");
 
     const detail = await readApproval(rootDir, added.approvalId ?? "");
-    expect(detail.bundleType).toBe("guided_session");
+    expect(detail.bundleType).toBe("guided-session");
     expect(detail.title).toContain("Guided Session");
     expect(detail.sourceSessionId).toBe(added.sessionId);
     expect(detail.entries.some((entry) => entry.label === "source-review")).toBe(true);

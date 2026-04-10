@@ -1449,7 +1449,7 @@ async function buildSourceGuideStagedPage(
 async function stageSourceReviewForScope(rootDir: string, scope: SourceScope): Promise<SourceReviewResult> {
   const output = await buildSourceReviewStagedPage(rootDir, scope);
   const approval = await stageGeneratedOutputPages(rootDir, [{ page: output.page, content: output.content, label: "source-review" }], {
-    bundleType: "source_review",
+    bundleType: "source-review",
     title: `Source Review: ${scope.title}`
   });
   return {
@@ -1901,7 +1901,7 @@ async function stageSourceGuideForScope(
       ...guidedUpdates
     ],
     {
-      bundleType: "guided_session",
+      bundleType: "guided-session",
       title: `Guided Session: ${scope.title}`,
       sourceSessionId: session.sessionId
     }

@@ -1009,11 +1009,11 @@ async function buildDashboardRecords(
         await fs.readdir(paths.approvalsDir, { withFileTypes: true }).catch(() => [])
       )
         .filter((entry) => entry.isDirectory())
-        .map(async (entry) => await readJsonFile<ApprovalManifest>(approvalManifestPath(paths, entry.name)))
+        .map(async (entry) => await readApprovalManifest(paths, entry.name).catch(() => null))
     )
   )
     .filter((manifest): manifest is ApprovalManifest => Boolean(manifest))
-    .filter((manifest) => manifest.bundleType === "guided_source" || manifest.bundleType === "guided_session")
+    .filter((manifest) => manifest.bundleType === "guided-source" || manifest.bundleType === "guided-session")
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .slice(0, 12);
   const readerFocusPages = uniqueBy([...guidePages, ...briefPages, ...conceptPages, ...entityPages], (page) => page.id).slice(0, 8);
@@ -2520,6 +2520,17 @@ function approvalGraphPath(paths: Awaited<ReturnType<typeof loadVaultConfig>>["p
   return path.join(paths.approvalsDir, approvalId, "state", "graph.json");
 }
 
+function normalizeApprovalBundleType(raw: string | undefined): ApprovalBundleType | undefined {
+  if (!raw) return undefined;
+  const legacy: Record<string, ApprovalBundleType> = {
+    generated_output: "generated-output",
+    source_review: "source-review",
+    guided_source: "guided-source",
+    guided_session: "guided-session"
+  };
+  return legacy[raw] ?? (raw as ApprovalBundleType);
+}
+
 async function readApprovalManifest(
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
   approvalId: string
@@ -2528,6 +2539,7 @@ async function readApprovalManifest(
   if (!manifest) {
     throw new Error(`Approval bundle not found: ${approvalId}`);
   }
+  manifest.bundleType = normalizeApprovalBundleType(manifest.bundleType);
   return manifest;
 }
 
@@ -3522,7 +3534,7 @@ async function stageOutputApprovalBundle(
   await writeApprovalManifest(paths, {
     approvalId,
     createdAt: new Date().toISOString(),
-    bundleType: options.bundleType ?? "generated_output",
+    bundleType: options.bundleType ?? "generated-output",
     title: options.title,
     sourceSessionId: options.sourceSessionId,
     entries: await buildApprovalEntries(

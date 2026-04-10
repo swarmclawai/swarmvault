@@ -64,9 +64,20 @@ For very large graphs, `swarmvault graph serve` and `swarmvault graph export --h
 
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom. Code files are always parsed locally via tree-sitter; only non-code text or image sources go to configured model providers.
 
-`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For a custom vault style, edit the `profile` block in `swarmvault.config.json` directly; `swarmvault.schema.md` stays the human-written intent layer. The `personal-research` starter profile also enables `profile.guidedIngestDefault` and `profile.deepLintDefault`, so guided ingest/source and lint flows are on by default until you opt out with `--no-guide` or `--no-deep`.
+`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For a custom vault style, edit the `profile` block in `swarmvault.config.json` directly; `swarmvault.schema.md` stays the human-written intent layer. The `personal-research` preset also enables `profile.guidedIngestDefault` and `profile.deepLintDefault`, so guided ingest/source and lint flows are on by default until you opt out with `--no-guide` or `--no-deep`.
 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
+
+`swarmvault lint --deep --web` augments deep-lint findings with external evidence from a configured `webSearch` adapter. Web search is currently scoped to deep lint; compile, query, and explore stay on local vault state plus your configured LLM providers.
+
+Source-scoped artifacts are intentionally split by role:
+
+| Artifact | Created by | Purpose |
+|----------|-----------|---------|
+| Source brief | `source add`, `ingest` (always) | Auto summary written to `wiki/outputs/source-briefs/` |
+| Source review | `source review`, `source add --guide`, `ingest --review`, `ingest --guide` | Lighter staged assessment in `wiki/outputs/source-reviews/` |
+| Source guide | `source guide`, `source add --guide`, `ingest --guide` | Guided walkthrough with approval-bundled updates in `wiki/outputs/source-guides/` |
+| Source session | `source session`, `source add --guide`, `ingest --guide` | Resumable workflow state in `wiki/outputs/source-sessions/` and `state/source-sessions/` |
 
 Supported non-code ingest includes `.pdf`, the full Word family (`.docx`, `.docm`, `.dotx`, `.dotm`), `.rtf`, `.odt`, `.odp`, `.ods`, `.epub`, `.csv`, `.tsv`, the full Excel family (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.xltx`, `.xltm`), the full PowerPoint family (`.pptx`, `.pptm`, `.potx`, `.potm`), `.ipynb` (Jupyter notebooks), `.bib` (BibTeX), `.org` (Org-mode), `.adoc`/`.asciidoc`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.ico`, `.heic`, `.heif`, `.avif`, `.jxl`), markdown/MDX/text notes, structured config/data (`.json`, `.jsonc`, `.json5`, `.yaml`, `.toml`, `.xml`, `.ini`, `.conf`, `.cfg`, `.env`, `.properties`) with schema hints, common developer manifests (`package.json`, `tsconfig.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `go.sum`, `Dockerfile`, `Makefile`, `LICENSE`, `.gitignore`, `.editorconfig`, and similar) via content-sniffed text ingest so they are never silently dropped, browser clips, and research URLs captured through `swarmvault add`.
 
