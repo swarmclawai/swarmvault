@@ -60,11 +60,11 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.24 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.25 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 node ./scripts/live-smoke.mjs --lane heuristic --browser-check
 node ./scripts/live-smoke.mjs --lane neo4j --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
-node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.24 --keep-artifacts
+node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.25 --keep-artifacts
 node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
 node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
 ```

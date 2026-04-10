@@ -17,9 +17,9 @@ import { buildCodeIndex, enrichResolvedCodeImports, modulePageTitle } from "./co
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { runDeepLint } from "./deep-lint.js";
-import { embeddingSimilarityEdges, semanticGraphMatches } from "./embeddings.js";
+import { embeddingSimilarityEdges, semanticGraphMatches, semanticPageSearch } from "./embeddings.js";
 import { enrichGraph } from "./graph-enrichment.js";
-import { explainGraphTarget, listHyperedges, queryGraph, shortestGraphPath, topGodNodes } from "./graph-tools.js";
+import { blastRadius, explainGraphTarget, listHyperedges, queryGraph, shortestGraphPath, topGodNodes } from "./graph-tools.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
 import { recordSession } from "./logs.js";
 import {
@@ -59,7 +59,7 @@ import {
   loadVaultSchemas,
   schemaCategoryLabels
 } from "./schema.js";
-import { rebuildSearchIndex, searchPages } from "./search.js";
+import { mergeSearchResults, rebuildSearchIndex, searchPages } from "./search.js";
 import { aggregateManifestSourceClass } from "./source-classification.js";
 import { listGuidedSourceSessions, updateGuidedSourceSessionStatus } from "./source-sessions.js";
 import type {
@@ -73,6 +73,7 @@ import type {
   ApprovalSummary,
   BenchmarkArtifact,
   BenchmarkOptions,
+  BlastRadiusResult,
   CandidateRecord,
   CodeIndexArtifact,
   CompileOptions,
@@ -4644,6 +4645,54 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     ]
   });
 
+  // Token budgeting: when maxTokens is set, remove low-priority pages that exceed the budget
+  let tokenStats: CompileResult["tokenStats"];
+  if (options.maxTokens && options.maxTokens > 0) {
+    const { estimatePageTokens, trimToTokenBudget } = await import("./token-estimation.js");
+    const nodeDegreeLookup = new Map<string, number>();
+    const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+    if (graph) {
+      for (const node of graph.nodes) {
+        if (node.pageId && node.degree) {
+          const existing = nodeDegreeLookup.get(node.pageId) ?? 0;
+          nodeDegreeLookup.set(node.pageId, Math.max(existing, node.degree));
+        }
+      }
+    }
+
+    const estimates = await Promise.all(
+      sync.allPages.map(async (page) => {
+        const fullPath = path.join(paths.wikiDir, page.path);
+        let content = "";
+        try {
+          content = await fs.readFile(fullPath, "utf8");
+        } catch {
+          // Page may have been removed
+        }
+        return estimatePageTokens(page.id, page.path, page.kind, content, nodeDegreeLookup.get(page.id), page.confidence);
+      })
+    );
+
+    const budgetResult = trimToTokenBudget(estimates, options.maxTokens);
+
+    // Remove dropped pages from disk
+    for (const dropped of budgetResult.dropped) {
+      const fullPath = path.join(paths.wikiDir, dropped.path);
+      try {
+        await fs.unlink(fullPath);
+      } catch {
+        // Ignore if already removed
+      }
+    }
+
+    tokenStats = {
+      estimatedTokens: budgetResult.totalTokens,
+      maxTokens: options.maxTokens,
+      pagesKept: budgetResult.kept.length,
+      pagesDropped: budgetResult.dropped.length
+    };
+  }
+
   return {
     graphPath: paths.graphPath,
     pageCount: sync.allPages.length,
@@ -4655,7 +4704,8 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     postPassApprovalId,
     postPassApprovalDir,
     promotedPageIds: sync.promotedPageIds,
-    candidatePageCount: sync.candidatePageCount
+    candidatePageCount: sync.candidatePageCount,
+    tokenStats
   };
 }
 
@@ -5028,12 +5078,66 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
 }
 
 export async function searchVault(rootDir: string, query: string, limit = 5): Promise<SearchResult[]> {
-  const { paths } = await loadVaultConfig(rootDir);
+  const { paths, config } = await loadVaultConfig(rootDir);
   if (!(await fileExists(paths.searchDbPath))) {
     await compileVault(rootDir, {});
   }
 
-  return searchPages(paths.searchDbPath, query, limit);
+  const hybrid = config.search?.hybrid !== false;
+  const ftsResults = searchPages(paths.searchDbPath, query, hybrid ? limit * 3 : limit);
+
+  if (!hybrid || !(await fileExists(paths.graphPath))) {
+    return ftsResults.slice(0, limit);
+  }
+
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  if (!graph) {
+    return ftsResults.slice(0, limit);
+  }
+
+  const semanticHits = await semanticPageSearch(rootDir, graph, query, limit * 3).catch(() => []);
+  if (!semanticHits.length) {
+    return ftsResults.slice(0, limit);
+  }
+
+  const merged = mergeSearchResults(ftsResults, semanticHits, limit);
+
+  if (config.search?.rerank && merged.length > 1) {
+    return rerankSearchResults(rootDir, query, merged, limit);
+  }
+
+  return merged;
+}
+
+async function rerankSearchResults(rootDir: string, query: string, results: SearchResult[], limit: number): Promise<SearchResult[]> {
+  const provider = await getProviderForTask(rootDir, "queryProvider");
+  const candidates = results
+    .slice(0, Math.min(results.length, 20))
+    .map((r, i) => `[${i}] ${r.title} — ${r.snippet || r.path}`)
+    .join("\n");
+  const prompt = `Given the search query: "${query}"\n\nRank these results by relevance (most relevant first).\n\n${candidates}`;
+  try {
+    const indices = await provider.generateStructured(
+      { prompt, system: "You are a search result ranker." },
+      z.array(z.number().int().nonnegative())
+    );
+    const reranked: SearchResult[] = [];
+    const seen = new Set<number>();
+    for (const idx of indices) {
+      if (idx >= 0 && idx < results.length && !seen.has(idx)) {
+        seen.add(idx);
+        reranked.push(results[idx]);
+      }
+    }
+    for (let i = 0; i < results.length && reranked.length < limit; i++) {
+      if (!seen.has(i)) {
+        reranked.push(results[i]);
+      }
+    }
+    return reranked.slice(0, limit);
+  } catch {
+    return results.slice(0, limit);
+  }
 }
 
 async function ensureCompiledGraph(rootDir: string): Promise<GraphArtifact> {
@@ -5167,6 +5271,11 @@ export async function readGraphReport(rootDir: string): Promise<GraphReportArtif
 export async function listGodNodes(rootDir: string, limit = 10): Promise<GraphNode[]> {
   const graph = await ensureCompiledGraph(rootDir);
   return topGodNodes(graph, limit);
+}
+
+export async function blastRadiusVault(rootDir: string, target: string, options?: { maxDepth?: number }): Promise<BlastRadiusResult> {
+  const graph = await ensureCompiledGraph(rootDir);
+  return blastRadius(graph, target, options);
 }
 
 export async function listPages(rootDir: string): Promise<GraphPage[]> {

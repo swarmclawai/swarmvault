@@ -73,14 +73,18 @@ swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
+swarmvault graph blast ./src/index.ts
 swarmvault query "What is the auth flow?"
 swarmvault graph serve
+swarmvault graph export --report ./exports/report.html
 swarmvault graph push neo4j --dry-run
 ```
 
 ローカル repo や docs ツリーを最短で一度見たい場合は、`swarmvault scan ./path --no-serve` を使います。現在のディレクトリを vault として初期化し、そのディレクトリを取り込み、compile まで実行し、`--no-serve` ならグラフビューアは起動しません。
 
 とても大きなグラフでは、`swarmvault graph serve` と `swarmvault graph export --html` は自動で overview mode で始まります。全面表示したい場合は `--full` を付けてください。
+
+vault が git リポジトリ内にある場合、`ingest`、`compile`、`query` は `--commit` も受け付け、生成された `wiki/` と `state/` の変更をすぐ commit できます。`compile --max-tokens <n>` は、コンテキスト窓を制約したいときに優先度の低いページを落として出力を抑えます。
 
 `swarmvault init --profile` は `default`、`personal-research`、そして `reader,timeline` のようなカンマ区切り preset list を受け付けます。`personal-research` の preset は `profile.guidedIngestDefault` と `profile.deepLintDefault` を両方有効にするので、ingest/source と lint は `--no-guide` や `--no-deep` を付けない限り強いパスで始まります。独自のボルト挙動にしたい場合は `swarmvault.config.json` の `profile` ブロックを編集し、`swarmvault.schema.md` は人間が書く意図レイヤーとして使い続けてください。
 
@@ -142,6 +146,8 @@ API キーなしでローカルの semantic graph query を使いたい場合は
   }
 }
 ```
+
+embedding 対応 provider が利用できる場合、SwarmVault は既定で semantic page match もローカル search に統合します。`tasks.embeddingProvider` はその backend を明示的に選ぶ方法ですが、現在の `queryProvider` が embeddings をサポートしていればそちらに fallback することもあります。さらに `search.rerank: true` を設定すると、現在の `queryProvider` が統合後の上位候補を再ランキングします。
 
 ### クラウド API プロバイダー
 
@@ -265,13 +271,21 @@ clawhub install swarmvault
 
 **知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source sessions、source guides、research map、contradictions、open questions が出力されます。まず plain markdown として読めることを優先し、`profile.dataviewBlocks` を有効にすると Obsidian Dataview 向けのクエリも追加されます。
 
+**ハイブリッド search と rerank** - embedding 対応 provider が利用できる場合、ローカル search は SQLite 全文検索と semantic page match を統合できます。`tasks.embeddingProvider` はその backend を明示的に選ぶ方法ですが、現在の `queryProvider` が embeddings をサポートしていればそちらに fallback することもあります。`search.rerank: true` を使うと、`query` の前に現在の `queryProvider` が上位候補を再ランキングします。
+
+**token 予算つき compile と自動 commit** - `compile --max-tokens <n>` は低優先度ページを削って生成 wiki を所定の token 予算内に収めます。`ingest|compile|query --commit` は、vault が git リポジトリ内にあるとき `wiki/` と `state/` の変更を即座に commit できます。
+
 **グラフ健全性シグナル** - graph report artifact には community cohesion の要約、孤立ノードや曖昧 edge の warning、そして弱いまたは曖昧な領域を補う follow-up question も含まれるようになりました。
+
+**graph blast radius と report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
 
 **任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 
 **12 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid 用のインストール規則があります。任意の graph-first hooks により、対応エージェントは広い検索の前に wiki を優先します。
 
 **MCP server** - `swarmvault mcp` はボルトを stdio 経由で互換エージェントクライアントへ公開します。
+
+**組み込みブラウザ clipper** - `graph serve` はローカルの `/api/bookmarklet` ページと `/api/clip` エンドポイントを公開し、実行中の vault に現在のブラウザ URL をワンクリックで取り込めます。
 
 **Automation** - watch mode、git hooks、定期実行、inbox import により、ボルトを手動更新なしで最新に保てます。
 
@@ -286,7 +300,7 @@ clawhub install swarmvault
 | Source guide | `source guide`、`source add --guide` | approval-bundled 更新を伴うガイド付きウォークスルー。`wiki/outputs/source-guides/` に出力 |
 | Source session | `source session`、`source add --guide` | 再開可能なワークフロー状態。`wiki/outputs/source-sessions/` と `state/source-sessions/` に保存 |
 
-**外部グラフ連携** - 完全版 HTML、軽量 standalone HTML、SVG、GraphML、Cypher、JSON、Obsidian note bundle、Obsidian canvas にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
+**外部グラフ連携** - 完全版 HTML、軽量 standalone HTML、self-contained report HTML、SVG、GraphML、Cypher、JSON、Obsidian note bundle、Obsidian canvas にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
 
 **大規模リポジトリ向けの堅牢化** - 大きな repo ingest や compile では抑制された進捗表示を出し、parser 互換性の失敗は該当ソースだけに閉じ込めて明示的な診断を残し、code-only repo watch cycle は non-code re-analysis を飛ばし、グラフレポートでは細かすぎるコミュニティをまとめて可読性を保ちます。
 

@@ -75,6 +75,7 @@ Prompt:
 Expected shape:
 
 - uses `swarmvault graph serve` or `graph export --html`
-- may suggest `graph export --html-standalone`, `graph export --canvas`, or `graph export --obsidian` when a lighter shareable artifact is a better fit
+- may suggest `graph export --report`, `graph export --html-standalone`, `graph export --canvas`, or `graph export --obsidian` when a lighter shareable artifact is a better fit
+- may use `graph blast <target>` when the user is asking about change impact instead of broad graph browsing
 - mentions `swarmvault mcp`
 - prefers existing report and graph artifacts when already present

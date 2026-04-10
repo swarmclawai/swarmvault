@@ -8,13 +8,16 @@ import {
   addInput,
   addManagedSource,
   archiveCandidate,
+  autoCommitWikiChanges,
   benchmarkVault,
+  blastRadiusVault,
   compileVault,
   deleteManagedSource,
   explainGraphVault,
   exploreVault,
   exportGraphFormat,
   exportGraphHtml,
+  exportGraphReportHtml,
   exportObsidianCanvas,
   exportObsidianVault,
   getGitHookStatus,
@@ -69,9 +72,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.24";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.25";
   } catch {
-    return "0.7.24";
+    return "0.7.25";
   }
 }
 
@@ -283,6 +286,7 @@ program
   .option("--include-resources", "Also ingest repo files classified as resources", false)
   .option("--include-generated", "Also ingest repo files classified as generated output", false)
   .option("--no-gitignore", "Ignore .gitignore rules when ingesting a directory")
+  .option("--commit", "Auto-commit wiki and state changes after ingest")
   .action(
     async (
       input: string,
@@ -300,6 +304,7 @@ program
         review?: boolean;
         guide?: boolean;
         answersFile?: string;
+        commit?: boolean;
       }
     ) => {
       const guideAnswers = readGuideAnswersFile(options.answersFile);
@@ -399,6 +404,10 @@ program
             log(`Staged guided session at ${completedGuide.guidePath}.`);
           }
         }
+        if (options.commit) {
+          const msg = await autoCommitWikiChanges(process.cwd(), "ingest", input, { force: true });
+          if (msg && !isJson()) log(`Committed: ${msg}`);
+        }
         return;
       }
       const ingest = await ingestInputDetailed(process.cwd(), input, commonOptions);
@@ -439,6 +448,10 @@ program
         } else if (completedGuide?.guidePath) {
           log(`Staged guided session at ${completedGuide.guidePath}.`);
         }
+      }
+      if (options.commit) {
+        const msg = await autoCommitWikiChanges(process.cwd(), "ingest", input, { force: true });
+        if (msg && !isJson()) log(`Committed: ${msg}`);
       }
     }
   );
@@ -685,8 +698,11 @@ program
   .command("compile")
   .description("Compile manifests into wiki pages, graph JSON, and search index.")
   .option("--approve", "Stage a review bundle without applying active page changes", false)
-  .action(async (options: { approve?: boolean }) => {
-    const result = await compileVault(process.cwd(), { approve: options.approve ?? false });
+  .option("--commit", "Auto-commit wiki and state changes after compile")
+  .option("--max-tokens <n>", "Cap wiki output by trimming lower-priority pages")
+  .action(async (options: { approve?: boolean; commit?: boolean; maxTokens?: string }) => {
+    const maxTokens = options.maxTokens ? parsePositiveInt(options.maxTokens, 0) || undefined : undefined;
+    const result = await compileVault(process.cwd(), { approve: options.approve ?? false, maxTokens });
     if (isJson()) {
       emitJson(result);
     } else {
@@ -695,6 +711,17 @@ program
       } else {
         log(`Compiled ${result.sourceCount} source(s), ${result.pageCount} page(s). Changed: ${result.changedPages.length}.`);
       }
+      if (result.tokenStats) {
+        log(
+          `Token budget: ~${result.tokenStats.estimatedTokens} tokens, kept ${result.tokenStats.pagesKept} pages, dropped ${result.tokenStats.pagesDropped}.`
+        );
+      }
+    }
+    if (options.commit) {
+      const msg = await autoCommitWikiChanges(process.cwd(), "compile", `${result.sourceCount} sources, ${result.pageCount} pages`, {
+        force: true
+      });
+      if (msg && !isJson()) log(`Committed: ${msg}`);
     }
     await maybeEmitHeuristicNotice(["compile"]);
   });
@@ -704,25 +731,35 @@ program
   .description("Query the compiled SwarmVault wiki.")
   .argument("<question>", "Question to ask SwarmVault")
   .option("--no-save", "Do not persist the answer to wiki/outputs")
+  .option("--commit", "Auto-commit wiki changes after query")
   .addOption(
     new Option("--format <format>", "Output format").choices(["markdown", "report", "slides", "chart", "image"]).default("markdown")
   )
-  .action(async (question: string, options: { save?: boolean; format?: "markdown" | "report" | "slides" | "chart" | "image" }) => {
-    const result = await queryVault(process.cwd(), {
-      question,
-      save: options.save ?? true,
-      format: options.format
-    });
-    if (isJson()) {
-      emitJson(result);
-    } else {
-      log(result.answer);
-      if (result.savedPath) {
-        log(`Saved to ${result.savedPath}`);
+  .action(
+    async (
+      question: string,
+      options: { save?: boolean; commit?: boolean; format?: "markdown" | "report" | "slides" | "chart" | "image" }
+    ) => {
+      const result = await queryVault(process.cwd(), {
+        question,
+        save: options.save ?? true,
+        format: options.format
+      });
+      if (isJson()) {
+        emitJson(result);
+      } else {
+        log(result.answer);
+        if (result.savedPath) {
+          log(`Saved to ${result.savedPath}`);
+        }
       }
+      if (options.commit) {
+        const msg = await autoCommitWikiChanges(process.cwd(), "query", question.slice(0, 72), { force: true });
+        if (msg && !isJson()) log(`Committed: ${msg}`);
+      }
+      await maybeEmitHeuristicNotice(["query"]);
     }
-    await maybeEmitHeuristicNotice(["query"]);
-  });
+  );
 
 program
   .command("explore")
@@ -878,6 +915,7 @@ graph
       emitJson({ port: server.port, url: `http://localhost:${server.port}` });
     } else {
       log(`Graph viewer running at http://localhost:${server.port}`);
+      log(`Browser clipper: http://localhost:${server.port}/api/bookmarklet`);
     }
     process.on("SIGINT", async () => {
       try {
@@ -890,10 +928,11 @@ graph
 graph
   .command("export")
   .description(
-    "Export the graph as HTML, SVG, GraphML, Cypher, JSON, Obsidian vault, or Obsidian canvas. Combine flags to write multiple formats in one run."
+    "Export the graph as HTML, report, SVG, GraphML, Cypher, JSON, Obsidian vault, or Obsidian canvas. Combine flags to write multiple formats in one run."
   )
   .option("--html <output>", "Output HTML file path")
   .option("--html-standalone <output>", "Output lightweight standalone HTML file path (vis.js, no build tooling)")
+  .option("--report <output>", "Output self-contained HTML report (graph stats, key nodes, communities)")
   .option("--svg <output>", "Output SVG file path")
   .option("--graphml <output>", "Output GraphML file path")
   .option("--cypher <output>", "Output Cypher file path")
@@ -905,6 +944,7 @@ graph
     async (options: {
       html?: string;
       htmlStandalone?: string;
+      report?: string;
       svg?: string;
       graphml?: string;
       cypher?: string;
@@ -916,6 +956,7 @@ graph
       const targets = [
         options.html ? ({ format: "html", outputPath: options.html } as const) : null,
         options.htmlStandalone ? ({ format: "html-standalone", outputPath: options.htmlStandalone } as const) : null,
+        options.report ? ({ format: "report", outputPath: options.report } as const) : null,
         options.svg ? ({ format: "svg", outputPath: options.svg } as const) : null,
         options.graphml ? ({ format: "graphml", outputPath: options.graphml } as const) : null,
         options.cypher ? ({ format: "cypher", outputPath: options.cypher } as const) : null,
@@ -925,7 +966,9 @@ graph
       ].filter((target): target is NonNullable<typeof target> => Boolean(target));
 
       if (targets.length === 0) {
-        throw new Error("Pass at least one of --html, --html-standalone, --svg, --graphml, --cypher, --json, --obsidian, or --canvas.");
+        throw new Error(
+          "Pass at least one of --html, --html-standalone, --report, --svg, --graphml, --cypher, --json, --obsidian, or --canvas."
+        );
       }
 
       const results: Array<{ format: string; outputPath: string; fileCount?: number }> = [];
@@ -933,6 +976,9 @@ graph
         if (target.format === "html") {
           const outputPath = await exportGraphHtml(process.cwd(), target.outputPath, { full: options.full ?? false });
           results.push({ format: target.format, outputPath });
+        } else if (target.format === "report") {
+          const result = await exportGraphReportHtml(process.cwd(), target.outputPath);
+          results.push({ format: result.format, outputPath: result.outputPath });
         } else if (target.format === "obsidian") {
           const result = await exportObsidianVault(process.cwd(), target.outputPath);
           results.push({ format: result.format, outputPath: result.outputPath, fileCount: result.fileCount });
@@ -1015,6 +1061,24 @@ graph
     }
     for (const node of result) {
       log(`${node.label} degree=${node.degree ?? 0} bridge=${node.bridgeScore ?? 0}`);
+    }
+  });
+
+graph
+  .command("blast")
+  .description("Show the blast radius of changing a file or module.")
+  .argument("<target>", "File path, module label, or module id")
+  .option("--depth <n>", "Maximum traversal depth", "3")
+  .action(async (target: string, options: { depth?: string }) => {
+    const depth = parsePositiveInt(options.depth, 3);
+    const result = await blastRadiusVault(process.cwd(), target, { maxDepth: depth });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(result.summary);
+    for (const mod of result.affectedModules) {
+      log(`  ${"  ".repeat(mod.depth - 1)}${mod.label} (depth ${mod.depth})`);
     }
   });
 

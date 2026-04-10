@@ -10,6 +10,7 @@ import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact } from "./types.js";
 import { fileExists, isPathWithin, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
 import {
+  blastRadiusVault,
   compileVault,
   explainGraphVault,
   getWorkspaceInfo,
@@ -25,7 +26,7 @@ import {
   searchVault
 } from "./vault.js";
 
-const SERVER_VERSION = "0.7.24";
+const SERVER_VERSION = "0.7.25";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -190,6 +191,20 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
   );
 
   server.registerTool(
+    "blast_radius",
+    {
+      description: "Analyze the impact of changing a file or module by tracing reverse import edges.",
+      inputSchema: {
+        target: z.string().min(1).describe("File path, module label, or module id"),
+        maxDepth: z.number().int().min(1).max(10).optional().describe("Maximum traversal depth (default 3)")
+      }
+    },
+    safeHandler(async ({ target, maxDepth }) => {
+      return asToolText(await blastRadiusVault(rootDir, target, { maxDepth: maxDepth ?? 3 }));
+    })
+  );
+
+  server.registerTool(
     "query_vault",
     {
       description: "Ask a question against the compiled vault and optionally save the answer.",
@@ -228,11 +243,12 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     {
       description: "Compile source manifests into wiki pages, graph data, and search index.",
       inputSchema: {
-        approve: z.boolean().optional().describe("Stage a review bundle without applying active page changes")
+        approve: z.boolean().optional().describe("Stage a review bundle without applying active page changes"),
+        maxTokens: z.number().int().min(1000).optional().describe("Maximum token budget for wiki output")
       }
     },
-    safeHandler(async ({ approve }) => {
-      const result = await compileVault(rootDir, { approve: approve ?? false });
+    safeHandler(async ({ approve, maxTokens }) => {
+      const result = await compileVault(rootDir, { approve: approve ?? false, maxTokens });
       return asToolText(result);
     })
   );

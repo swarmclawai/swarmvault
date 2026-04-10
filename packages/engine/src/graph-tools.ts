@@ -1,4 +1,5 @@
 import type {
+  BlastRadiusResult,
   EvidenceClass,
   GraphArtifact,
   GraphDiffResult,
@@ -530,4 +531,88 @@ export function graphDiff(oldGraph: GraphArtifact, newGraph: GraphArtifact): Gra
   const summary = parts.length ? parts.join("; ") : "No changes";
 
   return { addedNodes, removedNodes, addedEdges, removedEdges, addedPages, removedPages, summary };
+}
+
+/**
+ * Compute the blast radius of changing a file/module by tracing reverse import
+ * edges via BFS. Returns all modules that transitively depend on the target.
+ */
+export function blastRadius(graph: GraphArtifact, target: string, options?: { maxDepth?: number }): BlastRadiusResult {
+  const maxDepth = Math.max(1, Math.min(options?.maxDepth ?? 3, 10));
+
+  // Resolve target to a module node
+  const resolved = resolveNode(graph, target);
+  const moduleNode =
+    resolved?.type === "module" ? resolved : resolved?.moduleId ? graph.nodes.find((n) => n.id === resolved.moduleId) : undefined;
+
+  if (!moduleNode) {
+    // Try matching module nodes by label substring (file path matching)
+    const normalizedTarget = normalizeTarget(target);
+    const candidate = graph.nodes
+      .filter((n) => n.type === "module")
+      .find((n) => normalizeTarget(n.label).includes(normalizedTarget) || normalizeTarget(n.id).includes(normalizedTarget));
+    if (!candidate) {
+      return {
+        target,
+        totalAffected: 0,
+        maxDepth,
+        affectedModules: [],
+        summary: `No module found matching "${target}".`
+      };
+    }
+    return blastRadius(graph, candidate.id, options);
+  }
+
+  // Build reverse adjacency: for "imports" edges, track who imports whom.
+  // If module A imports module B, then changing B affects A.
+  const reverseImports = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (edge.relation === "imports") {
+      const dependents = reverseImports.get(edge.target) ?? [];
+      dependents.push(edge.source);
+      reverseImports.set(edge.target, dependents);
+    }
+  }
+
+  // BFS from the target module following reverse import edges
+  const affected: Array<{ moduleId: string; label: string; depth: number }> = [];
+  const seen = new Set<string>([moduleNode.id]);
+  const frontier: Array<{ id: string; depth: number }> = [{ id: moduleNode.id, depth: 0 }];
+  const nodes = nodeById(graph);
+
+  while (frontier.length > 0) {
+    const current = frontier.shift()!;
+    if (current.depth >= maxDepth) {
+      continue;
+    }
+    for (const dependentId of reverseImports.get(current.id) ?? []) {
+      if (seen.has(dependentId)) {
+        continue;
+      }
+      seen.add(dependentId);
+      const dependentNode = nodes.get(dependentId);
+      const nextDepth = current.depth + 1;
+      affected.push({
+        moduleId: dependentId,
+        label: dependentNode?.label ?? dependentId,
+        depth: nextDepth
+      });
+      frontier.push({ id: dependentId, depth: nextDepth });
+    }
+  }
+
+  affected.sort((a, b) => a.depth - b.depth || a.label.localeCompare(b.label));
+
+  const summary = affected.length
+    ? `Changing "${moduleNode.label}" affects ${affected.length} module${affected.length === 1 ? "" : "s"} (max depth ${maxDepth}).`
+    : `No modules depend on "${moduleNode.label}".`;
+
+  return {
+    target,
+    resolvedModuleId: moduleNode.id,
+    affectedModules: affected,
+    totalAffected: affected.length,
+    maxDepth,
+    summary
+  };
 }

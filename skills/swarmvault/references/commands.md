@@ -22,6 +22,7 @@ swarmvault source review <source-id>
 swarmvault source guide <source-id>
 swarmvault source delete <source-id>
 swarmvault ingest <path-or-url>
+swarmvault ingest <path-or-url> --commit
 swarmvault ingest <path-or-url> --guide
 swarmvault ingest <directory> --repo-root .
 swarmvault add <url-or-doi-or-arxiv-id>
@@ -32,8 +33,10 @@ swarmvault inbox import <path>
 
 ```bash
 swarmvault compile
+swarmvault compile --max-tokens 120000
 swarmvault compile --approve
 swarmvault query "<question>"
+swarmvault query "<question>" --commit
 swarmvault explore "<question>" --steps 3
 swarmvault lint
 swarmvault lint --conflicts
@@ -48,7 +51,9 @@ swarmvault candidate list
 ```bash
 swarmvault graph serve
 swarmvault graph serve --full
+swarmvault graph blast ./src/index.ts
 swarmvault graph export --html ./graph.html
+swarmvault graph export --report ./graph-report.html
 swarmvault graph export --html ./graph.html --full
 swarmvault graph export --html-standalone ./graph-standalone.html
 swarmvault graph export --json ./graph.json --canvas ./graph.canvas

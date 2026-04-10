@@ -12,7 +12,8 @@ import {
   normalizeSwarmNodeProps,
   relationType
 } from "./graph-interchange.js";
-import type { GraphArtifact, GraphExportFormat, GraphExportResult, GraphNode, GraphPage } from "./types.js";
+import { renderGraphReportHtml } from "./graph-report-html.js";
+import type { GraphArtifact, GraphExportFormat, GraphExportResult, GraphNode, GraphPage, GraphReportArtifact } from "./types.js";
 import { ensureDir, fileExists, readJsonFile } from "./utils.js";
 
 const NODE_COLORS: Record<string, string> = {
@@ -703,7 +704,7 @@ async function writeGraphExport(outputPath: string, content: string): Promise<st
 
 export async function exportGraphFormat(
   rootDir: string,
-  format: Exclude<GraphExportFormat, "html" | "obsidian" | "canvas">,
+  format: Exclude<GraphExportFormat, "html" | "report" | "obsidian" | "canvas">,
   outputPath: string
 ): Promise<GraphExportResult> {
   const graph = await loadGraph(rootDir);
@@ -719,6 +720,15 @@ export async function exportGraphFormat(
             : renderCypher(graph);
   const resolvedPath = await writeGraphExport(outputPath, rendered);
   return { format, outputPath: resolvedPath };
+}
+
+export async function exportGraphReportHtml(rootDir: string, outputPath: string): Promise<GraphExportResult> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const graph = await loadGraph(rootDir);
+  const report = await readJsonFile<GraphReportArtifact>(path.join(paths.wikiDir, "graph", "report.json"));
+  const html = renderGraphReportHtml(graph, report);
+  const resolvedPath = await writeGraphExport(outputPath, html);
+  return { format: "report", outputPath: resolvedPath };
 }
 
 function safeFileName(label: string): string {

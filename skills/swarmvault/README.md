@@ -52,9 +52,11 @@ swarmvault source session file-customer-call-srt-12345678
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
-swarmvault compile
+swarmvault compile --max-tokens 120000
 swarmvault query "What is the auth flow?"
+swarmvault graph blast ./src/index.ts
 swarmvault graph serve
+swarmvault graph export --report ./exports/report.html
 swarmvault mcp
 ```
 
@@ -68,7 +70,11 @@ The default `heuristic` provider is a valid local/offline starting point. Add a 
 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
 
+With an embedding-capable provider available, SwarmVault can also merge semantic page matches into local search by default. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `search.rerank: true` when you want the configured `queryProvider` to rerank the merged top hits before answering.
+
 `swarmvault lint --deep --web` augments deep-lint findings with external evidence from a configured `webSearch` adapter. Web search is currently scoped to deep lint; compile, query, and explore stay on local vault state plus your configured LLM providers.
+
+When the vault lives inside a git repo, `ingest`, `compile`, and `query` also accept `--commit` so generated `wiki/` and `state/` changes can be committed immediately. `compile --max-tokens <n>` trims lower-priority pages when you need bounded wiki output for a tighter context window.
 
 Source-scoped artifacts are intentionally split by role:
 
@@ -103,10 +109,10 @@ The published ClawHub package is intentionally text-only in this release.
 3. Use `swarmvault source add` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Add one-off material with `swarmvault ingest`, `swarmvault add`, or `swarmvault inbox import`.
 5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when you want the stronger guided-session workflow. Set `profile.guidedIngestDefault: true` when guided mode should be the default for ingest/source commands, and use `--no-guide` to force the lighter path for a specific run. Profiles using `guidedSessionMode: "canonical_review"` stage approval-queued canonical page edits; `insights_only` profiles keep exploratory synthesis under `wiki/insights/`.
-6. Compile with `swarmvault compile` or `swarmvault compile --approve`.
-7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search.
+6. Compile with `swarmvault compile`, use `compile --max-tokens <n>` when the generated wiki must fit a bounded context window, or use `compile --approve` when the change should land in the approval queue first.
+7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search. When the vault lives inside git, `ingest|compile|query --commit` can commit those artifacts immediately after the run.
 8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
-9. Use `swarmvault graph serve`, `swarmvault graph export`, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
+9. Use `swarmvault graph blast` for reverse-import impact checks, `swarmvault graph serve` for the live workspace plus bookmarklet clipper, `swarmvault graph export --report` for a self-contained HTML report, `swarmvault graph export` for other shareable formats, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
 ## What SwarmVault Writes
 

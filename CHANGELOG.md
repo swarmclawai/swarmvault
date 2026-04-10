@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.25
+
+- Added `--commit` support to `ingest`, `compile`, and `query`, plus an exported auto-commit helper for git-backed vault workflows that want wiki and state changes committed immediately
+- Added `compile --max-tokens <n>` token budgeting so lower-priority pages can be trimmed from final wiki output when you need a bounded context window, with token-budget stats reported in the compile result
+- Added hybrid page search that merges SQLite full-text hits with embedding-backed semantic matches, optional reranking through the configured query provider, `graph blast <target>` reverse-import impact analysis, `graph export --report` self-contained HTML report export, MCP `blast_radius`, and a local browser clipper bookmarklet exposed from `graph serve`
+- Updated the README, package docs, skill bundle docs, and website docs to cover commit-on-write flows, search controls, graph blast/report workflows, browser clipping, and compile token budgets
+
 ## 0.7.24
 
 - Normalized approval bundle types to hyphenated names such as `generated-output`, `source-review`, and `guided-session`, while keeping legacy underscore manifests readable so existing approval history continues to load cleanly

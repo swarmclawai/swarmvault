@@ -34,18 +34,20 @@ sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault ingest ./repo
 swarmvault add https://arxiv.org/abs/2401.12345
-swarmvault compile
+swarmvault compile --max-tokens 120000
 swarmvault benchmark
-swarmvault query "What keeps recurring?"
+swarmvault query "What keeps recurring?" --commit
 swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
+swarmvault graph blast ./src/index.ts
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
 swarmvault watch status
 swarmvault watch --repo --once
 swarmvault hook install
 swarmvault graph serve
+swarmvault graph export --report ./exports/report.html
 swarmvault graph export --html ./exports/graph.html
 swarmvault graph export --cypher ./exports/graph.cypher
 swarmvault graph push neo4j --dry-run
@@ -121,7 +123,7 @@ Source-scoped artifacts are intentionally split by role:
 | Source guide | `source guide`, `source add --guide`, `ingest --guide` | Guided walkthrough with approval-bundled updates in `wiki/outputs/source-guides/` |
 | Source session | `source session`, `source add --guide`, `ingest --guide` | Resumable workflow state in `wiki/outputs/source-sessions/` and `state/source-sessions/` |
 
-### `swarmvault ingest <path-or-url>`
+### `swarmvault ingest <path-or-url> [--commit]`
 
 Ingest a local file path, directory path, or URL into immutable source storage and write manifests to `state/manifests/`.
 
@@ -149,10 +151,13 @@ Useful flags:
 - `--no-gitignore`
 - `--no-include-assets`
 - `--max-asset-size <bytes>`
+- `--commit`
 
 Repo ingest defaults to `first_party` material. The extra `--include-*` flags opt dependency trees, resource bundles, and generated output back in when you actually want them in the vault.
 
 Large repo ingest now emits low-noise progress on materially large batches, and parser compatibility failures stay local to the affected source instead of aborting unrelated analysis.
+
+When `--commit` is set, SwarmVault stages `wiki/` and `state/` changes and creates a git commit when the vault root is inside a git worktree. Outside git, it becomes a no-op instead of failing.
 
 ### `swarmvault add <url>`
 
@@ -171,7 +176,7 @@ Capture supported URLs through a normalized markdown layer before ingesting them
 
 Import supported files from the configured inbox directory. This is meant for browser-clipper style markdown bundles, HTML clip bundles, and other capture workflows. Local image and asset references are preserved and copied into canonical storage under `raw/assets/`.
 
-### `swarmvault compile [--approve]`
+### `swarmvault compile [--approve] [--commit] [--max-tokens <n>]`
 
 Compile the current manifests into:
 
@@ -186,6 +191,14 @@ For ingested code trees, compile also writes `state/code-index.json` so local im
 New concept and entity pages are staged into `wiki/candidates/` first. A later matching compile promotes them into `wiki/concepts/` or `wiki/entities/`.
 
 With `--approve`, compile writes a staged review bundle into `state/approvals/` without applying active wiki changes.
+
+Useful flags:
+
+- `--approve`
+- `--commit`
+- `--max-tokens <n>`
+
+`--max-tokens <n>` keeps the generated wiki inside a bounded token budget by dropping lower-priority pages from final `wiki/` output and reporting token-budget stats in the compile result. `--commit` immediately commits `wiki/` and `state/` changes when the vault lives in a git repo.
 
 ### `swarmvault benchmark [--question "<text>" ...]`
 
@@ -218,7 +231,7 @@ Inspect and resolve staged concept and entity candidates.
 
 Targets can be page ids or relative paths under `wiki/candidates/`.
 
-### `swarmvault query "<question>" [--no-save] [--format markdown|report|slides|chart|image]`
+### `swarmvault query "<question>" [--no-save] [--commit] [--format markdown|report|slides|chart|image]`
 
 Query the compiled vault. The query layer also reads `swarmvault.schema.md`, so answers follow the vault’s own structure and grounding rules.
 
@@ -232,6 +245,8 @@ By default, the answer is written into `wiki/outputs/` and immediately registere
 Saved outputs also carry related page, node, and source metadata so SwarmVault can refresh related source, concept, and entity pages immediately.
 
 Human-authored pages in `wiki/insights/` are also indexed into search and query context, but SwarmVault does not rewrite them after initialization.
+
+By default, query uses the local SQLite search index. When an embedding-capable provider is available and `search.hybrid` is not disabled, semantic page matches are fused into the same candidate set before answer generation. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `search.rerank: true` when you want the configured `queryProvider` to rerank the merged top hits. `--commit` immediately commits saved `wiki/` and `state/` changes when the vault root is inside a git repo.
 
 ### `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides|chart|image]`
 
@@ -299,12 +314,17 @@ Run SwarmVault as a local MCP server over stdio. This exposes the vault to compa
 - `ingest_input`
 - `compile_vault`
 - `lint_vault`
+- `blast_radius`
+
+`compile_vault` also accepts `maxTokens` for bounded wiki output, and `blast_radius` traces reverse import impact for a file or module target.
 
 The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `swarmvault://sessions/{path}`, and includes `schemaPath` in `workspace_info`.
 
 ### `swarmvault graph serve`
 
 Start the local graph workspace backed by `state/graph.json`, `/api/search`, `/api/page`, and local graph query/path/explain endpoints.
+
+It also exposes `/api/bookmarklet` and `/api/clip`, so a running local viewer can ingest the current browser page through a bookmarklet without leaving the browser.
 
 ### `swarmvault graph query "<question>" [--dfs] [--budget <n>]`
 
@@ -322,12 +342,21 @@ Inspect graph metadata, community membership, neighbors, provenance, and group-p
 
 List the most connected bridge-heavy nodes in the current graph.
 
-### `swarmvault graph export --html|--html-standalone|--svg|--graphml|--cypher|--json|--obsidian|--canvas <output>`
+### `swarmvault graph blast <target> [--depth <n>]`
+
+Trace the reverse-import blast radius of changing a file or module.
+
+- accepts a file path, module label, or module id
+- follows reverse `imports` edges through the compiled graph
+- reports affected modules by depth so you can estimate downstream impact before editing
+
+### `swarmvault graph export --html|--html-standalone|--report|--svg|--graphml|--cypher|--json|--obsidian|--canvas <output>`
 
 Export the current graph as one or more shareable formats:
 
 - `--html` for the full self-contained read-only graph workspace
 - `--html-standalone` for a lighter vis.js export with node search, legend, and sidebar inspection
+- `--report` for a self-contained HTML graph report with stats, key nodes, communities, and warnings
 - `--svg` for a static shareable diagram
 - `--graphml` for graph-tool interoperability
 - `--cypher` for Neo4j-style import scripts
@@ -462,6 +491,20 @@ Deep lint web augmentation uses a separate `webSearch` config block. Example:
   }
 }
 ```
+
+Search behavior is configurable separately from provider routing:
+
+```json
+{
+  "search": {
+    "hybrid": true,
+    "rerank": false
+  }
+}
+```
+
+- `search.hybrid` defaults to enabled and merges full-text hits with semantic page matches when an embedding-capable provider is available
+- `search.rerank` optionally asks the current `queryProvider` to rerank the merged top hits before query answers are generated
 
 ## Troubleshooting
 

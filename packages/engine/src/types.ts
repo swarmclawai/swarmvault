@@ -54,7 +54,7 @@ export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore" | "source_brief" | "source_review" | "source_guide" | "source_session";
 export type OutputFormat = "markdown" | "report" | "slides" | "chart" | "image";
 export type OutputAssetRole = "primary" | "preview" | "manifest" | "poster";
-export type GraphExportFormat = "html" | "html-standalone" | "svg" | "graphml" | "cypher" | "json" | "obsidian" | "canvas";
+export type GraphExportFormat = "html" | "html-standalone" | "report" | "svg" | "graphml" | "cypher" | "json" | "obsidian" | "canvas";
 export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
@@ -277,6 +277,11 @@ export interface VaultConfig {
       deepLintProvider: string;
     };
   };
+  search?: {
+    hybrid?: boolean;
+    rerank?: boolean;
+  };
+  autoCommit?: boolean;
 }
 
 export interface ResolvedPaths {
@@ -795,9 +800,19 @@ export interface CandidateRecord {
   updatedAt: string;
 }
 
+export interface BlastRadiusResult {
+  target: string;
+  resolvedModuleId?: string;
+  affectedModules: Array<{ moduleId: string; label: string; depth: number }>;
+  totalAffected: number;
+  maxDepth: number;
+  summary: string;
+}
+
 export interface CompileOptions {
   approve?: boolean;
   codeOnly?: boolean;
+  maxTokens?: number;
 }
 
 export interface InitOptions {
@@ -817,6 +832,12 @@ export interface CompileResult {
   postPassApprovalDir?: string;
   promotedPageIds: string[];
   candidatePageCount: number;
+  tokenStats?: {
+    estimatedTokens: number;
+    maxTokens: number;
+    pagesKept: number;
+    pagesDropped: number;
+  };
 }
 
 export interface SearchResult {

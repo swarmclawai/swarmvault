@@ -173,6 +173,53 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
   db.close();
 }
 
+/**
+ * Merge FTS and semantic results using reciprocal rank fusion (RRF).
+ * k=60 is the standard constant from the original RRF paper.
+ */
+export function mergeSearchResults(
+  ftsResults: SearchResult[],
+  semanticHits: Array<{ pageId: string; path: string; title: string; kind: string; status: string; score: number }>,
+  limit: number
+): SearchResult[] {
+  const k = 60;
+  const scores = new Map<string, number>();
+  const resultMap = new Map<string, SearchResult>();
+
+  for (let i = 0; i < ftsResults.length; i++) {
+    const r = ftsResults[i];
+    scores.set(r.pageId, (scores.get(r.pageId) ?? 0) + 1 / (k + i + 1));
+    resultMap.set(r.pageId, r);
+  }
+
+  for (let i = 0; i < semanticHits.length; i++) {
+    const hit = semanticHits[i];
+    scores.set(hit.pageId, (scores.get(hit.pageId) ?? 0) + 1 / (k + i + 1));
+    if (!resultMap.has(hit.pageId)) {
+      resultMap.set(hit.pageId, {
+        pageId: hit.pageId,
+        path: hit.path,
+        title: hit.title,
+        snippet: "",
+        rank: -hit.score,
+        kind: hit.kind as SearchResult["kind"],
+        status: hit.status as SearchResult["status"],
+        projectIds: [],
+        sourceType: undefined,
+        sourceClass: undefined
+      });
+    }
+  }
+
+  return [...scores.entries()]
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, limit)
+    .map(([pageId, rrfScore]) => {
+      const result = resultMap.get(pageId)!;
+      return { ...result, rank: -rrfScore };
+    });
+}
+
 export function searchPages(dbPath: string, query: string, limitOrOptions: number | SearchQueryOptions = 5): SearchResult[] {
   const options = typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions;
   const ftsQuery = toFtsQuery(query);

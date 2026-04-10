@@ -73,14 +73,18 @@ swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
+swarmvault graph blast ./src/index.ts
 swarmvault query "What is the auth flow?"
 swarmvault graph serve
+swarmvault graph export --report ./exports/report.html
 swarmvault graph push neo4j --dry-run
 ```
 
 Need the fastest first pass over a local repo or docs tree? `swarmvault scan ./path --no-serve` initializes the current directory as a vault, ingests that directory, compiles it, and skips opening the graph viewer when you only want the artifacts.
 
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you want the entire canvas rendered anyway.
+
+When the vault lives inside a git repo, `ingest`, `compile`, and `query` also support `--commit` so the resulting `wiki/` and `state/` changes can be committed immediately. `compile --max-tokens <n>` trims lower-priority pages when you need the generated wiki to fit a bounded context window.
 
 `swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. The `personal-research` preset turns on both `profile.guidedIngestDefault` and `profile.deepLintDefault`, so ingest/source and lint flows start in the stronger path unless you pass `--no-guide` or `--no-deep`. For custom vault behavior, edit the `profile` block in `swarmvault.config.json` and keep `swarmvault.schema.md` as the human-written intent layer.
 
@@ -140,6 +144,8 @@ For local semantic graph query without API keys, use an embedding-capable local 
   }
 }
 ```
+
+With an embedding-capable provider available, SwarmVault can also merge semantic page matches into local search by default. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `search.rerank: true` when you want the configured `queryProvider` to rerank the merged top hits before answering.
 
 ### Cloud API Providers
 
@@ -267,13 +273,21 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source sessions, source guides, a research map, contradictions, and open questions. The pages work as plain markdown first, and `profile.dataviewBlocks` can append Dataview blocks when you want a more Obsidian-native view.
 
+**Hybrid search and rerank** - when an embedding-capable provider is available, local search can merge SQLite full-text hits with semantic page matches. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `search.rerank: true` when you want the configured `queryProvider` to rerank the merged candidate set before `query` answers.
+
+**Token-budgeted compile and auto-commit** - `compile --max-tokens <n>` trims lower-priority pages to keep generated wiki output inside a bounded token budget, and `ingest|compile|query --commit` can immediately commit `wiki/` and `state/` changes when the vault lives in a git repo.
+
 **Graph report health signals** - graph report artifacts now include community-cohesion summaries, isolated-node and ambiguity warnings, and sharper follow-up questions when the graph has weakly connected or ambiguous regions.
+
+**Graph blast radius and report export** - `graph blast <target>` traces reverse import impact through module dependencies, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
 **12 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, GitHub Copilot CLI, Trae, Claw/OpenClaw, and Droid. Optional graph-first hooks bias supported agents toward the wiki before broad search.
 
 **MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio.
+
+**Built-in browser clipper** - `graph serve` exposes a local `/api/bookmarklet` page and `/api/clip` endpoint so a running vault can capture the current browser URL with one click.
 
 **Automation** - watch mode, git hooks, recurring schedules, and inbox import keep the vault current without manual intervention.
 
@@ -288,7 +302,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Source guide | `source guide`, `source add --guide` | Guided walkthrough with approval-bundled updates in `wiki/outputs/source-guides/` |
 | Source session | `source session`, `source add --guide` | Resumable workflow state in `wiki/outputs/source-sessions/` and `state/source-sessions/` |
 
-**External graph sinks** - export to full HTML, lightweight standalone HTML, SVG, GraphML, Cypher, JSON, Obsidian note bundles, or Obsidian canvas, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
+**External graph sinks** - export to full HTML, lightweight standalone HTML, self-contained report HTML, SVG, GraphML, Cypher, JSON, Obsidian note bundles, or Obsidian canvas, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
 
 **Large-repo hardening** - long repo ingests and compile passes emit bounded progress on big batches, parser compatibility failures stay local to the affected sources with explicit diagnostics, code-only repo watch cycles skip non-code re-analysis, and graph reports roll up tiny fragmented communities for readability.
 

@@ -7,6 +7,7 @@ import matter from "gray-matter";
 import mime from "mime-types";
 import { loadVaultConfig } from "./config.js";
 import { buildViewerGraphArtifact } from "./graph-presentation.js";
+import { ingestInput } from "./ingest.js";
 import { normalizeOutputAssets } from "./pages.js";
 import { searchPages } from "./search.js";
 import type { GraphArtifact, GraphReportArtifact } from "./types.js";
@@ -307,6 +308,47 @@ export async function startGraphServer(
         const result = action === "promote" ? await promoteCandidate(rootDir, target) : await archiveCandidate(rootDir, target);
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(result));
+        return;
+      }
+
+      if (url.pathname === "/api/clip" && request.method === "POST") {
+        const body = await readJsonBody(request);
+        const clipUrl = typeof body.url === "string" ? body.url.trim() : "";
+        if (!clipUrl) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "Missing url field." }));
+          return;
+        }
+        const manifest = await ingestInput(rootDir, clipUrl);
+        response.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
+        response.end(JSON.stringify({ ok: true, sourceId: manifest.sourceId, title: manifest.title }));
+        return;
+      }
+
+      if (url.pathname === "/api/clip" && request.method === "OPTIONS") {
+        response.writeHead(204, {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "POST, OPTIONS",
+          "access-control-allow-headers": "content-type"
+        });
+        response.end();
+        return;
+      }
+
+      if (url.pathname === "/api/bookmarklet") {
+        const script = `javascript:void(fetch('http://localhost:${effectivePort}/api/clip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:location.href})}).then(r=>r.json()).then(d=>alert('Clipped: '+(d.title||d.sourceId))).catch(e=>alert('Clip failed: '+e.message)))`;
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end(
+          [
+            "<!doctype html><html><head><title>SwarmVault Clipper</title></head><body>",
+            "<h1>SwarmVault Clipper</h1>",
+            `<p>Drag this link to your bookmarks bar:</p>`,
+            `<p style="font-size:1.5em"><a href="${script.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">Clip to SwarmVault</a></p>`,
+            `<p>When clicked on any page, it sends the URL to your running SwarmVault instance for ingestion.</p>`,
+            `<p>Server: <code>http://localhost:${effectivePort}</code></p>`,
+            "</body></html>"
+          ].join("\n")
+        );
         return;
       }
 

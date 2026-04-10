@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/cli",
-  "version": "0.7.24",
+  "version": "0.7.25",
   "description": "Global CLI for SwarmVault.",
   "type": "module",
   "main": "dist/index.js",
@@ -44,7 +44,7 @@
     "prepublishOnly": "node ../../scripts/check-release-sync.mjs && node ../../scripts/check-published-manifests.mjs"
   },
   "dependencies": {
-    "@swarmvaultai/engine": "0.7.24",
+    "@swarmvaultai/engine": "0.7.25",
     "commander": "^14.0.1"
   },
   "devDependencies": {

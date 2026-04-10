@@ -1,10 +1,11 @@
 /// <reference path="./shims.d.ts" />
 
 export { installAgent, installConfiguredAgents } from "./agents.js";
+export { autoCommitWikiChanges } from "./auto-commit.js";
 export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
-export { exportGraphFormat, exportObsidianCanvas, exportObsidianVault } from "./graph-export.js";
+export { exportGraphFormat, exportGraphReportHtml, exportObsidianCanvas, exportObsidianVault } from "./graph-export.js";
 export { pushGraphNeo4j } from "./graph-push.js";
-export { graphDiff } from "./graph-tools.js";
+export { blastRadius, graphDiff } from "./graph-tools.js";
 export { getGitHookStatus, installGitHooks, uninstallGitHooks } from "./hooks.js";
 export {
   addInput,
@@ -33,11 +34,13 @@ export {
   reviewManagedSource,
   reviewSourceScope
 } from "./sources.js";
+export { estimatePageTokens, estimateTokens, trimToTokenBudget } from "./token-estimation.js";
 export type * from "./types.js";
 export {
   acceptApproval,
   archiveCandidate,
   benchmarkVault,
+  blastRadiusVault,
   bootstrapDemo,
   compileVault,
   explainGraphVault,

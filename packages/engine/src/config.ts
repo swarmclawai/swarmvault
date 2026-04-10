@@ -213,7 +213,14 @@ const vaultConfigSchema = z.object({
         deepLintProvider: z.string().min(1)
       })
     })
-    .optional()
+    .optional(),
+  search: z
+    .object({
+      hybrid: z.boolean().optional(),
+      rerank: z.boolean().optional()
+    })
+    .optional(),
+  autoCommit: z.boolean().optional()
 });
 
 function normalizeProfilePresets(presets: VaultProfilePreset[]): VaultProfilePreset[] {

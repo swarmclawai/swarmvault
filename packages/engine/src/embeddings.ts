@@ -307,6 +307,46 @@ export async function semanticGraphMatches(
     .slice(0, limit);
 }
 
+export async function semanticPageSearch(
+  rootDir: string,
+  graph: GraphArtifact,
+  query: string,
+  limit = 10
+): Promise<Array<{ pageId: string; path: string; title: string; kind: string; status: string; score: number }>> {
+  const items = await buildEmbeddableItems(rootDir, graph);
+  const pageItems = items.filter((item) => item.kind === "page");
+  if (!pageItems.length) {
+    return [];
+  }
+  const { provider, vectors } = await resolveVectorsForItems(rootDir, graph.generatedAt, items);
+  if (!provider) {
+    return [];
+  }
+
+  const [queryVector] = await provider.embedTexts!([query]);
+  if (!Array.isArray(queryVector) || queryVector.length === 0) {
+    return [];
+  }
+
+  const pageMap = new Map(graph.pages.map((page) => [page.id, page]));
+
+  return pageItems
+    .map((item) => {
+      const page = pageMap.get(item.id);
+      return {
+        pageId: item.id,
+        path: page?.path ?? "",
+        title: item.label,
+        kind: page?.kind ?? "",
+        status: page?.status ?? "",
+        score: cosineSimilarity(queryVector, vectors.get(`page:${item.id}`) ?? [])
+      };
+    })
+    .filter((result) => result.score >= 0.25 && result.path)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+}
+
 function distinctScope(left: GraphNode, right: GraphNode): boolean {
   const leftSources = new Set(left.sourceIds);
   const rightSources = new Set(right.sourceIds);

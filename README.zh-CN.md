@@ -73,14 +73,18 @@ swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
+swarmvault graph blast ./src/index.ts
 swarmvault query "What is the auth flow?"
 swarmvault graph serve
+swarmvault graph export --report ./exports/report.html
 swarmvault graph push neo4j --dry-run
 ```
 
 想要对本地仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve` 会将当前目录初始化为 vault，导入该目录并完成编译；加上 `--no-serve` 时不会启动图谱查看器。
 
 对于非常大的图，`swarmvault graph serve` 和 `swarmvault graph export --html` 会自动进入 overview mode。若你仍想强制渲染完整画布，请添加 `--full`。
+
+如果这个 vault 本身就在 git 仓库里，`ingest`、`compile` 和 `query` 还支持 `--commit`，可以把生成出来的 `wiki/` 与 `state/` 变更立即提交。`compile --max-tokens <n>` 则会在需要控制上下文窗口时裁剪较低优先级页面。
 
 `swarmvault init --profile` 支持 `default`、`personal-research`，也支持 `reader,timeline` 这种逗号分隔的 preset 组合。`personal-research` preset 会同时开启 `profile.guidedIngestDefault` 和 `profile.deepLintDefault`，所以 ingest/source 与 lint 默认都会走更强的路径，除非你显式传入 `--no-guide` 或 `--no-deep`。若要自定义知识库行为，请直接编辑 `swarmvault.config.json` 里的 `profile` 配置块，并把 `swarmvault.schema.md` 继续当作人工维护的意图层。
 
@@ -140,6 +144,8 @@ ollama pull gemma4
   }
 }
 ```
+
+当有可用的 embedding 能力提供方时，SwarmVault 还会默认把语义页面匹配并入本地搜索结果。`tasks.embeddingProvider` 是显式指定该后端的方式，但如果当前 `queryProvider` 也支持 embeddings，SwarmVault 也可以回退使用它。若再设置 `search.rerank: true`，则会让当前 `queryProvider` 对合并后的顶部候选结果重新排序。
 
 ### 云端 API 提供方
 
@@ -263,13 +269,21 @@ clawhub install swarmvault
 
 **知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。默认先保证普通 Markdown 可读；当 `profile.dataviewBlocks` 打开时，会额外附加适合 Obsidian Dataview 的查询块。
 
+**混合搜索与 rerank** - 当有可用的 embedding 能力提供方时，本地搜索会把 SQLite 全文命中与语义页面匹配合并起来。`tasks.embeddingProvider` 是显式指定该后端的方式，但如果当前 `queryProvider` 也支持 embeddings，SwarmVault 也可以回退使用它。若设置 `search.rerank: true`，还会让当前 `queryProvider` 在 `query` 回答前对候选结果做一次重排。
+
+**带 token 预算的 compile 与自动提交** - `compile --max-tokens <n>` 会裁剪低优先级页面，让生成的 wiki 输出控制在给定 token 预算内；`ingest|compile|query --commit` 则可以在 vault 位于 git 仓库中时立即提交 `wiki/` 与 `state/` 的变更。
+
 **图谱健康信号** - graph report 产物现在还会给出 community cohesion 摘要、孤立节点与高歧义边的告警，以及针对薄弱或模糊图区域的更明确 follow-up questions。
+
+**图谱 blast radius 与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
 
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
 **12 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw 和 Droid。可选 graph-first hooks 会先引导支持的 agent 读取 wiki，再进行大范围搜索。
 
 **MCP server** - `swarmvault mcp` 通过 stdio 把知识库暴露给任意兼容的代理客户端。
+
+**内置浏览器剪藏器** - `graph serve` 会暴露本地 `/api/bookmarklet` 页面和 `/api/clip` 接口，让正在运行的 vault 可以一键收录当前浏览器 URL。
 
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 
@@ -284,7 +298,7 @@ clawhub install swarmvault
 | Source guide | `source guide`、`source add --guide` | 引导式整合，生成 approval-bundled 更新，写入 `wiki/outputs/source-guides/` |
 | Source session | `source session`、`source add --guide` | 可恢复的工作流状态，保存在 `wiki/outputs/source-sessions/` 和 `state/source-sessions/` |
 
-**外部图谱输出** - 可导出为完整 HTML、轻量 standalone HTML、SVG、GraphML、Cypher、JSON、Obsidian 笔记包或 Obsidian canvas，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
+**外部图谱输出** - 可导出为完整 HTML、轻量 standalone HTML、自包含 report HTML、SVG、GraphML、Cypher、JSON、Obsidian 笔记包或 Obsidian canvas，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
 
 **大型仓库加固** - 面对大批量仓库 ingest 和 compile 时会输出有边界的进度提示；parser 兼容性失败只会影响对应源文件并留下明确诊断；仅代码改动的 repo watch cycle 会跳过非代码重分析；图谱报告会把过于碎片化的小社区折叠展示，保持可读性。
 
