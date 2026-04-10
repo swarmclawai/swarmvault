@@ -2,8 +2,9 @@
 
 export { installAgent, installConfiguredAgents } from "./agents.js";
 export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
-export { exportGraphFormat } from "./graph-export.js";
+export { exportGraphFormat, exportObsidianCanvas, exportObsidianVault } from "./graph-export.js";
 export { pushGraphNeo4j } from "./graph-push.js";
+export { graphDiff } from "./graph-tools.js";
 export { getGitHookStatus, installGitHooks, uninstallGitHooks } from "./hooks.js";
 export {
   addInput,

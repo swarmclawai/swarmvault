@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.22
+
+- Added new graph export targets for lightweight standalone HTML, deterministic JSON, Obsidian markdown bundles, and Obsidian canvas output alongside the existing HTML, SVG, GraphML, and Cypher exports
+- Added install targets for Trae, Claw/OpenClaw, and Droid so `swarmvault install --agent` now covers 12 agent surfaces
+- Added a faster code-only repo watch path so tracked code changes refresh code pages and graph structure without re-running non-code semantic analysis for unchanged sources
+- Updated the README, package docs, skill bundle docs, and website docs to cover the new export formats, agent targets, graph-report health signals, and repo-watch behavior
+
 ## 0.7.21
 
 - Added `profile.deepLintDefault` so vault profiles can make `swarmvault lint` run the advisory deep-lint pass by default, while `--no-deep` still forces a structural-only lint run when needed

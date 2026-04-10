@@ -74,5 +74,6 @@ Prompt:
 Expected shape:
 
 - uses `swarmvault graph serve` or `graph export --html`
+- may suggest `graph export --html-standalone`, `graph export --canvas`, or `graph export --obsidian` when a lighter shareable artifact is a better fit
 - mentions `swarmvault mcp`
 - prefers existing report and graph artifacts when already present

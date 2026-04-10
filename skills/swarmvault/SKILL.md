@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, dashboard, review, and MCP artifacts to disk from books, notes, transcripts, exports, datasets, slide decks, files, URLs, code, and recurring source workflows."
-version: "0.7.21"
+version: "0.7.22"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -25,14 +25,14 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 3. Use `swarmvault source add <input>` when the input is a recurring local file, local directory, public GitHub repo root, or docs hub that should stay registered.
 4. Ingest one-off inputs with `swarmvault ingest <path-or-url>`, or ingest a whole repo tree with `swarmvault ingest <directory>`.
 5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when the human should integrate one source at a time before canonical pages change. Set `profile.guidedIngestDefault: true` in `swarmvault.config.json` to make guided mode the default; use `--no-guide` to override. Profiles using `guidedSessionMode: "canonical_review"` stage approval-queued canonical edits; `insights_only` profiles keep exploratory synthesis in `wiki/insights/`. Use `--review` only for the lighter review-only path.
-6. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint --repo` when the workflow should stay automated. Install `swarmvault hook install` when git checkouts and commits should trigger repo-aware refreshes automatically.
+6. Use `swarmvault inbox import` for capture-style batches, then `swarmvault watch --lint --repo` when the workflow should stay automated. On tracked repos, code-only changes take a faster compile path that skips non-code re-analysis. Install `swarmvault hook install` when git checkouts and commits should trigger repo-aware refreshes automatically.
 7. Compile with `swarmvault compile`, or use `swarmvault compile --approve` when changes should go through the local review queue first.
 8. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
 9. Ask questions with `swarmvault query "<question>"`. It saves durable answers into `wiki/outputs/` by default; add `--no-save` only for ephemeral checks.
 10. Use `swarmvault explore "<question>" --steps <n>` for save-first multi-step research loops, or `--format report|slides|chart|image` when the artifact should be presentation-oriented.
 11. Run `swarmvault lint` whenever the schema changed, artifacts look stale, or compile/query results drift. Set `profile.deepLintDefault: true` in `swarmvault.config.json` when the advisory deep-lint pass should be the default, and use `--no-deep` when you need a structural-only run.
 12. Use `swarmvault mcp` when another agent or tool should browse, search, and query the vault through MCP.
-13. Use `swarmvault graph serve` or `swarmvault graph export --html <output>` when graph inspection or sharing will help.
+13. Use `swarmvault graph serve` or `swarmvault graph export --html <output>` when graph inspection or sharing will help. `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` for lighter or Obsidian-native sharing.
 
 ## Working rules
 
@@ -68,7 +68,7 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 
 ## Agent integration
 
-- `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot` installs agent-specific rules into the current project.
+- `swarmvault install --agent codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot|trae|claw|droid` installs agent-specific rules into the current project.
 - `swarmvault install --agent claude|opencode|gemini|copilot --hook` installs graph-first hook or plugin support for the agents that expose project hook APIs.
 - `swarmvault install --agent aider` installs `CONVENTIONS.md` and wires `.aider.conf.yml` to read it when that config is valid YAML.
 - `swarmvault mcp` exposes tools and resources for page search, page reads, source listing, query, ingest, compile, and lint.

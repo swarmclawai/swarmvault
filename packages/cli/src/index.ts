@@ -15,6 +15,8 @@ import {
   exploreVault,
   exportGraphFormat,
   exportGraphHtml,
+  exportObsidianCanvas,
+  exportObsidianVault,
   getGitHookStatus,
   getWatchStatus,
   guideManagedSource,
@@ -67,9 +69,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.21";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.22";
   } catch {
-    return "0.7.21";
+    return "0.7.22";
   }
 }
 
@@ -887,41 +889,72 @@ graph
 
 graph
   .command("export")
-  .description("Export the graph as HTML, SVG, GraphML, or Cypher. Combine flags to write multiple formats in one run.")
+  .description(
+    "Export the graph as HTML, SVG, GraphML, Cypher, JSON, Obsidian vault, or Obsidian canvas. Combine flags to write multiple formats in one run."
+  )
   .option("--html <output>", "Output HTML file path")
+  .option("--html-standalone <output>", "Output lightweight standalone HTML file path (vis.js, no build tooling)")
   .option("--svg <output>", "Output SVG file path")
   .option("--graphml <output>", "Output GraphML file path")
   .option("--cypher <output>", "Output Cypher file path")
+  .option("--json <output>", "Output JSON file path")
+  .option("--obsidian <output>", "Output Obsidian vault directory path")
+  .option("--canvas <output>", "Output Obsidian canvas file path")
   .option("--full", "Disable overview sampling for HTML export", false)
-  .action(async (options: { html?: string; svg?: string; graphml?: string; cypher?: string; full?: boolean }) => {
-    const targets = [
-      options.html ? ({ format: "html", outputPath: options.html } as const) : null,
-      options.svg ? ({ format: "svg", outputPath: options.svg } as const) : null,
-      options.graphml ? ({ format: "graphml", outputPath: options.graphml } as const) : null,
-      options.cypher ? ({ format: "cypher", outputPath: options.cypher } as const) : null
-    ].filter((target): target is NonNullable<typeof target> => Boolean(target));
+  .action(
+    async (options: {
+      html?: string;
+      htmlStandalone?: string;
+      svg?: string;
+      graphml?: string;
+      cypher?: string;
+      json?: string;
+      obsidian?: string;
+      canvas?: string;
+      full?: boolean;
+    }) => {
+      const targets = [
+        options.html ? ({ format: "html", outputPath: options.html } as const) : null,
+        options.htmlStandalone ? ({ format: "html-standalone", outputPath: options.htmlStandalone } as const) : null,
+        options.svg ? ({ format: "svg", outputPath: options.svg } as const) : null,
+        options.graphml ? ({ format: "graphml", outputPath: options.graphml } as const) : null,
+        options.cypher ? ({ format: "cypher", outputPath: options.cypher } as const) : null,
+        options.json ? ({ format: "json", outputPath: options.json } as const) : null,
+        options.obsidian ? ({ format: "obsidian", outputPath: options.obsidian } as const) : null,
+        options.canvas ? ({ format: "canvas", outputPath: options.canvas } as const) : null
+      ].filter((target): target is NonNullable<typeof target> => Boolean(target));
 
-    if (targets.length === 0) {
-      throw new Error("Pass at least one of --html, --svg, --graphml, or --cypher.");
-    }
+      if (targets.length === 0) {
+        throw new Error("Pass at least one of --html, --html-standalone, --svg, --graphml, --cypher, --json, --obsidian, or --canvas.");
+      }
 
-    const results: Array<{ format: string; outputPath: string }> = [];
-    for (const target of targets) {
-      const outputPath =
-        target.format === "html"
-          ? await exportGraphHtml(process.cwd(), target.outputPath, { full: options.full ?? false })
-          : (await exportGraphFormat(process.cwd(), target.format, target.outputPath)).outputPath;
-      results.push({ format: target.format, outputPath });
-    }
+      const results: Array<{ format: string; outputPath: string; fileCount?: number }> = [];
+      for (const target of targets) {
+        if (target.format === "html") {
+          const outputPath = await exportGraphHtml(process.cwd(), target.outputPath, { full: options.full ?? false });
+          results.push({ format: target.format, outputPath });
+        } else if (target.format === "obsidian") {
+          const result = await exportObsidianVault(process.cwd(), target.outputPath);
+          results.push({ format: result.format, outputPath: result.outputPath, fileCount: result.fileCount });
+        } else if (target.format === "canvas") {
+          const result = await exportObsidianCanvas(process.cwd(), target.outputPath);
+          results.push({ format: result.format, outputPath: result.outputPath });
+        } else {
+          const result = await exportGraphFormat(process.cwd(), target.format, target.outputPath);
+          results.push({ format: result.format, outputPath: result.outputPath });
+        }
+      }
 
-    if (isJson()) {
-      emitJson(results.length === 1 ? results[0] : { exports: results });
-    } else {
-      for (const result of results) {
-        log(`Exported graph ${result.format} to ${result.outputPath}`);
+      if (isJson()) {
+        emitJson(results.length === 1 ? results[0] : { exports: results });
+      } else {
+        for (const result of results) {
+          const suffix = result.fileCount ? ` (${result.fileCount} files)` : "";
+          log(`Exported graph ${result.format} to ${result.outputPath}${suffix}`);
+        }
       }
     }
-  });
+  );
 
 graph
   .command("query")
@@ -1286,11 +1319,11 @@ program
 program
   .command("install")
   .description("Install SwarmVault instructions for an agent in the current project.")
-  .requiredOption("--agent <agent>", "codex, claude, cursor, goose, pi, gemini, opencode, aider, or copilot")
+  .requiredOption("--agent <agent>", "codex, claude, cursor, goose, pi, gemini, opencode, aider, copilot, trae, claw, or droid")
   .option("--hook", "Also install hook/plugin guidance when the target agent supports it", false)
   .action(
     async (options: {
-      agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" | "opencode" | "aider" | "copilot";
+      agent: "codex" | "claude" | "cursor" | "goose" | "pi" | "gemini" | "opencode" | "aider" | "copilot" | "trae" | "claw" | "droid";
       hook?: boolean;
     }) => {
       const hookCapableAgents = new Set(["claude", "opencode", "gemini", "copilot"]);

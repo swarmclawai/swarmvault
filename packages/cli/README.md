@@ -250,6 +250,8 @@ Watch the inbox directory and trigger import and compile cycles when files chang
 
 When `--repo` sees non-code changes under tracked repo roots, SwarmVault records those files under `state/watch/pending-semantic-refresh.json`, marks affected compiled pages stale, and exposes the pending set through `watch status` and the local graph workspace instead of silently re-ingesting them.
 
+When `--repo` sees only code-file changes under tracked repo roots, SwarmVault takes the faster code-only path: it refreshes code pages and graph structure without re-running non-code semantic analysis for unchanged sources.
+
 ### `swarmvault watch status`
 
 Show watched repo roots, the latest watch run, and any pending semantic refresh entries for tracked non-code repo changes.
@@ -299,14 +301,20 @@ Inspect graph metadata, community membership, neighbors, provenance, and group-p
 
 List the most connected bridge-heavy nodes in the current graph.
 
-### `swarmvault graph export --html|--svg|--graphml|--cypher <output>`
+### `swarmvault graph export --html|--html-standalone|--svg|--graphml|--cypher|--json|--obsidian|--canvas <output>`
 
-Export the current graph as one of four formats:
+Export the current graph as one or more shareable formats:
 
-- `--html` for the standalone read-only graph workspace
+- `--html` for the full self-contained read-only graph workspace
+- `--html-standalone` for a lighter vis.js export with node search, legend, and sidebar inspection
 - `--svg` for a static shareable diagram
 - `--graphml` for graph-tool interoperability
 - `--cypher` for Neo4j-style import scripts
+- `--json` for a deterministic machine-readable graph package
+- `--obsidian` for an Obsidian-friendly markdown vault with one note per node plus community notes
+- `--canvas` for an Obsidian canvas grouped by community
+
+You can combine multiple flags in one run to write several exports at once.
 
 ### `swarmvault graph push neo4j`
 
@@ -331,7 +339,7 @@ Defaults:
 - namespaces every remote record by `vaultId` so multiple vaults can safely share one Neo4j database
 - upserts current graph records and does not prune stale remote data yet
 
-### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot>`
+### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot|trae|claw|droid>`
 
 Install agent-specific rules into the current project so an agent understands the SwarmVault workspace contract and workflow.
 
@@ -352,6 +360,9 @@ Agent target mapping:
 - `aider` writes `CONVENTIONS.md` and merges `.aider.conf.yml`
 - `copilot` writes `.github/copilot-instructions.md` plus `AGENTS.md`
 - `cursor` writes `.cursor/rules/swarmvault.mdc`
+- `trae` writes `.trae/rules/swarmvault.md`
+- `claw` writes `.claw/skills/swarmvault/SKILL.md`
+- `droid` writes `.factory/rules/swarmvault.md`
 
 Hook semantics:
 

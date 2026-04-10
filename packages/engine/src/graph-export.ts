@@ -362,6 +362,330 @@ function renderCypher(graph: GraphArtifact): string {
   return lines.join("\n");
 }
 
+function renderJson(graph: GraphArtifact): string {
+  const communities = sortedCommunities(graph);
+  const payload = {
+    nodes: [...graph.nodes]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((node) => ({
+        id: node.id,
+        label: node.label,
+        type: node.type,
+        communityId: node.communityId ?? null,
+        degree: node.degree ?? null,
+        bridgeScore: node.bridgeScore ?? null,
+        confidence: node.confidence ?? null,
+        sourceClass: node.sourceClass ?? null,
+        tags: node.tags ?? []
+      })),
+    edges: [...graph.edges]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        relation: edge.relation,
+        evidenceClass: edge.evidenceClass,
+        confidence: edge.confidence,
+        similarityReasons: edge.similarityReasons ?? []
+      })),
+    communities: communities.map((community) => ({
+      id: community.id,
+      label: community.label,
+      nodeIds: community.nodeIds
+    })),
+    hyperedges: graph.hyperedges ?? [],
+    metadata: {
+      generatedAt: new Date().toISOString(),
+      nodeCount: graph.nodes.length,
+      edgeCount: graph.edges.length,
+      communityCount: (graph.communities ?? []).length
+    }
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
+function renderHtmlStandalone(graph: GraphArtifact): string {
+  const communities = sortedCommunities(graph);
+
+  // Cap at 5000 nodes by degree descending
+  const cappedNodes = [...graph.nodes].sort((a, b) => (b.degree ?? 0) - (a.degree ?? 0)).slice(0, 5000);
+  const cappedNodeIds = new Set(cappedNodes.map((n) => n.id));
+  const cappedEdges = graph.edges.filter((e) => cappedNodeIds.has(e.source) && cappedNodeIds.has(e.target));
+
+  const communityColors = [
+    "#f59e0b",
+    "#fb7185",
+    "#8b5cf6",
+    "#14b8a6",
+    "#0ea5e9",
+    "#22c55e",
+    "#f97316",
+    "#a78bfa",
+    "#2dd4bf",
+    "#38bdf8",
+    "#facc15",
+    "#e879f9",
+    "#34d399",
+    "#60a5fa",
+    "#fb923c"
+  ];
+
+  const nodesData = cappedNodes.map((node) => ({
+    id: node.id,
+    label: node.label,
+    type: node.type,
+    communityId: node.communityId ?? null,
+    degree: node.degree ?? 0,
+    bridgeScore: node.bridgeScore ?? null,
+    confidence: node.confidence ?? null,
+    sourceClass: node.sourceClass ?? null,
+    tags: node.tags ?? []
+  }));
+
+  const edgesData = cappedEdges.map((edge) => ({
+    id: edge.id,
+    from: edge.source,
+    to: edge.target,
+    relation: edge.relation,
+    evidenceClass: edge.evidenceClass,
+    confidence: edge.confidence
+  }));
+
+  const communitiesData = communities.map((c) => ({
+    id: c.id,
+    label: c.label,
+    nodeIds: c.nodeIds
+  }));
+
+  const graphJson = JSON.stringify({
+    nodes: nodesData,
+    edges: edgesData,
+    communities: communitiesData
+  });
+
+  // The inline JS uses DOM-based escaping (createElement + textContent + reading back
+  // the safely-encoded HTML) so all user-provided labels/values are safe against XSS.
+  // eslint-disable-next-line no-useless-escape
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SwarmVault Graph</title>
+  <script src="https://unpkg.com/vis-network@9/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; display: flex; height: 100vh; background: #0f172a; color: #e2e8f0; }
+    #graph { flex: 1; }
+    #sidebar { width: 320px; background: #1e293b; padding: 16px; overflow-y: auto; border-left: 1px solid #334155; display: none; }
+    #sidebar.open { display: block; }
+    #sidebar h2 { font-size: 16px; margin-bottom: 8px; color: #f8fafc; }
+    #sidebar .field { margin-bottom: 6px; font-size: 13px; }
+    #sidebar .label { color: #94a3b8; }
+    #sidebar .value { color: #e2e8f0; }
+    #sidebar .neighbors { margin-top: 12px; }
+    #sidebar .neighbor { cursor: pointer; color: #38bdf8; text-decoration: underline; margin: 2px 0; font-size: 13px; }
+    #search { position: absolute; top: 12px; left: 12px; z-index: 10; }
+    #search input { padding: 8px 12px; border-radius: 6px; border: 1px solid #475569; background: #1e293b; color: #e2e8f0; width: 240px; font-size: 14px; }
+    #legend { position: absolute; bottom: 12px; left: 12px; z-index: 10; background: #1e293b; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; }
+    #legend .item { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 3px 0; }
+    #legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+    #stats { position: absolute; top: 12px; right: 340px; z-index: 10; background: #1e293b; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #94a3b8; border: 1px solid #334155; }
+  </style>
+</head>
+<body>
+  <div id="search"><input type="text" placeholder="Search nodes..." id="searchInput"></div>
+  <div id="stats"></div>
+  <div id="graph"></div>
+  <div id="sidebar">
+    <h2 id="sidebarTitle"></h2>
+    <div id="sidebarFields"></div>
+    <div class="neighbors" id="sidebarNeighbors"></div>
+  </div>
+  <div id="legend"></div>
+  <script>
+    var GRAPH_DATA = ${graphJson};
+
+    var TYPE_COLORS = {
+      source: "#f59e0b",
+      module: "#fb7185",
+      symbol: "#8b5cf6",
+      rationale: "#14b8a6",
+      concept: "#0ea5e9",
+      entity: "#22c55e"
+    };
+
+    var COMMUNITY_COLORS = {};
+    var palette = ${JSON.stringify(communityColors)};
+    GRAPH_DATA.communities.forEach(function(c, i) {
+      COMMUNITY_COLORS[c.id] = palette[i % palette.length];
+    });
+
+    var adjacency = {};
+    GRAPH_DATA.nodes.forEach(function(n) { adjacency[n.id] = []; });
+    GRAPH_DATA.edges.forEach(function(e) {
+      if (adjacency[e.from]) adjacency[e.from].push({ id: e.to, relation: e.relation });
+      if (adjacency[e.to]) adjacency[e.to].push({ id: e.from, relation: e.relation });
+    });
+
+    var nodeMap = {};
+    GRAPH_DATA.nodes.forEach(function(n) { nodeMap[n.id] = n; });
+
+    var visNodes = new vis.DataSet(GRAPH_DATA.nodes.map(function(n) {
+      var size = 8 + Math.min(32, n.degree * 2);
+      return {
+        id: n.id,
+        label: n.label,
+        color: { background: TYPE_COLORS[n.type] || "#94a3b8", border: "#0f172a" },
+        size: size,
+        font: { color: "#e2e8f0", size: 11 },
+        borderWidth: 2
+      };
+    }));
+
+    var visEdges = new vis.DataSet(GRAPH_DATA.edges.map(function(e) {
+      var dashed = (e.evidenceClass === "inferred" || e.evidenceClass === "ambiguous");
+      return {
+        id: e.id,
+        from: e.from,
+        to: e.to,
+        color: { color: "#64748b", opacity: 0.55 },
+        width: Math.max(1.5, Math.min(4, e.confidence * 3)),
+        dashes: dashed,
+        arrows: { to: { enabled: true, scaleFactor: 0.5 } }
+      };
+    }));
+
+    var container = document.getElementById("graph");
+    var network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
+      physics: {
+        solver: "forceAtlas2Based",
+        forceAtlas2Based: {
+          gravitationalConstant: -30,
+          centralGravity: 0.005,
+          springLength: 100,
+          springConstant: 0.04
+        },
+        stabilization: { iterations: 150 }
+      },
+      interaction: { hover: true, tooltipDelay: 200 },
+      nodes: { shape: "dot" },
+      edges: { smooth: { type: "continuous" } }
+    });
+
+    document.getElementById("stats").textContent =
+      "Nodes: " + GRAPH_DATA.nodes.length +
+      " | Edges: " + GRAPH_DATA.edges.length +
+      " | Communities: " + GRAPH_DATA.communities.length;
+
+    (function buildLegend() {
+      var el = document.getElementById("legend");
+      GRAPH_DATA.communities.forEach(function(c) {
+        var color = COMMUNITY_COLORS[c.id] || "#94a3b8";
+        var item = document.createElement("div");
+        item.className = "item";
+        var dot = document.createElement("span");
+        dot.className = "dot";
+        dot.style.background = color;
+        item.appendChild(dot);
+        item.appendChild(document.createTextNode(c.label + " (" + c.nodeIds.length + ")"));
+        el.appendChild(item);
+      });
+    })();
+
+    var sidebar = document.getElementById("sidebar");
+    var sidebarTitle = document.getElementById("sidebarTitle");
+    var sidebarFields = document.getElementById("sidebarFields");
+    var sidebarNeighbors = document.getElementById("sidebarNeighbors");
+
+    function renderField(parent, label, value) {
+      var wrap = document.createElement("div");
+      wrap.className = "field";
+      var lbl = document.createElement("span");
+      lbl.className = "label";
+      lbl.textContent = label + ":";
+      var val = document.createElement("span");
+      val.className = "value";
+      val.textContent = " " + value;
+      wrap.appendChild(lbl);
+      wrap.appendChild(val);
+      parent.appendChild(wrap);
+    }
+
+    network.on("click", function(params) {
+      if (params.nodes.length === 0) {
+        sidebar.classList.remove("open");
+        return;
+      }
+      var nodeId = params.nodes[0];
+      var node = nodeMap[nodeId];
+      if (!node) return;
+
+      sidebarTitle.textContent = node.label;
+      sidebarFields.textContent = "";
+      renderField(sidebarFields, "Type", node.type);
+      renderField(sidebarFields, "Community", node.communityId || "none");
+      renderField(sidebarFields, "Confidence", node.confidence != null ? node.confidence.toFixed(2) : "n/a");
+      renderField(sidebarFields, "Degree", String(node.degree));
+      renderField(sidebarFields, "Bridge Score", node.bridgeScore != null ? node.bridgeScore.toFixed(3) : "n/a");
+      renderField(sidebarFields, "Tags", (node.tags && node.tags.length) ? node.tags.join(", ") : "none");
+
+      sidebarNeighbors.textContent = "";
+      var neighbors = adjacency[nodeId] || [];
+      if (neighbors.length > 0) {
+        renderField(sidebarNeighbors, "Neighbors", String(neighbors.length));
+        neighbors.forEach(function(nb) {
+          var nbNode = nodeMap[nb.id];
+          var nbLabel = nbNode ? nbNode.label : nb.id;
+          var link = document.createElement("div");
+          link.className = "neighbor";
+          link.dataset.nodeId = nb.id;
+          link.textContent = nbLabel + " (" + nb.relation + ")";
+          sidebarNeighbors.appendChild(link);
+        });
+      } else {
+        renderField(sidebarNeighbors, "Neighbors", "none");
+      }
+
+      sidebar.classList.add("open");
+    });
+
+    sidebarNeighbors.addEventListener("click", function(e) {
+      var target = e.target;
+      while (target && target !== sidebarNeighbors) {
+        if (target.dataset && target.dataset.nodeId) {
+          var nid = target.dataset.nodeId;
+          network.selectNodes([nid]);
+          network.focus(nid, { scale: 1.2, animation: { duration: 400 } });
+          network.body.emitter.emit("click", { nodes: [nid] });
+          return;
+        }
+        target = target.parentElement;
+      }
+    });
+
+    document.getElementById("searchInput").addEventListener("input", function() {
+      var query = this.value.toLowerCase().trim();
+      if (!query) {
+        visNodes.forEach(function(n) {
+          visNodes.update({ id: n.id, opacity: 1.0, font: { color: "#e2e8f0", size: 11 } });
+        });
+        return;
+      }
+      visNodes.forEach(function(n) {
+        var match = n.label.toLowerCase().indexOf(query) !== -1;
+        visNodes.update({
+          id: n.id,
+          opacity: match ? 1.0 : 0.15,
+          font: { color: match ? "#f8fafc" : "#475569", size: match ? 13 : 9 }
+        });
+      });
+    });
+  </script>
+</body>
+</html>`;
+}
+
 async function loadGraph(rootDir: string): Promise<GraphArtifact> {
   const { paths } = await loadVaultConfig(rootDir);
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
@@ -379,13 +703,312 @@ async function writeGraphExport(outputPath: string, content: string): Promise<st
 
 export async function exportGraphFormat(
   rootDir: string,
-  format: Exclude<GraphExportFormat, "html">,
+  format: Exclude<GraphExportFormat, "html" | "obsidian" | "canvas">,
   outputPath: string
 ): Promise<GraphExportResult> {
   const graph = await loadGraph(rootDir);
-  const rendered = format === "svg" ? renderSvg(graph) : format === "graphml" ? renderGraphMl(graph) : renderCypher(graph);
+  const rendered =
+    format === "html-standalone"
+      ? renderHtmlStandalone(graph)
+      : format === "json"
+        ? renderJson(graph)
+        : format === "svg"
+          ? renderSvg(graph)
+          : format === "graphml"
+            ? renderGraphMl(graph)
+            : renderCypher(graph);
   const resolvedPath = await writeGraphExport(outputPath, rendered);
   return { format, outputPath: resolvedPath };
+}
+
+function safeFileName(label: string): string {
+  return (
+    label
+      .replace(/[\\/*?:"<>|#^[\]]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200) || "unnamed"
+  );
+}
+
+function deduplicateFileName(baseName: string, used: Set<string>): string {
+  let name = baseName;
+  let counter = 2;
+  while (used.has(name)) {
+    name = `${baseName}_${counter}`;
+    counter++;
+  }
+  used.add(name);
+  return name;
+}
+
+export async function exportObsidianVault(rootDir: string, outputDir: string): Promise<GraphExportResult> {
+  const graph = await loadGraph(rootDir);
+  const resolvedOutputDir = path.resolve(outputDir);
+  await ensureDir(resolvedOutputDir);
+
+  const nodesById = graphNodeById(graph);
+  const communities = sortedCommunities(graph);
+
+  // Build adjacency: for each node, collect its edges with neighbor info
+  const adjacency = new Map<
+    string,
+    Array<{ neighborId: string; relation: string; evidenceClass: string; confidence: number; direction: "out" | "in" }>
+  >();
+  for (const edge of graph.edges) {
+    if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
+    if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
+    adjacency.get(edge.source)!.push({
+      neighborId: edge.target,
+      relation: edge.relation,
+      evidenceClass: edge.evidenceClass,
+      confidence: edge.confidence,
+      direction: "out"
+    });
+    adjacency.get(edge.target)!.push({
+      neighborId: edge.source,
+      relation: edge.relation,
+      evidenceClass: edge.evidenceClass,
+      confidence: edge.confidence,
+      direction: "in"
+    });
+  }
+
+  // Track used filenames and map node id -> filename
+  const usedFileNames = new Set<string>();
+  const nodeFileName = new Map<string, string>();
+  for (const node of [...graph.nodes].sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id))) {
+    const name = deduplicateFileName(safeFileName(node.label), usedFileNames);
+    nodeFileName.set(node.id, name);
+  }
+
+  let fileCount = 0;
+
+  // Write node files
+  for (const node of graph.nodes) {
+    const fileName = nodeFileName.get(node.id)!;
+    const lines: string[] = [
+      "---",
+      `id: ${JSON.stringify(node.id)}`,
+      `type: ${JSON.stringify(node.type)}`,
+      `community: ${JSON.stringify(node.communityId ?? null)}`,
+      `confidence: ${node.confidence ?? null}`,
+      `source_class: ${JSON.stringify(node.sourceClass ?? null)}`,
+      `tags: ${JSON.stringify(node.tags ?? [])}`,
+      "---",
+      "",
+      `# ${node.label}`,
+      ""
+    ];
+
+    const neighbors = adjacency.get(node.id) ?? [];
+    if (neighbors.length > 0) {
+      lines.push("## Connections", "");
+      for (const neighbor of neighbors) {
+        const neighborNode = nodesById.get(neighbor.neighborId);
+        if (!neighborNode) continue;
+        const neighborFile = nodeFileName.get(neighbor.neighborId) ?? safeFileName(neighborNode.label);
+        lines.push(`- [[${neighborFile}]] \u2014 ${neighbor.relation} (${neighbor.evidenceClass}, ${neighbor.confidence.toFixed(2)})`);
+      }
+      lines.push("");
+    }
+
+    await fs.writeFile(path.join(resolvedOutputDir, `${fileName}.md`), lines.join("\n"), "utf8");
+    fileCount++;
+  }
+
+  // Write community files
+  const usedCommunityFileNames = new Set<string>();
+  for (const community of communities) {
+    const memberNodes = community.nodeIds.map((id) => nodesById.get(id)).filter((n): n is GraphNode => Boolean(n));
+
+    // Compute cohesion: internal edges / max possible edges
+    const memberIdSet = new Set(community.nodeIds);
+    let internalEdges = 0;
+    for (const edge of graph.edges) {
+      if (memberIdSet.has(edge.source) && memberIdSet.has(edge.target)) {
+        internalEdges++;
+      }
+    }
+    const n = memberNodes.length;
+    const maxPossible = n * (n - 1); // directed graph
+    const cohesion = maxPossible > 0 ? internalEdges / maxPossible : 0;
+
+    // Find bridge nodes: nodes connected to nodes in other communities
+    const bridgeNodes = memberNodes.filter((node) => {
+      const neighbors = adjacency.get(node.id) ?? [];
+      return neighbors.some((nb) => {
+        const nbNode = nodesById.get(nb.neighborId);
+        return nbNode && nbNode.communityId !== community.id;
+      });
+    });
+
+    const communityFileName = deduplicateFileName(`_Community_${safeFileName(community.label)}`, usedCommunityFileNames);
+    const lines: string[] = [
+      "---",
+      `id: ${JSON.stringify(community.id)}`,
+      `node_count: ${memberNodes.length}`,
+      `cohesion: ${cohesion.toFixed(4)}`,
+      "---",
+      "",
+      `# ${community.label}`,
+      "",
+      "## Members",
+      ""
+    ];
+
+    for (const member of memberNodes) {
+      const memberFile = nodeFileName.get(member.id) ?? safeFileName(member.label);
+      lines.push(`- [[${memberFile}]]`);
+    }
+    lines.push("");
+
+    if (bridgeNodes.length > 0) {
+      lines.push("## Bridge Nodes", "");
+      for (const bridge of bridgeNodes) {
+        const bridgeFile = nodeFileName.get(bridge.id) ?? safeFileName(bridge.label);
+        lines.push(`- [[${bridgeFile}]]`);
+      }
+      lines.push("");
+    }
+
+    await fs.writeFile(path.join(resolvedOutputDir, `${communityFileName}.md`), lines.join("\n"), "utf8");
+    fileCount++;
+  }
+
+  return { format: "obsidian", outputPath: resolvedOutputDir, fileCount };
+}
+
+export async function exportObsidianCanvas(rootDir: string, outputPath: string): Promise<GraphExportResult> {
+  const graph = await loadGraph(rootDir);
+  const communities = sortedCommunities(graph);
+  const nodesById = graphNodeById(graph);
+
+  const COLORS = ["1", "2", "3", "4", "5", "6"];
+  const NODE_WIDTH = 250;
+  const NODE_HEIGHT = 60;
+  const NODE_PAD_X = 30;
+  const NODE_PAD_Y = 20;
+  const GROUP_PAD = 50;
+  const GRID_COLS = 3;
+  const GROUP_GAP = 100;
+
+  const canvasNodes: Array<{
+    id: string;
+    type: string;
+    text?: string;
+    label?: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    color?: string;
+  }> = [];
+  const canvasEdges: Array<{ id: string; fromNode: string; toNode: string; label: string }> = [];
+
+  // Map node id to canvas node id
+  const nodeCanvasId = new Map<string, string>();
+
+  // Pre-compute community sizes for consistent grid layout
+  const communitySizes = communities.map((community) => {
+    const memberCount = community.nodeIds.filter((id) => nodesById.has(id)).length;
+    const innerCols = Math.max(1, Math.ceil(Math.sqrt(memberCount)));
+    const innerRows = Math.max(1, Math.ceil(memberCount / innerCols));
+    const width = innerCols * (NODE_WIDTH + NODE_PAD_X) - NODE_PAD_X + GROUP_PAD * 2;
+    const height = innerRows * (NODE_HEIGHT + NODE_PAD_Y) - NODE_PAD_Y + GROUP_PAD * 2 + 30;
+    return { width, height, innerCols };
+  });
+
+  // Compute max width per column and max height per row
+  const totalRows = Math.ceil(communities.length / GRID_COLS);
+  const colWidths = new Array(GRID_COLS).fill(0) as number[];
+  const rowHeights = new Array(totalRows).fill(0) as number[];
+  communitySizes.forEach((size, index) => {
+    const col = index % GRID_COLS;
+    const row = Math.floor(index / GRID_COLS);
+    colWidths[col] = Math.max(colWidths[col], size.width);
+    rowHeights[row] = Math.max(rowHeights[row], size.height);
+  });
+
+  // Compute cumulative offsets
+  const colOffsets = [0];
+  for (let c = 1; c < GRID_COLS; c++) {
+    colOffsets.push(colOffsets[c - 1] + colWidths[c - 1] + GROUP_GAP);
+  }
+  const rowOffsets = [0];
+  for (let r = 1; r < totalRows; r++) {
+    rowOffsets.push(rowOffsets[r - 1] + rowHeights[r - 1] + GROUP_GAP);
+  }
+
+  communities.forEach((community, communityIndex) => {
+    const members = community.nodeIds
+      .map((id) => nodesById.get(id))
+      .filter((n): n is GraphNode => Boolean(n))
+      .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+
+    const col = communityIndex % GRID_COLS;
+    const row = Math.floor(communityIndex / GRID_COLS);
+    const { width: groupWidth, height: groupHeight, innerCols } = communitySizes[communityIndex];
+
+    const groupX = colOffsets[col];
+    const groupY = rowOffsets[row];
+
+    // Add group node
+    canvasNodes.push({
+      id: `group-${community.id}`,
+      type: "group",
+      label: community.label,
+      x: groupX,
+      y: groupY,
+      width: groupWidth,
+      height: groupHeight
+    });
+
+    // Add member nodes inside the group
+    members.forEach((node, memberIndex) => {
+      const innerCol = memberIndex % innerCols;
+      const innerRow = Math.floor(memberIndex / innerCols);
+
+      const nodeX = groupX + GROUP_PAD + innerCol * (NODE_WIDTH + NODE_PAD_X);
+      const nodeY = groupY + GROUP_PAD + 30 + innerRow * (NODE_HEIGHT + NODE_PAD_Y);
+
+      const canvasId = `node-${node.id}`;
+      nodeCanvasId.set(node.id, canvasId);
+
+      const communityLabel = community.id === "community:unassigned" ? "Unassigned" : community.label;
+      canvasNodes.push({
+        id: canvasId,
+        type: "text",
+        text: `**${node.label}**\nType: ${node.type}\nCommunity: ${communityLabel}`,
+        x: nodeX,
+        y: nodeY,
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+        color: COLORS[communityIndex % COLORS.length]
+      });
+    });
+  });
+
+  // Add edges
+  for (const edge of graph.edges) {
+    const fromId = nodeCanvasId.get(edge.source);
+    const toId = nodeCanvasId.get(edge.target);
+    if (!fromId || !toId) continue;
+    canvasEdges.push({
+      id: `edge-${edge.id}`,
+      fromNode: fromId,
+      toNode: toId,
+      label: edge.relation
+    });
+  }
+
+  const canvas = {
+    nodes: canvasNodes,
+    edges: canvasEdges
+  };
+
+  const resolvedPath = await writeGraphExport(outputPath, JSON.stringify(canvas, null, 2));
+  return { format: "canvas", outputPath: resolvedPath };
 }
 
 export async function hasGraphArtifact(rootDir: string): Promise<boolean> {

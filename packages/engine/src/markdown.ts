@@ -955,10 +955,100 @@ function suggestedGraphQuestions(graph: GraphArtifact): string[] {
     .filter((node) => (node.bridgeScore ?? 0) > 0)
     .sort((left, right) => (right.bridgeScore ?? 0) - (left.bridgeScore ?? 0))
     .slice(0, 3);
+
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+
+  // Ambiguous edges
+  const ambiguousEdgeQuestions = graph.edges
+    .filter((edge) => edge.evidenceClass === "ambiguous")
+    .slice(0, 3)
+    .map((edge) => {
+      const sourceNode = nodesById.get(edge.source);
+      const targetNode = nodesById.get(edge.target);
+      if (!sourceNode || !targetNode) return "";
+      return `What is the exact relationship between ${sourceNode.label} and ${targetNode.label}?`;
+    })
+    .filter(Boolean);
+
+  // God nodes with inferred edges
+  const godNodeInferredQuestions: string[] = [];
+  const godNodes = graph.nodes.filter((node) => node.isGodNode);
+  for (const god of godNodes) {
+    const inferredCount = graph.edges.filter(
+      (edge) => (edge.source === god.id || edge.target === god.id) && edge.evidenceClass === "inferred"
+    ).length;
+    if (inferredCount >= 2) {
+      godNodeInferredQuestions.push(`Are the inferred relationships involving ${god.label} correct?`);
+    }
+  }
+
+  // Isolated nodes (degree <= 1, not source type)
+  const isolatedNodeQuestions = graph.nodes
+    .filter((node) => (node.degree ?? 0) <= 1 && node.type !== "source")
+    .slice(0, 3)
+    .map((node) => `What connects ${node.label} to the rest of the vault?`);
+
   return uniqueStrings([
     ...thinCommunities.map((community) => `What sources would strengthen community ${community.label}?`),
-    ...bridgeNodes.map((node) => `Why does ${node.label} connect multiple communities in the vault?`)
-  ]).slice(0, 6);
+    ...bridgeNodes.map((node) => `Why does ${node.label} connect multiple communities in the vault?`),
+    ...ambiguousEdgeQuestions,
+    ...godNodeInferredQuestions,
+    ...isolatedNodeQuestions
+  ]).slice(0, 8);
+}
+
+function communityCohesionScores(graph: GraphArtifact): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const community of graph.communities ?? []) {
+    const memberSet = new Set(community.nodeIds);
+    const n = memberSet.size;
+    if (n < 2) {
+      result.set(community.id, n === 1 ? 1 : 0);
+      continue;
+    }
+    const maxEdges = (n * (n - 1)) / 2;
+    let internalEdges = 0;
+    for (const edge of graph.edges) {
+      if (memberSet.has(edge.source) && memberSet.has(edge.target)) {
+        internalEdges++;
+      }
+    }
+    result.set(community.id, internalEdges / maxEdges);
+  }
+  return result;
+}
+
+function buildKnowledgeGaps(graph: GraphArtifact): {
+  isolatedNodes: Array<{ nodeId: string; label: string; type: GraphNode["type"] }>;
+  thinCommunityCount: number;
+  ambiguousEdgeRatio: number;
+  warnings: string[];
+} {
+  const isolatedNodes = graph.nodes
+    .filter((node) => (node.degree ?? 0) <= 1 && node.type !== "source")
+    .slice(0, 10)
+    .map((node) => ({ nodeId: node.id, label: node.label, type: node.type }));
+
+  const communities = graph.communities ?? [];
+  const thinCommunityCount = communities.filter((c) => c.nodeIds.length <= 2).length;
+
+  const totalEdges = graph.edges.length;
+  const ambiguousEdges = graph.edges.filter((e) => e.evidenceClass === "ambiguous").length;
+  const ambiguousEdgeRatio = totalEdges > 0 ? ambiguousEdges / totalEdges : 0;
+
+  const warnings: string[] = [];
+  if (ambiguousEdgeRatio > 0.2) {
+    warnings.push(`${(ambiguousEdgeRatio * 100).toFixed(1)}% of edges are ambiguous — consider adding sources to clarify relationships.`);
+  }
+  const totalIsolated = graph.nodes.filter((node) => (node.degree ?? 0) <= 1 && node.type !== "source").length;
+  if (totalIsolated > 5) {
+    warnings.push(`${totalIsolated} nodes are isolated or weakly connected — they may need additional source material.`);
+  }
+  if (communities.length > 0 && thinCommunityCount > communities.length / 3) {
+    warnings.push(`${thinCommunityCount} of ${communities.length} communities have 2 or fewer nodes — the graph may be fragmented.`);
+  }
+
+  return { isolatedNodes, thinCommunityCount, ambiguousEdgeRatio, warnings };
 }
 
 export function buildGraphReportArtifact(input: {
@@ -1071,7 +1161,19 @@ export function buildGraphReportArtifact(input: {
       claimA: c.claimA.text,
       claimB: c.claimB.text,
       confidenceDelta: Math.abs(c.claimA.confidence - c.claimB.confidence)
-    }))
+    })),
+    communityCohesion: (() => {
+      const cohesionMap = communityCohesionScores(reportGraph);
+      return (reportGraph.communities ?? [])
+        .filter((c) => c.nodeIds.length >= 3)
+        .map((c) => ({
+          id: c.id,
+          label: c.label,
+          nodeCount: c.nodeIds.length,
+          cohesion: cohesionMap.get(c.id) ?? 0
+        }));
+    })(),
+    knowledgeGaps: buildKnowledgeGaps(reportGraph)
   };
 }
 

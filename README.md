@@ -184,6 +184,9 @@ swarmvault install --agent codex            # Codex
 swarmvault install --agent cursor           # Cursor
 swarmvault install --agent copilot --hook   # GitHub Copilot CLI + hook
 swarmvault install --agent gemini --hook    # Gemini CLI + hook
+swarmvault install --agent trae             # Trae
+swarmvault install --agent claw             # Claw / OpenClaw skill target
+swarmvault install --agent droid            # Droid / Factory rules target
 ```
 
 Or expose the vault directly over MCP:
@@ -256,9 +259,11 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source sessions, source guides, a research map, contradictions, and open questions. The pages work as plain markdown first, and `profile.dataviewBlocks` can append Dataview blocks when you want a more Obsidian-native view.
 
+**Graph report health signals** - graph report artifacts now include community-cohesion summaries, isolated-node and ambiguity warnings, and sharper follow-up questions when the graph has weakly connected or ambiguous regions.
+
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
-**9 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, and GitHub Copilot CLI. Optional graph-first hooks bias agents toward the wiki before broad search.
+**12 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, GitHub Copilot CLI, Trae, Claw/OpenClaw, and Droid. Optional graph-first hooks bias supported agents toward the wiki before broad search.
 
 **MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio.
 
@@ -266,9 +271,9 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Managed sources** - `swarmvault source add|list|reload|review|guide|session|delete` turns recurring files, directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json`, source briefs under `wiki/outputs/source-briefs/`, resumable session anchors under `wiki/outputs/source-sessions/`, and guided integration artifacts under `wiki/outputs/source-guides/`.
 
-**External graph sinks** - export to HTML, SVG, GraphML, and Cypher, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
+**External graph sinks** - export to full HTML, lightweight standalone HTML, SVG, GraphML, Cypher, JSON, Obsidian note bundles, or Obsidian canvas, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
 
-**Large-repo hardening** - long repo ingests and compile passes emit bounded progress on big batches, parser compatibility failures stay local to the affected sources with explicit diagnostics, and graph reports roll up tiny fragmented communities for readability.
+**Large-repo hardening** - long repo ingests and compile passes emit bounded progress on big batches, parser compatibility failures stay local to the affected sources with explicit diagnostics, code-only repo watch cycles skip non-code re-analysis, and graph reports roll up tiny fragmented communities for readability.
 
 Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know what was found vs guessed.
 
@@ -286,6 +291,9 @@ Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know w
 | OpenCode | `swarmvault install --agent opencode` |
 | Aider | `swarmvault install --agent aider` |
 | GitHub Copilot CLI | `swarmvault install --agent copilot` |
+| Trae | `swarmvault install --agent trae` |
+| Claw / OpenClaw | `swarmvault install --agent claw` |
+| Droid | `swarmvault install --agent droid` |
 
 Claude Code, OpenCode, Gemini CLI, and Copilot also support `--hook` for graph-first context injection.
 

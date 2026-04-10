@@ -49,6 +49,9 @@ swarmvault graph serve
 swarmvault graph serve --full
 swarmvault graph export --html ./graph.html
 swarmvault graph export --html ./graph.html --full
+swarmvault graph export --html-standalone ./graph-standalone.html
+swarmvault graph export --json ./graph.json --canvas ./graph.canvas
+swarmvault graph export --obsidian ./graph-vault
 swarmvault graph push neo4j --dry-run
 swarmvault mcp
 ```
@@ -72,4 +75,7 @@ swarmvault install --agent gemini --hook
 swarmvault install --agent opencode --hook
 swarmvault install --agent aider
 swarmvault install --agent copilot --hook
+swarmvault install --agent trae
+swarmvault install --agent claw
+swarmvault install --agent droid
 ```

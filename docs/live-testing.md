@@ -60,11 +60,11 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.21 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.22 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 node ./scripts/live-smoke.mjs --lane heuristic --browser-check
 node ./scripts/live-smoke.mjs --lane neo4j --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
-node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.21 --keep-artifacts
+node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.22 --keep-artifacts
 node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
 node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
 ```
@@ -126,7 +126,8 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - stage a deterministic candidate concept through a custom compile provider
 - run `explore`
 - run `lint` and `lint --deep`
-- run `graph export --html` and verify the standalone HTML embeds local asset data
+- run `graph export --html` and verify the self-contained HTML embeds local asset data
+- run `graph export --html-standalone`, `graph export --json`, `graph export --canvas`, and `graph export --obsidian` and verify the lighter/shareable outputs exist with the expected file counts or graph payloads
 - run large-graph overview checks against both `graph serve` and `graph export --html`, and verify `--full` disables overview sampling for oversized graphs
 - when `--browser-check` is enabled, open both `graph serve` and the exported HTML in a real headless Chromium session, select a graph node, trigger path highlighting, and verify deselection
 - run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
@@ -140,7 +141,8 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `install --agent gemini --hook`
 - run `install --agent copilot --hook`
 - run `install --agent aider`
-- verify the installed package writes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`, `.aider.conf.yml`, `.github/copilot-instructions.md`, and the expected hook/plugin artifacts
+- run `install --agent trae`, `install --agent claw`, and `install --agent droid`
+- verify the installed package writes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`, `.aider.conf.yml`, `.github/copilot-instructions.md`, `.trae/rules/swarmvault.md`, `.claw/skills/swarmvault/SKILL.md`, `.factory/rules/swarmvault.md`, and the expected hook/plugin artifacts
 - when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, and Gemini CLI against `GEMINI.md`
 - run the OpenCode host-agent check only when `SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE=1` is set, because it depends on an external model path and is not part of the required packaged-artifact release gate
 - run the Ollama local-embeddings check only when `SWARMVAULT_RUN_LOCAL_EMBEDDINGS_SMOKE=1` is set, because it depends on a reachable embedding-capable local model and is not part of the required packaged-artifact release gate

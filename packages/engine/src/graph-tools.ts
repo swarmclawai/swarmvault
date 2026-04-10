@@ -1,6 +1,7 @@
 import type {
   EvidenceClass,
   GraphArtifact,
+  GraphDiffResult,
   GraphEdge,
   GraphExplainNeighbor,
   GraphExplainResult,
@@ -474,4 +475,59 @@ export function listHyperedges(graph: GraphArtifact, target?: string, limit = 25
     .filter((hyperedge) => hyperedge.sourcePageIds.includes(page.id) || page.nodeIds.some((nodeId) => hyperedge.nodeIds.includes(nodeId)))
     .sort((left, right) => right.confidence - left.confidence || left.label.localeCompare(right.label))
     .slice(0, limit);
+}
+
+export function graphDiff(oldGraph: GraphArtifact, newGraph: GraphArtifact): GraphDiffResult {
+  const oldNodeIds = new Set(oldGraph.nodes.map((node) => node.id));
+  const newNodeIds = new Set(newGraph.nodes.map((node) => node.id));
+
+  const addedNodes = newGraph.nodes
+    .filter((node) => !oldNodeIds.has(node.id))
+    .map((node) => ({ id: node.id, label: node.label, type: node.type }));
+  const removedNodes = oldGraph.nodes
+    .filter((node) => !newNodeIds.has(node.id))
+    .map((node) => ({ id: node.id, label: node.label, type: node.type }));
+
+  const oldEdgeIds = new Set(oldGraph.edges.map((edge) => edge.id));
+  const newEdgeIds = new Set(newGraph.edges.map((edge) => edge.id));
+
+  const addedEdges = newGraph.edges
+    .filter((edge) => !oldEdgeIds.has(edge.id))
+    .map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, relation: edge.relation, evidenceClass: edge.evidenceClass }));
+  const removedEdges = oldGraph.edges
+    .filter((edge) => !newEdgeIds.has(edge.id))
+    .map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, relation: edge.relation, evidenceClass: edge.evidenceClass }));
+
+  const oldPageIds = new Set(oldGraph.pages.map((page) => page.id));
+  const newPageIds = new Set(newGraph.pages.map((page) => page.id));
+
+  const addedPages = newGraph.pages
+    .filter((page) => !oldPageIds.has(page.id))
+    .map((page) => ({ id: page.id, path: page.path, title: page.title, kind: page.kind }));
+  const removedPages = oldGraph.pages
+    .filter((page) => !newPageIds.has(page.id))
+    .map((page) => ({ id: page.id, path: page.path, title: page.title, kind: page.kind }));
+
+  const parts: string[] = [];
+  if (addedNodes.length || removedNodes.length) {
+    const segments = [];
+    if (addedNodes.length) segments.push(`${addedNodes.length} added`);
+    if (removedNodes.length) segments.push(`${removedNodes.length} removed`);
+    parts.push(`${segments.join(", ")} nodes`);
+  }
+  if (addedEdges.length || removedEdges.length) {
+    const segments = [];
+    if (addedEdges.length) segments.push(`${addedEdges.length} added`);
+    if (removedEdges.length) segments.push(`${removedEdges.length} removed`);
+    parts.push(`${segments.join(", ")} edges`);
+  }
+  if (addedPages.length || removedPages.length) {
+    const segments = [];
+    if (addedPages.length) segments.push(`${addedPages.length} added`);
+    if (removedPages.length) segments.push(`${removedPages.length} removed`);
+    parts.push(`${segments.join(", ")} pages`);
+  }
+  const summary = parts.length ? parts.join("; ") : "No changes";
+
+  return { addedNodes, removedNodes, addedEdges, removedEdges, addedPages, removedPages, summary };
 }

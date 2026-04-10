@@ -130,7 +130,10 @@ const agentFileKinds = {
   gemini: "GEMINI.md",
   cursor: ".cursor/rules/swarmvault.mdc",
   aider: "CONVENTIONS.md",
-  copilot: ".github/copilot-instructions.md"
+  copilot: ".github/copilot-instructions.md",
+  trae: ".trae/rules/swarmvault.md",
+  claw: ".claw/skills/swarmvault/SKILL.md",
+  droid: ".factory/rules/swarmvault.md"
 } as const;
 
 function buildManagedBlock(target: keyof typeof agentFileKinds): string {
@@ -182,6 +185,12 @@ function primaryTargetPathForAgent(rootDir: string, agent: AgentType): string {
       return path.join(rootDir, agentFileKinds.aider);
     case "copilot":
       return path.join(rootDir, agentFileKinds.copilot);
+    case "trae":
+      return path.join(rootDir, agentFileKinds.trae);
+    case "claw":
+      return path.join(rootDir, agentFileKinds.claw);
+    case "droid":
+      return path.join(rootDir, agentFileKinds.droid);
     default:
       throw new Error(`Unsupported agent ${String(agent)}`);
   }
@@ -482,6 +491,15 @@ export async function installAgent(rootDir: string, agent: AgentType, options: I
     case "copilot":
       await upsertManagedBlock(path.join(rootDir, agentFileKinds.agents), buildManagedBlock("agents"));
       await upsertManagedBlock(target, buildManagedBlock("copilot"));
+      break;
+    case "trae":
+      await writeOwnedFile(target, buildManagedBlock("trae"));
+      break;
+    case "claw":
+      await writeOwnedFile(target, buildManagedBlock("claw"));
+      break;
+    case "droid":
+      await writeOwnedFile(target, buildManagedBlock("droid"));
       break;
     default:
       throw new Error(`Unsupported agent ${String(agent)}`);

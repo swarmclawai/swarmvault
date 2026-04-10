@@ -20,6 +20,60 @@ const BACKOFF_THRESHOLD = 3;
 const CRITICAL_THRESHOLD = 10;
 const REPO_WATCH_IGNORES = new Set([".git", ".venv"]);
 
+const CODE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".kts",
+  ".scala",
+  ".sc",
+  ".dart",
+  ".lua",
+  ".zig",
+  ".cs",
+  ".php",
+  ".rb",
+  ".swift",
+  ".c",
+  ".h",
+  ".cpp",
+  ".cc",
+  ".cxx",
+  ".hpp",
+  ".hxx",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".ps1",
+  ".psm1",
+  ".ex",
+  ".exs",
+  ".jl",
+  ".r",
+  ".R"
+]);
+
+function isCodeOnlyChange(reasons: Set<string>): boolean {
+  for (const reason of reasons) {
+    const match = reason.match(/^(?:add|change|unlink):(.+)$/);
+    if (!match) continue;
+    const filePath = match[1];
+    const ext = path.extname(filePath).toLowerCase();
+    if (!ext || !CODE_EXTENSIONS.has(ext)) return false;
+  }
+  return reasons.size > 0;
+}
+
 type WatchCycleResult = {
   watchedRepoRoots: string[];
   importedCount: number;
@@ -73,11 +127,12 @@ async function resolveWatchTargets(
 async function performWatchCycle(
   rootDir: string,
   paths: Awaited<ReturnType<typeof initWorkspace>>["paths"],
-  options: WatchOptions
+  options: WatchOptions,
+  codeOnly = false
 ): Promise<WatchCycleResult> {
   const imported = await importInbox(rootDir, paths.inboxDir);
   const repoSync = options.repo ? await syncTrackedReposForWatch(rootDir) : null;
-  const compile = await compileVault(rootDir);
+  const compile = await compileVault(rootDir, { codeOnly });
   const pendingSemanticRefresh = repoSync
     ? await mergePendingSemanticRefresh(rootDir, repoSync.pendingSemanticRefresh)
     : await readPendingSemanticRefresh(rootDir);
@@ -287,8 +342,13 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
     pending = false;
     running = true;
     const startedAt = new Date();
+    const codeOnlyChange = isCodeOnlyChange(reasons);
     const runReasons = [...reasons];
     reasons.clear();
+
+    if (codeOnlyChange) {
+      process.stderr.write("[swarmvault watch] Code-only changes detected — skipping LLM re-analysis.\n");
+    }
 
     let importedCount = 0;
     let scannedCount = 0;
@@ -306,7 +366,7 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
     let error: string | undefined;
 
     try {
-      const result = await performWatchCycle(rootDir, paths, options);
+      const result = await performWatchCycle(rootDir, paths, options, codeOnlyChange);
       importedCount = result.importedCount;
       scannedCount = result.scannedCount;
       attachmentCount = result.attachmentCount;
@@ -353,6 +413,7 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
           lintFindingCount,
           lines: [
             `reasons=${runReasons.join(",") || "none"}`,
+            `code_only=${codeOnlyChange}`,
             `imported=${importedCount}`,
             `scanned=${scannedCount}`,
             `attachments=${attachmentCount}`,

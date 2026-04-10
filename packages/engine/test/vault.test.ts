@@ -420,7 +420,7 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, ".obsidian", "workspace.json"))).resolves.toBeUndefined();
   });
 
-  it("installs agent instructions for goose, pi, opencode, aider, copilot, gemini, and cursor targets", async () => {
+  it("installs agent instructions for goose, pi, opencode, aider, copilot, gemini, cursor, trae, claw, and droid targets", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
 
@@ -431,6 +431,9 @@ describe("swarmvault workflow", () => {
     const copilotTarget = await installAgent(rootDir, "copilot");
     const geminiTarget = await installAgent(rootDir, "gemini");
     const cursorTarget = await installAgent(rootDir, "cursor");
+    const traeTarget = await installAgent(rootDir, "trae");
+    const clawTarget = await installAgent(rootDir, "claw");
+    const droidTarget = await installAgent(rootDir, "droid");
 
     expect(gooseTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
     expect(piTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
@@ -439,6 +442,9 @@ describe("swarmvault workflow", () => {
     expect(copilotTarget.target).toBe(path.join(rootDir, ".github", "copilot-instructions.md"));
     expect(geminiTarget.target).toBe(path.join(rootDir, "GEMINI.md"));
     expect(cursorTarget.target).toBe(path.join(rootDir, ".cursor", "rules", "swarmvault.mdc"));
+    expect(traeTarget.target).toBe(path.join(rootDir, ".trae", "rules", "swarmvault.md"));
+    expect(clawTarget.target).toBe(path.join(rootDir, ".claw", "skills", "swarmvault", "SKILL.md"));
+    expect(droidTarget.target).toBe(path.join(rootDir, ".factory", "rules", "swarmvault.md"));
     expect(aiderTarget.targets).toContain(path.join(rootDir, ".aider.conf.yml"));
     expect(copilotTarget.targets).toContain(path.join(rootDir, "AGENTS.md"));
 
@@ -458,6 +464,13 @@ describe("swarmvault workflow", () => {
     expect(parsedCursor.content).toContain("# SwarmVault Rules");
     expect(parsedCursor.content.match(/swarmvault:managed:start/g)?.length ?? 0).toBe(1);
     expect(await fs.readFile(path.join(rootDir, ".aider.conf.yml"), "utf8")).toContain("CONVENTIONS.md");
+
+    const traeContent = await fs.readFile(traeTarget.target, "utf8");
+    const clawContent = await fs.readFile(clawTarget.target, "utf8");
+    const droidContent = await fs.readFile(droidTarget.target, "utf8");
+    expect(traeContent).toContain("# SwarmVault Rules");
+    expect(clawContent).toContain("# SwarmVault Rules");
+    expect(droidContent).toContain("# SwarmVault Rules");
 
     await installAgent(rootDir, "cursor");
     const cursorContentAgain = await fs.readFile(cursorTarget.target, "utf8");

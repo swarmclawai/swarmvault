@@ -30,7 +30,20 @@ export const providerTypeSchema = z.enum([
 ]);
 
 export type ProviderType = z.infer<typeof providerTypeSchema>;
-export const agentTypeSchema = z.enum(["codex", "claude", "cursor", "goose", "pi", "gemini", "opencode", "aider", "copilot"]);
+export const agentTypeSchema = z.enum([
+  "codex",
+  "claude",
+  "cursor",
+  "goose",
+  "pi",
+  "gemini",
+  "opencode",
+  "aider",
+  "copilot",
+  "trae",
+  "claw",
+  "droid"
+]);
 export type AgentType = z.infer<typeof agentTypeSchema>;
 
 export type PageKind = "index" | "source" | "module" | "concept" | "entity" | "output" | "insight" | "graph_report" | "community_summary";
@@ -41,7 +54,7 @@ export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore" | "source_brief" | "source_review" | "source_guide" | "source_session";
 export type OutputFormat = "markdown" | "report" | "slides" | "chart" | "image";
 export type OutputAssetRole = "primary" | "preview" | "manifest" | "poster";
-export type GraphExportFormat = "html" | "svg" | "graphml" | "cypher";
+export type GraphExportFormat = "html" | "html-standalone" | "svg" | "graphml" | "cypher" | "json" | "obsidian" | "canvas";
 export type PageStatus = "draft" | "candidate" | "active" | "archived";
 export type PageManager = "system" | "human";
 export type ApprovalEntryStatus = "pending" | "accepted" | "rejected";
@@ -713,6 +726,16 @@ export interface GraphExplainResult {
   summary: string;
 }
 
+export interface GraphDiffResult {
+  addedNodes: Array<{ id: string; label: string; type: GraphNode["type"] }>;
+  removedNodes: Array<{ id: string; label: string; type: GraphNode["type"] }>;
+  addedEdges: Array<{ id: string; source: string; target: string; relation: string; evidenceClass: EvidenceClass }>;
+  removedEdges: Array<{ id: string; source: string; target: string; relation: string; evidenceClass: EvidenceClass }>;
+  addedPages: Array<{ id: string; path: string; title: string; kind: PageKind }>;
+  removedPages: Array<{ id: string; path: string; title: string; kind: PageKind }>;
+  summary: string;
+}
+
 export interface ApprovalEntry {
   pageId: string;
   title: string;
@@ -774,6 +797,7 @@ export interface CandidateRecord {
 
 export interface CompileOptions {
   approve?: boolean;
+  codeOnly?: boolean;
 }
 
 export interface InitOptions {
@@ -1146,6 +1170,7 @@ export interface SceneSpec {
 export interface GraphExportResult {
   format: GraphExportFormat;
   outputPath: string;
+  fileCount?: number;
 }
 
 export interface Neo4jGraphSinkConfig {
@@ -1346,6 +1371,13 @@ export interface GraphReportArtifact {
     claimB: string;
     confidenceDelta: number;
   }>;
+  communityCohesion?: Array<{ id: string; label: string; nodeCount: number; cohesion: number }>;
+  knowledgeGaps?: {
+    isolatedNodes: Array<{ nodeId: string; label: string; type: GraphNode["type"] }>;
+    thinCommunityCount: number;
+    ambiguousEdgeRatio: number;
+    warnings: string[];
+  };
 }
 
 export interface ScheduledCompileTask {

@@ -184,6 +184,9 @@ swarmvault install --agent codex            # Codex
 swarmvault install --agent cursor           # Cursor
 swarmvault install --agent copilot --hook   # GitHub Copilot CLI + hook
 swarmvault install --agent gemini --hook    # Gemini CLI + hook
+swarmvault install --agent trae             # Trae
+swarmvault install --agent claw             # Claw / OpenClaw skill target
+swarmvault install --agent droid            # Droid / Factory rules target
 ```
 
 あるいは、ボルトを直接 MCP で公開します:
@@ -252,9 +255,11 @@ clawhub install swarmvault
 
 **知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source sessions、source guides、research map、contradictions、open questions が出力されます。まず plain markdown として読めることを優先し、`profile.dataviewBlocks` を有効にすると Obsidian Dataview 向けのクエリも追加されます。
 
+**グラフ健全性シグナル** - graph report artifact には community cohesion の要約、孤立ノードや曖昧 edge の warning、そして弱いまたは曖昧な領域を補う follow-up question も含まれるようになりました。
+
 **任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 
-**9 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI 用のインストール規則があります。任意の graph-first hooks により、エージェントは広い検索の前に wiki を優先します。
+**12 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid 用のインストール規則があります。任意の graph-first hooks により、対応エージェントは広い検索の前に wiki を優先します。
 
 **MCP server** - `swarmvault mcp` はボルトを stdio 経由で互換エージェントクライアントへ公開します。
 
@@ -262,9 +267,9 @@ clawhub install swarmvault
 
 **Managed sources** - `swarmvault source add|list|reload|review|guide|session|delete` により、繰り返し使うローカルファイル、ディレクトリ、公開 GitHub リポジトリ、docs サイトを名前付き同期ソースとして管理できます。レジストリは `state/sources.json`、ソース別ブリーフは `wiki/outputs/source-briefs/`、再開可能な session アンカーは `wiki/outputs/source-sessions/`、ガイド付き統合成果物は `wiki/outputs/source-guides/` に保存されます。
 
-**外部グラフ連携** - HTML、SVG、GraphML、Cypher にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
+**外部グラフ連携** - 完全版 HTML、軽量 standalone HTML、SVG、GraphML、Cypher、JSON、Obsidian note bundle、Obsidian canvas にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
 
-**大規模リポジトリ向けの堅牢化** - 大きな repo ingest や compile では抑制された進捗表示を出し、parser 互換性の失敗は該当ソースだけに閉じ込めて明示的な診断を残し、グラフレポートでは細かすぎるコミュニティをまとめて可読性を保ちます。
+**大規模リポジトリ向けの堅牢化** - 大きな repo ingest や compile では抑制された進捗表示を出し、parser 互換性の失敗は該当ソースだけに閉じ込めて明示的な診断を残し、code-only repo watch cycle は non-code re-analysis を飛ばし、グラフレポートでは細かすぎるコミュニティをまとめて可読性を保ちます。
 
 各エッジには `extracted`、`inferred`、`ambiguous` のタグが付き、何が実際に見つかった情報で、何が推論かを常に判断できます。
 
@@ -282,6 +287,9 @@ clawhub install swarmvault
 | OpenCode | `swarmvault install --agent opencode` |
 | Aider | `swarmvault install --agent aider` |
 | GitHub Copilot CLI | `swarmvault install --agent copilot` |
+| Trae | `swarmvault install --agent trae` |
+| Claw / OpenClaw | `swarmvault install --agent claw` |
+| Droid | `swarmvault install --agent droid` |
 
 Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応しており、graph-first の文脈注入ができます。
 

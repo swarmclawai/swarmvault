@@ -184,6 +184,9 @@ swarmvault install --agent codex            # Codex
 swarmvault install --agent cursor           # Cursor
 swarmvault install --agent copilot --hook   # GitHub Copilot CLI + hook
 swarmvault install --agent gemini --hook    # Gemini CLI + hook
+swarmvault install --agent trae             # Trae
+swarmvault install --agent claw             # Claw / OpenClaw skill target
+swarmvault install --agent droid            # Droid / Factory rules target
 ```
 
 或者直接通过 MCP 暴露知识库：
@@ -252,9 +255,11 @@ clawhub install swarmvault
 
 **知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。默认先保证普通 Markdown 可读；当 `profile.dataviewBlocks` 打开时，会额外附加适合 Obsidian Dataview 的查询块。
 
+**图谱健康信号** - graph report 产物现在还会给出 community cohesion 摘要、孤立节点与高歧义边的告警，以及针对薄弱或模糊图区域的更明确 follow-up questions。
+
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
-**9 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider 和 GitHub Copilot CLI。可选 graph-first hooks 会先引导代理读取 wiki，再进行大范围搜索。
+**12 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw 和 Droid。可选 graph-first hooks 会先引导支持的 agent 读取 wiki，再进行大范围搜索。
 
 **MCP server** - `swarmvault mcp` 通过 stdio 把知识库暴露给任意兼容的代理客户端。
 
@@ -262,9 +267,9 @@ clawhub install swarmvault
 
 **托管来源** - `swarmvault source add|list|reload|review|guide|session|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，可恢复的 session 锚点写入 `wiki/outputs/source-sessions/`，引导式整合产物写入 `wiki/outputs/source-guides/`。
 
-**外部图谱输出** - 可导出为 HTML、SVG、GraphML、Cypher，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
+**外部图谱输出** - 可导出为完整 HTML、轻量 standalone HTML、SVG、GraphML、Cypher、JSON、Obsidian 笔记包或 Obsidian canvas，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
 
-**大型仓库加固** - 面对大批量仓库 ingest 和 compile 时会输出有边界的进度提示；parser 兼容性失败只会影响对应源文件并留下明确诊断；图谱报告会把过于碎片化的小社区折叠展示，保持可读性。
+**大型仓库加固** - 面对大批量仓库 ingest 和 compile 时会输出有边界的进度提示；parser 兼容性失败只会影响对应源文件并留下明确诊断；仅代码改动的 repo watch cycle 会跳过非代码重分析；图谱报告会把过于碎片化的小社区折叠展示，保持可读性。
 
 每条边都会标记为 `extracted`、`inferred` 或 `ambiguous`，因此你始终知道哪些是明确提取到的，哪些只是推断。
 
@@ -282,6 +287,9 @@ clawhub install swarmvault
 | OpenCode | `swarmvault install --agent opencode` |
 | Aider | `swarmvault install --agent aider` |
 | GitHub Copilot CLI | `swarmvault install --agent copilot` |
+| Trae | `swarmvault install --agent trae` |
+| Claw / OpenClaw | `swarmvault install --agent claw` |
+| Droid | `swarmvault install --agent droid` |
 
 Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用于 graph-first 上下文注入。
 

@@ -58,7 +58,7 @@ swarmvault graph serve
 swarmvault mcp
 ```
 
-For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered.
+For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need lighter sharing or Obsidian-native artifacts.
 
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom.
 
@@ -124,6 +124,9 @@ Supported agent installs:
 - `swarmvault install --agent opencode --hook`
 - `swarmvault install --agent aider`
 - `swarmvault install --agent copilot --hook`
+- `swarmvault install --agent trae`
+- `swarmvault install --agent claw`
+- `swarmvault install --agent droid`
 
 Expose the vault over MCP with:
 

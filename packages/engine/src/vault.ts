@@ -4398,7 +4398,11 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     const projectChanged = (previousSourceProjects[manifest.sourceId] ?? null) !== projectId;
     const effectiveHashChanged = previousProjectSchemaHash(previousState, projectId) !== effectiveHashForProject(schemas, projectId);
     if (hashChanged || noAnalysis || projectChanged || effectiveHashChanged) {
-      dirty.push(manifest);
+      if (options.codeOnly && manifest.sourceKind !== "code") {
+        clean.push(manifest);
+      } else {
+        dirty.push(manifest);
+      }
     } else {
       clean.push(manifest);
     }
