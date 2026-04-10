@@ -8,13 +8,23 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**面向 AI 代理的本地优先知识编译器。** 把原始文件、URL、代码、转录稿、邮件导出、日历、数据集和文档编译成持久化知识库。你不再把工作丢在聊天记录里，而是得到可以长期保存在磁盘上的 Markdown wiki、知识图谱、本地搜索、仪表盘和可审查的工件。
+**面向 AI 代理的本地优先知识编译器**，基于 [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 模式构建。大多数”和文档聊天”的工具只回答一次问题，然后把过程全部丢掉。SwarmVault 在你和原始资料之间维护一个**持久化 wiki** —— LLM 负责记录整理，你负责思考。
 
 网站文档目前仍以英文为主。如果不同语言版本之间的表述出现偏差，请以 [README.md](README.md) 为准。
 
-> 大多数“和文档聊天”的工具只回答一次问题，然后把过程全部丢掉。SwarmVault 把知识库本身当作产品。每一步都会写出可保留、可检查、可 diff、可持续改进的持久化工件。
+### 三层架构
 
-SwarmVault 的思路受到 Andrej Karpathy 的 [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist 启发。核心模式是一致的：在原始来源与日常使用之间维护一个持久化 wiki。SwarmVault 则把这个模式进一步做成了带有图谱、搜索、审查流、自动化，以及可选模型增强能力的本地工具链。
+SwarmVault 采用三层架构，遵循 Andrej Karpathy 描述的模式：
+
+1. **原始来源** (`raw/`) —— 你精心收集的源文档。书籍、文章、论文、转录稿、代码、图片、数据集。它们是不可变的：SwarmVault 只读取，从不修改。
+2. **Wiki** (`wiki/`) —— LLM 生成和人工编写的 Markdown 文件。源摘要、实体页、概念页、交叉引用、仪表盘和输出。Wiki 是持续积累的持久化工件。
+3. **Schema** (`swarmvault.schema.md`) —— 定义 wiki 的组织方式、遵循的约定，以及你的领域中哪些内容最重要。你和 LLM 会共同演进这个文件。
+
+> 继承 Vannevar Bush 的 Memex（1945）理念 —— 一个带有文档间关联路径的个人化知识库 —— SwarmVault 把来源之间的联系视为与来源本身同等重要。Bush 无法解决的是谁来做维护工作。LLM 解决了这个问题。
+
+把书籍、文章、笔记、转录稿、邮件导出、日历、数据集、幻灯片、截图、URL 和代码编译成持久化知识库，包含知识图谱、本地搜索、仪表盘和可审查的工件。可用于**个人知识管理**、**研究深潜**、**读书伴侣**、**代码文档**、**商业智能**，或任何需要长期积累知识并加以组织的领域。
+
+SwarmVault 把 LLM Wiki 模式做成了带有图谱导航、搜索、审查、自动化和可选模型增强的本地工具链。你也可以从[独立 schema 模板](templates/llm-wiki-schema.md)开始 —— 零安装，任何 LLM 代理 —— 当你需要更多功能时再升级到完整 CLI。
 
 <!-- readme-section:install -->
 ## 安装
@@ -161,7 +171,7 @@ swarmvault source session file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
-`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。加入 `--guide` 后，会额外创建一个可恢复的引导式 session，写入 `wiki/outputs/source-sessions/`，并在 `profile.guidedSessionMode` 为 `canonical_review` 时通过 approval queue 阶段化对 canonical 页面（source/concept/entity）的更新；如果配置为 `insights_only`，则会把引导式整合内容保留在 `wiki/insights/` 中。它现在同样适用于可重复同步的本地文件，而不仅是目录、公开仓库或文档站点。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
+`source add` 会注册来源、把内容同步进知识库、执行一次 compile，并在 `wiki/outputs/source-briefs/` 下写出该来源的简报。加入 `--guide` 后，会额外创建一个可恢复的引导式 session，写入 `wiki/outputs/source-sessions/`，并在 `profile.guidedSessionMode` 为 `canonical_review` 时通过 approval queue 阶段化对 canonical 页面（source/concept/entity）的更新；如果配置为 `insights_only`，则会把引导式整合内容保留在 `wiki/insights/` 中。你也可以在 `swarmvault.config.json` 中设置 `profile.guidedIngestDefault: true`，让 `ingest`、`source add` 和 `source reload` 默认进入引导式模式；当某次运行只想走轻量路径时，用 `--no-guide` 覆盖。它现在同样适用于可重复同步的本地文件，而不仅是目录、公开仓库或文档站点。`ingest` 仍适合单次文件或 URL，`add` 仍适合研究资料/文章的标准化采集。
 
 <!-- readme-section:agent-setup -->
 ## Agent 与 MCP 设置
@@ -234,9 +244,9 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
-**可配置 profile** - 通过 `swarmvault.config.json` 中的 `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode` 和 `profile.dataviewBlocks` 组合出自己的知识库模式，而不是等待新的硬编码产品模式。`personal-research` 只是一个起步别名。
+**可配置 profile** - 通过 `swarmvault.config.json` 中的 `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault` 和 `profile.dataviewBlocks` 组合出自己的知识库模式，而不是等待新的硬编码产品模式。`personal-research` 只是一个起步别名。
 
-**引导式 session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` 和 `source session <id>` 会创建可恢复的 source session，写入 `wiki/outputs/source-sessions/`，并在你接受之前阶段化 source review、source guide，以及基于 profile 配置流向 canonical 页面或 `wiki/insights/` 的更新提案。
+**引导式 session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` 和 `source session <id>` 会创建可恢复的 source session，写入 `wiki/outputs/source-sessions/`，并在你接受之前阶段化 source review、source guide，以及基于 profile 配置流向 canonical 页面或 `wiki/insights/` 的更新提案。在 `swarmvault.config.json` 中设置 `profile.guidedIngestDefault: true` 可以让 ingest 和 source 命令默认使用引导式模式；用 `--no-guide` 覆盖。
 
 **知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。默认先保证普通 Markdown 可读；当 `profile.dataviewBlocks` 打开时，会额外附加适合 Obsidian Dataview 的查询块。
 
@@ -281,6 +291,9 @@ Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用于 grap
 | code-repo | 仓库 ingest、模块页、图谱报告、benchmark | [`worked/code-repo/`](worked/code-repo/) |
 | capture | 面向研究资料的 `add` 捕获与标准化元数据 | [`worked/capture/`](worked/capture/) |
 | mixed-corpus | compile、review、save-first 输出循环 | [`worked/mixed-corpus/`](worked/mixed-corpus/) |
+| book-reading | 逐章阅读构建角色和主题页的粉丝 wiki | [`worked/book-reading/`](worked/book-reading/) |
+| research-deep-dive | 论文和文章构建带矛盾检测的演化论点 | [`worked/research-deep-dive/`](worked/research-deep-dive/) |
+| personal-knowledge-base | 日记、健康、播客 —— 个人 Memex | [`worked/personal-knowledge-base/`](worked/personal-knowledge-base/) |
 
 每个目录都包含真实输入文件和实际输出结果，你可以直接运行验证。分步演示见 [examples guide](https://www.swarmvault.ai/docs/getting-started/examples)。
 

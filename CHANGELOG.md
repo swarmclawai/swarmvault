@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2
+
+- Added a standalone `templates/llm-wiki-schema.md` starter so people can begin with the LLM Wiki pattern and the raw/wiki/schema three-layer architecture before installing the full CLI
+- Added three new worked example vaults for chapter-by-chapter book companions, contradiction-aware research deep-dives, and personal Memex workflows, with real source material under `worked/` for docs and release validation
+- Added `profile.guidedIngestDefault` so starter profiles such as `personal-research` can make guided ingest the default for `ingest`, `source add`, and `source reload`, while `--no-guide` still forces the lighter path when needed
+- Reframed the OSS docs and published skill bundle around the LLM Wiki / Memex model, and tightened README parity checks so the English, Chinese, and Japanese READMEs stay aligned on the new template and example surfaces
+
 ## 0.7.1
 
 - Fixed clean-checkout test runs by emitting the bundled engine hook scripts before `pnpm test`, and raised the tiny validation code-matrix timeout to stay stable on slower CI runners where repo ingest can legitimately exceed Vitest's default 5 second test limit

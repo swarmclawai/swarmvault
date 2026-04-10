@@ -8,13 +8,23 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**AI エージェント向けのローカルファーストな知識コンパイラ。** 生のファイル、URL、コード、書き起こし、メール書き出し、カレンダー、データセット、ドキュメントを永続的な知識ボルトへ変換します。作業をチャット履歴の中で失うのではなく、Markdown wiki、ナレッジグラフ、ローカル検索、ダッシュボード、レビュー可能な成果物としてディスクに残せます。
+**AI エージェント向けのローカルファーストな知識コンパイラ**、[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) パターンに基づいて構築。多くの「ドキュメントと会話する」ツールは、質問に答えたあと作業を捨ててしまいます。SwarmVault は生のソースとあなたの間に**永続的な wiki** を維持します —— LLM が記録整理を行い、あなたは思考に集中できます。
 
 ウェブサイトのドキュメントは現在 English-first です。各言語版で表現に差が出た場合は [README.md](README.md) を正としてください。
 
-> 多くの「ドキュメントと会話する」ツールは、質問に答えたあと作業を捨ててしまいます。SwarmVault はボルトそのものをプロダクトとして扱います。すべての操作が、確認・差分比較・継続改善できる永続的な成果物を書き出します。
+### 三層アーキテクチャ
 
-SwarmVault は Andrej Karpathy の [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist に着想を得ています。核になる発想は同じで、生のソースと日々の利用の間に永続的な wiki を置くことです。SwarmVault はそのパターンを、グラフ、検索、レビュー、オートメーション、そして任意のモデル強化を備えたローカルなツールチェーンとして具体化しています。
+SwarmVault は Andrej Karpathy が提唱したパターンに従い、三つの層を用います：
+
+1. **生のソース** (`raw/`) —— 厳選されたソースドキュメントのコレクション。書籍、記事、論文、書き起こし、コード、画像、データセット。これらは不変です：SwarmVault は読み取るだけで、変更しません。
+2. **Wiki** (`wiki/`) —— LLM が生成し、人間が執筆する Markdown ファイル。ソース要約、エンティティページ、コンセプトページ、相互参照、ダッシュボード、出力。Wiki は持続的に蓄積される永続的な成果物です。
+3. **スキーマ** (`swarmvault.schema.md`) —— wiki の構造、従うべき規約、およびあなたのドメインで何が重要かを定義します。あなたと LLM がこのファイルを共に進化させていきます。
+
+> Vannevar Bush の Memex（1945年）の理念を受け継ぎ —— ドキュメント間の連想トレイルを持つ個人的で厳選された知識ストア —— SwarmVault はソース間のつながりをソースそのものと同じくらい重要に扱います。Bush が解決できなかったのは、誰がメンテナンスを行うかという問題でした。LLM がそれを解決します。
+
+書籍、記事、ノート、書き起こし、メール書き出し、カレンダー、データセット、スライド、スクリーンショット、URL、コードを、ナレッジグラフ、ローカル検索、ダッシュボード、レビュー可能な成果物を含む永続的な知識ボルトに変換します。**個人知識管理**、**研究の深堀り**、**読書コンパニオン**、**コードドキュメンテーション**、**ビジネスインテリジェンス**、または長期にわたって知識を蓄積し整理したいあらゆる領域に利用できます。
+
+SwarmVault は LLM Wiki パターンを、グラフナビゲーション、検索、レビュー、オートメーション、オプションのモデル強化を備えたローカルなツールチェーンに具体化しています。[スタンドアロンスキーマテンプレート](templates/llm-wiki-schema.md)から始めることもできます —— インストール不要、任意の LLM エージェントで —— 必要に応じてフル CLI にアップグレードできます。
 
 <!-- readme-section:install -->
 ## インストール
@@ -161,7 +171,7 @@ swarmvault source session file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
-`source add` はソースを登録し、ボルトへ同期し、1 回 compile し、`wiki/outputs/source-briefs/` にソース別ブリーフを書きます。`--guide` を付けると、`wiki/outputs/source-sessions/` に再開可能なガイド付き session を作成し、`profile.guidedSessionMode` が `canonical_review` のときは canonical な source/concept/entity page への更新を approval queue に段階化し、`insights_only` のときはガイド付き統合結果を `wiki/insights/` 側へ留めます。ディレクトリや公開リポジトリ、docs ハブだけでなく、継続的に同期したいローカルファイルにも使えます。単発のファイルや URL には `ingest`、研究 URL の正規化には `add` を使ってください。
+`source add` はソースを登録し、ボルトへ同期し、1 回 compile し、`wiki/outputs/source-briefs/` にソース別ブリーフを書きます。`--guide` を付けると、`wiki/outputs/source-sessions/` に再開可能なガイド付き session を作成し、`profile.guidedSessionMode` が `canonical_review` のときは canonical な source/concept/entity page への更新を approval queue に段階化し、`insights_only` のときはガイド付き統合結果を `wiki/insights/` 側へ留めます。さらに `swarmvault.config.json` で `profile.guidedIngestDefault: true` を設定すれば、`ingest`、`source add`、`source reload` でガイド付きモードを既定にでき、個別の実行だけ軽量パスにしたいときは `--no-guide` でオーバーライドできます。ディレクトリや公開リポジトリ、docs ハブだけでなく、継続的に同期したいローカルファイルにも使えます。単発のファイルや URL には `ingest`、研究 URL の正規化には `add` を使ってください。
 
 <!-- readme-section:agent-setup -->
 ## エージェントと MCP の設定
@@ -234,9 +244,9 @@ clawhub install swarmvault
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
-**設定可能な profile** - `swarmvault.config.json` の `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.dataviewBlocks` を組み合わせて、自分向けの vault mode を作れます。`personal-research` はあくまで starter alias です。
+**設定可能な profile** - `swarmvault.config.json` の `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.dataviewBlocks` を組み合わせて、自分向けの vault mode を作れます。`personal-research` はあくまで starter alias です。
 
-**ガイド付き session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>`、`source session <id>` は再開可能な source session を作成し、`wiki/outputs/source-sessions/` に残しながら、source review、source guide、そして profile 設定に応じて canonical page あるいは `wiki/insights/` へ向かう更新案を受け入れ前に段階化します。
+**ガイド付き session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>`、`source session <id>` は再開可能な source session を作成し、`wiki/outputs/source-sessions/` に残しながら、source review、source guide、そして profile 設定に応じて canonical page あるいは `wiki/insights/` へ向かう更新案を受け入れ前に段階化します。`swarmvault.config.json` で `profile.guidedIngestDefault: true` を設定すると、ingest と source コマンドでガイド付きモードがデフォルトになります。`--no-guide` でオーバーライドできます。
 
 **知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source sessions、source guides、research map、contradictions、open questions が出力されます。まず plain markdown として読めることを優先し、`profile.dataviewBlocks` を有効にすると Obsidian Dataview 向けのクエリも追加されます。
 
@@ -281,6 +291,9 @@ Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応してお
 | code-repo | repo ingest、module pages、graph reports、benchmarks | [`worked/code-repo/`](worked/code-repo/) |
 | capture | 研究向け `add` capture と正規化メタデータ | [`worked/capture/`](worked/capture/) |
 | mixed-corpus | compile、review、save-first output loops | [`worked/mixed-corpus/`](worked/mixed-corpus/) |
+| book-reading | 章ごとに読みながらキャラクターとテーマのファン wiki を構築 | [`worked/book-reading/`](worked/book-reading/) |
+| research-deep-dive | 論文と記事で矛盾検出付きの進化するテーゼを構築 | [`worked/research-deep-dive/`](worked/research-deep-dive/) |
+| personal-knowledge-base | 日記、健康、ポッドキャスト — パーソナル Memex | [`worked/personal-knowledge-base/`](worked/personal-knowledge-base/) |
 
 各フォルダには実際の入力ファイルと実際の出力が入っているので、そのまま実行して確認できます。手順付きの説明は [examples guide](https://www.swarmvault.ai/docs/getting-started/examples) を参照してください。
 

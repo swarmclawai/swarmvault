@@ -60,11 +60,11 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.1 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.2 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 node ./scripts/live-smoke.mjs --lane heuristic --browser-check
 node ./scripts/live-smoke.mjs --lane neo4j --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
-node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.1 --keep-artifacts
+node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.2 --keep-artifacts
 node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
 node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
 ```
@@ -86,7 +86,7 @@ The optional canary repo is:
 
 - `apple/sample-food-truck`
 
-That Swift canary is not part of the default gated lane. It is there to check graceful degradation on unsupported Swift plus Apple-style resource layouts.
+That canary is not part of the default gated lane. It is there to exercise a mixed-language Apple-style project layout without slowing the normal release gate.
 
 ## ClawHub Skill Checks
 

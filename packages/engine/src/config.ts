@@ -113,7 +113,8 @@ const vaultProfileConfigSchema = z.object({
   presets: z.array(vaultProfilePresetSchema).default([]),
   dashboardPack: vaultDashboardPackSchema.default("default"),
   guidedSessionMode: guidedSessionModeSchema.default("insights_only"),
-  dataviewBlocks: z.boolean().default(false)
+  dataviewBlocks: z.boolean().default(false),
+  guidedIngestDefault: z.boolean().default(false)
 });
 
 /**
@@ -155,7 +156,8 @@ const vaultConfigSchema = z.object({
     presets: [],
     dashboardPack: "default",
     guidedSessionMode: "insights_only",
-    dataviewBlocks: false
+    dataviewBlocks: false,
+    guidedIngestDefault: false
   }),
   projects: z
     .record(
@@ -232,7 +234,8 @@ export function defaultVaultProfileConfig(): VaultProfileConfig {
     presets: [],
     dashboardPack: "default",
     guidedSessionMode: "insights_only",
-    dataviewBlocks: false
+    dataviewBlocks: false,
+    guidedIngestDefault: false
   };
 }
 
@@ -241,7 +244,8 @@ export function personalResearchProfileConfig(): VaultProfileConfig {
     presets: ["reader", "timeline", "thesis"],
     dashboardPack: "reader",
     guidedSessionMode: "canonical_review",
-    dataviewBlocks: true
+    dataviewBlocks: true,
+    guidedIngestDefault: true
   };
 }
 
@@ -252,7 +256,8 @@ export function normalizeVaultProfileConfig(profile?: Partial<VaultProfileConfig
     presets,
     dashboardPack: profile?.dashboardPack ?? inferDashboardPackFromPresets(presets),
     guidedSessionMode: profile?.guidedSessionMode ?? inferGuidedSessionModeFromPresets(presets),
-    dataviewBlocks: profile?.dataviewBlocks ?? presets.length > 0
+    dataviewBlocks: profile?.dataviewBlocks ?? presets.length > 0,
+    guidedIngestDefault: profile?.guidedIngestDefault ?? false
   };
 }
 

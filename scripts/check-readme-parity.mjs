@@ -70,7 +70,12 @@ const requiredSubstrings = [
   "https://www.swarmvault.ai/docs/getting-started/troubleshooting",
   "https://www.npmjs.com/package/@swarmvaultai/cli",
   "https://github.com/swarmclawai/swarmvault",
-  "wiki/outputs/source-sessions/"
+  "wiki/outputs/source-sessions/",
+  "worked/book-reading/",
+  "worked/research-deep-dive/",
+  "worked/personal-knowledge-base/",
+  "templates/llm-wiki-schema.md",
+  "Memex"
 ];
 
 function assertCondition(condition, message) {

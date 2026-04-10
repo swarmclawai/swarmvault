@@ -211,6 +211,7 @@ export interface VaultProfileConfig {
   dashboardPack: VaultDashboardPack;
   guidedSessionMode: GuidedSessionMode;
   dataviewBlocks: boolean;
+  guidedIngestDefault: boolean;
 }
 
 export interface VaultConfig {
