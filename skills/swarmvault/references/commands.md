@@ -6,6 +6,7 @@
 swarmvault init
 swarmvault init --obsidian --profile personal-research
 swarmvault init --obsidian --profile reader,timeline
+swarmvault scan ./apps/api --no-serve
 swarmvault --version
 ```
 
@@ -60,6 +61,7 @@ swarmvault mcp
 
 ```bash
 swarmvault watch --lint --repo
+swarmvault watch --repo --code-only --once
 swarmvault watch status
 swarmvault hook install
 swarmvault schedule list

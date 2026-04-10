@@ -78,6 +78,8 @@ swarmvault graph serve
 swarmvault graph push neo4j --dry-run
 ```
 
+ローカル repo や docs ツリーを最短で一度見たい場合は、`swarmvault scan ./path --no-serve` を使います。現在のディレクトリを vault として初期化し、そのディレクトリを取り込み、compile まで実行し、`--no-serve` ならグラフビューアは起動しません。
+
 とても大きなグラフでは、`swarmvault graph serve` と `swarmvault graph export --html` は自動で overview mode で始まります。全面表示したい場合は `--full` を付けてください。
 
 `swarmvault init --profile` は `default`、`personal-research`、そして `reader,timeline` のようなカンマ区切り preset list を受け付けます。`personal-research` の starter profile は `profile.guidedIngestDefault` と `profile.deepLintDefault` を両方有効にするので、ingest/source と lint は `--no-guide` や `--no-deep` を付けない限り強いパスで始まります。独自のボルト挙動にしたい場合は `swarmvault.config.json` の `profile` ブロックを編集し、`swarmvault.schema.md` は人間が書く意図レイヤーとして使い続けてください。
@@ -315,6 +317,18 @@ Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応してお
 `heuristic` `openai` `anthropic` `gemini` `ollama` `openrouter` `groq` `together` `xai` `cerebras` `openai-compatible` `custom`
 
 設定例は [provider docs](https://www.swarmvault.ai/docs/providers) を参照してください。
+
+<!-- readme-section:privacy -->
+## プライバシーとデータフロー
+
+SwarmVault はデフォルトでデータをローカル処理します：
+
+- **コードファイル** は tree-sitter によりローカルで解析されます。ソースコードの内容が外部 API に送信されることはありません。
+- **ドキュメントとテキスト** はセマンティック抽出のために設定されたプロバイダーに送信されます。組み込みの `heuristic` プロバイダーを使用すれば、すべてローカルで完結します。
+- **画像** はビジョン対応プロバイダーが設定されている場合のみ送信されます。
+- **Heuristic モード**（デフォルト）は完全にオフラインで動作します — API キー不要、ネットワーク接続不要。
+
+モデルプロバイダー（OpenAI、Anthropic、Ollama など）を追加すると、コード以外のコンテンツのみが LLM 分析に送信されます。グラフ構築、コミュニティ検出、レポート生成はすべてローカルで行われます。
 
 <!-- readme-section:packages -->
 ## Packages

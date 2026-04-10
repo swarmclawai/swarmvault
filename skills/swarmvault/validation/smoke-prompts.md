@@ -11,6 +11,7 @@ Prompt:
 Expected shape:
 
 - initializes or confirms the vault
+- may use `swarmvault scan <directory> --no-serve` when the task is a quick local repo walkthrough
 - points at `swarmvault.schema.md`
 - mentions `wiki/` and `state/`
 - prefers `wiki/graph/report.md` once compile exists

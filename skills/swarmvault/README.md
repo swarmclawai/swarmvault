@@ -58,9 +58,11 @@ swarmvault graph serve
 swarmvault mcp
 ```
 
+For the fastest scratch walkthrough of a local repo or docs tree, run `swarmvault scan ./path --no-serve`. It initializes the current directory as a vault, ingests that directory, compiles immediately, and leaves the graph viewer closed when you only need the generated artifacts.
+
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need lighter sharing or Obsidian-native artifacts.
 
-The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom.
+The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom. Code files are always parsed locally via tree-sitter; only non-code text or image sources go to configured model providers.
 
 `swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For a custom vault style, edit the `profile` block in `swarmvault.config.json` directly; `swarmvault.schema.md` stays the human-written intent layer. The `personal-research` starter profile also enables `profile.guidedIngestDefault` and `profile.deepLintDefault`, so guided ingest/source and lint flows are on by default until you opt out with `--no-guide` or `--no-deep`.
 

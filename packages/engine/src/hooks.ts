@@ -55,7 +55,7 @@ function managedHookBlock(vaultRoot: string): string {
     `swarmvault_bin=${shellQuote(resolvedExecutable)}`,
     '[ ! -x "$swarmvault_bin" ] && swarmvault_bin=$(command -v swarmvault 2>/dev/null || true)',
     'if [ -n "$swarmvault_bin" ] && [ -x "$swarmvault_bin" ]; then',
-    "  \"$swarmvault_bin\" watch --repo --once >/dev/null 2>&1 || printf '[swarmvault hook] refresh failed\\n' >&2",
+    "  \"$swarmvault_bin\" watch --repo --once --code-only >/dev/null 2>&1 || printf '[swarmvault hook] refresh failed\\n' >&2",
     "fi",
     hookEnd,
     ""

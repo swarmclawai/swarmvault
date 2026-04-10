@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/engine",
-  "version": "0.7.22",
+  "version": "0.7.23",
   "description": "Core engine for SwarmVault: ingest, compile, query, lint, and provider abstractions.",
   "type": "module",
   "main": "dist/index.js",
@@ -57,6 +57,8 @@
     "csv-parse": "^6.2.1",
     "fast-xml-parser": "^5.5.11",
     "fflate": "^0.8.2",
+    "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.2",
     "gray-matter": "^4.0.3",
     "ignore": "^7.0.5",
     "ini": "^6.0.0",
@@ -88,6 +90,7 @@
     "@types/mime-types": "^3.0.1",
     "@types/node": "^24.6.0",
     "@types/turndown": "^5.0.5",
+    "graphology-types": "^0.24.8",
     "tsup": "^8.5.0",
     "vitest": "^3.2.4"
   }

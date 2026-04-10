@@ -1,7 +1,7 @@
 {
   "name": "swarmvault-opensource",
   "private": true,
-  "version": "0.7.22",
+  "version": "0.7.23",
   "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {

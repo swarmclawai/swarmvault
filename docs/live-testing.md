@@ -60,11 +60,11 @@ pnpm live:smoke:openai
 Optional flags:
 
 ```bash
-node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.22 --keep-artifacts
+node ./scripts/live-smoke.mjs --lane heuristic --version 0.7.23 --keep-artifacts
 node ./scripts/live-smoke.mjs --lane heuristic --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
 node ./scripts/live-smoke.mjs --lane heuristic --browser-check
 node ./scripts/live-smoke.mjs --lane neo4j --install-spec /tmp/swarmvaultai-engine.tgz --install-spec /tmp/swarmvaultai-cli.tgz
-node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.22 --keep-artifacts
+node ./scripts/live-oss-corpus.mjs --lane heuristic --version 0.7.23 --keep-artifacts
 node ./scripts/live-oss-corpus.mjs --lane heuristic --repo ky --repo react-markdown
 node ./scripts/live-oss-corpus.mjs --lane heuristic --include-canary
 ```
@@ -111,6 +111,7 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 
 - install the published CLI from npm into an isolated temporary prefix
 - initialize a fresh workspace
+- run `scan <directory> --no-serve` against a small local directory fixture and verify the one-command init + ingest + compile path
 - run `source add` against a small local directory fixture and verify `state/sources.json`
 - run `source add --guide` against a recurring local transcript file and verify managed file support plus guided-bundle staging
 - run `source list`, `source reload --all`, `source delete`, and `source add --no-brief`
@@ -133,7 +134,7 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
 - start `graph serve` and verify HTML plus `/api/graph`, `/api/search`, `/api/page`, `/api/asset`, `/api/candidates`, and `/api/reviews`
 - promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
-- run `watch --lint` against the published install and verify `state/jobs.ndjson` plus watch sessions
+- run `watch --lint` and `watch --repo --code-only --once` against the published install and verify `state/jobs.ndjson`, watch sessions, and the code-only refresh path
 - start `mcp` and call tools over stdio, including `search_pages` and chart-format `query_vault`
 - run `install --agent codex`
 - run `install --agent claude`
@@ -143,6 +144,7 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `install --agent aider`
 - run `install --agent trae`, `install --agent claw`, and `install --agent droid`
 - verify the installed package writes `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`, `.aider.conf.yml`, `.github/copilot-instructions.md`, `.trae/rules/swarmvault.md`, `.claw/skills/swarmvault/SKILL.md`, `.factory/rules/swarmvault.md`, and the expected hook/plugin artifacts
+- verify the managed git hook block invokes `swarmvault watch --repo --once --code-only`
 - when local binaries and credentials are available, run Codex CLI against `AGENTS.md`, Claude Code against `CLAUDE.md`, and Gemini CLI against `GEMINI.md`
 - run the OpenCode host-agent check only when `SWARMVAULT_RUN_OPENCODE_AGENT_SMOKE=1` is set, because it depends on an external model path and is not part of the required packaged-artifact release gate
 - run the Ollama local-embeddings check only when `SWARMVAULT_RUN_LOCAL_EMBEDDINGS_SMOKE=1` is set, because it depends on a reachable embedding-capable local model and is not part of the required packaged-artifact release gate

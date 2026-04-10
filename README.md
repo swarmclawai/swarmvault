@@ -78,6 +78,8 @@ swarmvault graph serve
 swarmvault graph push neo4j --dry-run
 ```
 
+Need the fastest first pass over a local repo or docs tree? `swarmvault scan ./path --no-serve` initializes the current directory as a vault, ingests that directory, compiles it, and skips opening the graph viewer when you only want the artifacts.
+
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you want the entire canvas rendered anyway.
 
 `swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. The `personal-research` starter profile turns on both `profile.guidedIngestDefault` and `profile.deepLintDefault`, so ingest/source and lint flows start in the stronger path unless you pass `--no-guide` or `--no-deep`. For custom vault behavior, edit the `profile` block in `swarmvault.config.json` and keep `swarmvault.schema.md` as the human-written intent layer.
@@ -319,6 +321,18 @@ Providers are optional. SwarmVault routes by capability, not brand. Built-in pro
 `heuristic` `openai` `anthropic` `gemini` `ollama` `openrouter` `groq` `together` `xai` `cerebras` `openai-compatible` `custom`
 
 See the [provider docs](https://www.swarmvault.ai/docs/providers) for configuration examples.
+
+<!-- readme-section:privacy -->
+## Privacy & Data Flow
+
+SwarmVault processes your data locally by default:
+
+- **Code files** are parsed on your machine via tree-sitter. Source code contents are never sent to external APIs.
+- **Documents and text** are sent to your configured provider for semantic extraction. With the built-in `heuristic` provider, everything stays local.
+- **Images** are sent to a vision-capable provider only when one is configured.
+- **Heuristic mode** (the default) is fully offline — no API keys, no network calls.
+
+When you add a model provider (OpenAI, Anthropic, Ollama, etc.), only non-code content is sent for LLM analysis. All graph building, community detection, and report generation happen locally.
 
 <!-- readme-section:packages -->
 ## Packages

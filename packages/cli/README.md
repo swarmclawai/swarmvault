@@ -72,6 +72,18 @@ The schema file is the vault-specific instruction layer. Edit it to define namin
 
 `--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` starter profile also sets `profile.guidedIngestDefault: true` and `profile.deepLintDefault: true`, so guided ingest/source and lint flows are on by default until you override them with `--no-guide` or `--no-deep`.
 
+### `swarmvault scan <directory> [--port <port>] [--no-serve]`
+
+Quick-start a scratch vault from a local directory in one command.
+
+- initializes the current directory as a SwarmVault workspace
+- ingests the supplied directory as local sources
+- compiles the vault immediately
+- starts `graph serve` unless you pass `--no-serve`
+- respects `--port` when you want a specific viewer port
+
+Use this when you want the fastest repo or docs-tree walkthrough without first deciding on managed-source registration.
+
 ### `swarmvault source add|list|reload|review|guide|session|delete`
 
 Manage recurring source roots through a registry-backed workflow.
@@ -244,9 +256,9 @@ Set `profile.deepLintDefault: true` when deep lint should be the default for `sw
 
 `--conflicts` filters the results down to contradiction-focused findings so you can audit conflicting claims without the rest of the lint output.
 
-### `swarmvault watch [--lint] [--repo] [--once] [--debounce <ms>]`
+### `swarmvault watch [--lint] [--repo] [--once] [--code-only] [--debounce <ms>]`
 
-Watch the inbox directory and trigger import and compile cycles when files change. With `--repo`, each cycle also refreshes tracked repo roots that were previously ingested through directory ingest. With `--once`, SwarmVault runs one refresh cycle immediately instead of starting a long-running watcher. With `--lint`, each cycle also runs linting. Each cycle writes a canonical session artifact to `state/sessions/`, and compatibility run metadata is still appended to `state/jobs.ndjson`.
+Watch the inbox directory and trigger import and compile cycles when files change. With `--repo`, each cycle also refreshes tracked repo roots that were previously ingested through directory ingest. With `--once`, SwarmVault runs one refresh cycle immediately instead of starting a long-running watcher. With `--code-only`, SwarmVault forces the narrower AST-only refresh path and skips non-code semantic re-analysis until you run a normal `compile`. With `--lint`, each cycle also runs linting. Each cycle writes a canonical session artifact to `state/sessions/`, and compatibility run metadata is still appended to `state/jobs.ndjson`.
 
 When `--repo` sees non-code changes under tracked repo roots, SwarmVault records those files under `state/watch/pending-semantic-refresh.json`, marks affected compiled pages stale, and exposes the pending set through `watch status` and the local graph workspace instead of silently re-ingesting them.
 
@@ -264,7 +276,7 @@ Manage SwarmVault's local git hook blocks for the nearest git repository.
 - `hook uninstall` removes only the SwarmVault-managed hook block
 - `hook status` reports whether those managed hook blocks are installed
 
-The installed hooks run `swarmvault watch --repo --once` from the vault root so repo-aware source changes are re-ingested and recompiled after commit and checkout.
+The installed hooks run `swarmvault watch --repo --once --code-only` from the vault root so commit and checkout refreshes update code pages and graph structure quickly. Run a normal `swarmvault compile` when you also want non-code semantic re-analysis.
 
 ### `swarmvault mcp`
 

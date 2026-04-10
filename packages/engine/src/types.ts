@@ -884,6 +884,7 @@ export interface WatchOptions {
   lint?: boolean;
   debounceMs?: number;
   repo?: boolean;
+  codeOnly?: boolean;
 }
 
 export interface PendingSemanticRefreshEntry {

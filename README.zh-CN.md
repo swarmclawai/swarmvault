@@ -78,6 +78,8 @@ swarmvault graph serve
 swarmvault graph push neo4j --dry-run
 ```
 
+想要对本地仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve` 会将当前目录初始化为 vault，导入该目录并完成编译；加上 `--no-serve` 时不会启动图谱查看器。
+
 对于非常大的图，`swarmvault graph serve` 和 `swarmvault graph export --html` 会自动进入 overview mode。若你仍想强制渲染完整画布，请添加 `--full`。
 
 `swarmvault init --profile` 支持 `default`、`personal-research`，也支持 `reader,timeline` 这种逗号分隔的 preset 组合。`personal-research` 起步 profile 会同时开启 `profile.guidedIngestDefault` 和 `profile.deepLintDefault`，所以 ingest/source 与 lint 默认都会走更强的路径，除非你显式传入 `--no-guide` 或 `--no-deep`。若要自定义知识库行为，请直接编辑 `swarmvault.config.json` 里的 `profile` 配置块，并把 `swarmvault.schema.md` 继续当作人工维护的意图层。
@@ -315,6 +317,18 @@ Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用于 grap
 `heuristic` `openai` `anthropic` `gemini` `ollama` `openrouter` `groq` `together` `xai` `cerebras` `openai-compatible` `custom`
 
 配置示例见 [provider docs](https://www.swarmvault.ai/docs/providers)。
+
+<!-- readme-section:privacy -->
+## 隐私与数据流
+
+SwarmVault 默认在本地处理数据：
+
+- **代码文件** 通过 tree-sitter 在本地解析。源代码内容不会发送到外部 API。
+- **文档和文本** 发送到已配置的 provider 进行语义提取。使用内置 `heuristic` provider 时，所有数据保留在本地。
+- **图像** 仅在配置了视觉 provider 时才发送。
+- **Heuristic 模式**（默认）完全离线运行——无需 API 密钥，无需网络连接。
+
+添加模型 provider（OpenAI、Anthropic、Ollama 等）后，仅非代码内容会发送到 LLM 进行分析。所有图谱构建、社区检测和报告生成均在本地完成。
 
 <!-- readme-section:packages -->
 ## Packages

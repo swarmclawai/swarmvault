@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.23
+
+- Added `swarmvault scan <directory>` as a one-command scratch path that initializes the current directory as a vault, ingests a local directory, compiles it, and can launch the graph viewer immediately
+- Added `swarmvault watch --code-only` and switched the managed git-hook refresh path to `watch --repo --once --code-only`, making commit and checkout refreshes update code pages and graph structure without re-running non-code semantic analysis
+- Switched graph community detection to a Louvain clustering pass for cleaner community grouping while still keeping disconnected nodes as singleton communities when no graph edges exist
+- Updated the README, package docs, skill bundle docs, live-testing notes, and website docs to cover the new scan path, code-only watch behavior, hook refresh semantics, and privacy/data-flow expectations
+
 ## 0.7.22
 
 - Added new graph export targets for lightweight standalone HTML, deterministic JSON, Obsidian markdown bundles, and Obsidian canvas output alongside the existing HTML, SVG, GraphML, and Cypher exports

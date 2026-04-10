@@ -69,9 +69,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.22";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.23";
   } catch {
-    return "0.7.22";
+    return "0.7.23";
   }
 }
 
@@ -1145,13 +1145,15 @@ const watch = program
   .option("--lint", "Run lint after each compile cycle", false)
   .option("--repo", "Also refresh tracked repo sources and watch their repo roots", false)
   .option("--once", "Run one import/refresh cycle immediately instead of starting a watcher", false)
+  .option("--code-only", "Only re-extract code sources (AST-only, no LLM re-analysis)", false)
   .option("--debounce <ms>", "Debounce window in milliseconds", "900")
-  .action(async (options: { lint?: boolean; repo?: boolean; once?: boolean; debounce?: string }) => {
+  .action(async (options: { lint?: boolean; repo?: boolean; once?: boolean; codeOnly?: boolean; debounce?: string }) => {
     const debounceMs = parsePositiveInt(options.debounce, 900);
     if (options.once) {
       const result = await runWatchCycle(process.cwd(), {
         lint: options.lint ?? false,
         repo: options.repo ?? false,
+        codeOnly: options.codeOnly ?? false,
         debounceMs
       });
       if (isJson()) {
@@ -1167,6 +1169,7 @@ const watch = program
     const controller = await watchVault(process.cwd(), {
       lint: options.lint ?? false,
       repo: options.repo ?? false,
+      codeOnly: options.codeOnly ?? false,
       debounceMs
     });
     if (isJson()) {
@@ -1344,6 +1347,48 @@ program
       }
     }
   );
+
+program
+  .command("scan")
+  .description("Quick-start: initialize, ingest, compile, and serve a graph viewer in one command.")
+  .argument("<directory>", "Directory to scan")
+  .option("--port <port>", "Port for the graph viewer")
+  .option("--no-serve", "Skip launching the graph viewer after compile")
+  .action(async (directory: string, options: { port?: string; serve?: boolean }) => {
+    const rootDir = process.cwd();
+    await initVault(rootDir, {});
+    if (!isJson()) {
+      log("Initialized workspace.");
+    }
+
+    const result = await ingestDirectory(rootDir, directory, {});
+    if (!isJson()) {
+      log(`Ingested ${result.imported.length} file(s).`);
+    }
+
+    const compiled = await compileVault(rootDir, {});
+    if (!isJson()) {
+      log(`Compiled ${compiled.sourceCount} source(s), ${compiled.pageCount} page(s).`);
+    }
+
+    if (options.serve !== false) {
+      const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
+      const server = await startGraphServer(rootDir, port, { full: false });
+      if (isJson()) {
+        emitJson({ ...result, compiled, port: server.port, url: `http://localhost:${server.port}` });
+      } else {
+        log(`Graph viewer running at http://localhost:${server.port}`);
+      }
+      process.on("SIGINT", async () => {
+        try {
+          await server.close();
+        } catch {}
+        process.exit(0);
+      });
+    } else if (isJson()) {
+      emitJson({ ...result, compiled });
+    }
+  });
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);

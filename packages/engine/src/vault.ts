@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import Graph from "graphology";
+import louvain from "graphology-communities-louvain";
 import matter from "gray-matter";
 import { z } from "zod";
 import { installConfiguredAgents } from "./agents.js";
@@ -1651,29 +1653,44 @@ function deriveGraphMetrics(
 
   const communityMap = new Map<string, string>();
   const communities: Array<{ id: string; label: string; nodeIds: string[] }> = [];
-  const visited = new Set<string>();
 
+  const nonSourceIdSet = new Set(nonSourceNodes.map((node) => node.id));
+
+  /* Build a graphology UndirectedGraph for Louvain community detection.
+     Only non-source nodes participate; edges are derived from the adjacency
+     map which already includes both explicit edges and co-occurrence links. */
+  const louvainGraph = new Graph({ type: "undirected" });
   for (const node of nonSourceNodes) {
-    if (visited.has(node.id)) {
-      continue;
-    }
-    const queue = [node.id];
-    const memberIds: string[] = [];
-    visited.add(node.id);
-
-    while (queue.length) {
-      const current = queue.shift() as string;
-      memberIds.push(current);
-      for (const neighbor of adjacency.get(current) ?? []) {
-        if (!visited.has(neighbor) && nodes.find((candidate) => candidate.id === neighbor)?.type !== "source") {
-          visited.add(neighbor);
-          queue.push(neighbor);
-        }
+    louvainGraph.addNode(node.id);
+  }
+  for (const node of nonSourceNodes) {
+    for (const neighbor of adjacency.get(node.id) ?? []) {
+      if (nonSourceIdSet.has(neighbor) && !louvainGraph.hasEdge(node.id, neighbor)) {
+        louvainGraph.addEdge(node.id, neighbor);
       }
     }
+  }
 
-    const labelSeed = nodes.find((candidate) => candidate.id === memberIds[0])?.label ?? `cluster-${communities.length + 1}`;
-    const communityId = buildCommunityId(labelSeed, communities.length);
+  /* Louvain requires at least one edge; fall back to singleton communities
+     for disconnected graphs (e.g. single-source vaults). */
+  const louvainMapping: Record<string, number> = louvainGraph.size > 0 ? louvain(louvainGraph, { resolution: 1 }) : {};
+
+  /* Group nodes by their Louvain community number.  Isolated nodes (no edges)
+     each get their own singleton community. */
+  const groupByCommunity = new Map<number, string[]>();
+  let nextIsolated = -1;
+  for (const node of nonSourceNodes) {
+    const communityNumber = louvainMapping[node.id] ?? nextIsolated--;
+    if (!groupByCommunity.has(communityNumber)) {
+      groupByCommunity.set(communityNumber, []);
+    }
+    groupByCommunity.get(communityNumber)!.push(node.id);
+  }
+
+  let communityIndex = 0;
+  for (const memberIds of groupByCommunity.values()) {
+    const labelSeed = nodes.find((candidate) => candidate.id === memberIds[0])?.label ?? `cluster-${communityIndex + 1}`;
+    const communityId = buildCommunityId(labelSeed, communityIndex);
     communities.push({
       id: communityId,
       label: labelSeed,
@@ -1682,6 +1699,7 @@ function deriveGraphMetrics(
     for (const memberId of memberIds) {
       communityMap.set(memberId, communityId);
     }
+    communityIndex++;
   }
 
   const degreeMap = new Map<string, number>();

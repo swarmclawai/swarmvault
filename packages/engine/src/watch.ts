@@ -63,15 +63,40 @@ const CODE_EXTENSIONS = new Set([
   ".R"
 ]);
 
+const FILE_CHANGE_RE = /^(?:add|change|unlink):(.+)$/;
+
 function isCodeOnlyChange(reasons: Set<string>): boolean {
   for (const reason of reasons) {
-    const match = reason.match(/^(?:add|change|unlink):(.+)$/);
-    if (!match) continue;
-    const filePath = match[1];
-    const ext = path.extname(filePath).toLowerCase();
+    const match = reason.match(FILE_CHANGE_RE);
+    if (!match) return false;
+    const ext = path.extname(match[1]).toLowerCase();
     if (!ext || !CODE_EXTENSIONS.has(ext)) return false;
   }
   return reasons.size > 0;
+}
+
+function hasNonCodeChanges(reasons: Set<string>): boolean {
+  for (const reason of reasons) {
+    const match = reason.match(FILE_CHANGE_RE);
+    if (!match) return true;
+    const ext = path.extname(match[1]).toLowerCase();
+    if (!ext || !CODE_EXTENSIONS.has(ext)) return true;
+  }
+  return false;
+}
+
+function collectNonCodePaths(reasons: Set<string>): string[] {
+  const result: string[] = [];
+  for (const reason of reasons) {
+    const match = reason.match(FILE_CHANGE_RE);
+    if (!match) {
+      result.push(reason);
+      continue;
+    }
+    const ext = path.extname(match[1]).toLowerCase();
+    if (!ext || !CODE_EXTENSIONS.has(ext)) result.push(match[1]);
+  }
+  return result;
 }
 
 type WatchCycleResult = {
@@ -178,7 +203,7 @@ export async function runWatchCycle(rootDir: string, options: WatchOptions = {})
   };
 
   try {
-    result = await performWatchCycle(rootDir, paths, options);
+    result = await performWatchCycle(rootDir, paths, options, options.codeOnly ?? false);
     return result;
   } catch (caught) {
     success = false;
@@ -342,11 +367,18 @@ export async function watchVault(rootDir: string, options: WatchOptions = {}): P
     pending = false;
     running = true;
     const startedAt = new Date();
-    const codeOnlyChange = isCodeOnlyChange(reasons);
+    const detectedCodeOnly = isCodeOnlyChange(reasons);
+    const hasDeferredNonCode = !detectedCodeOnly && hasNonCodeChanges(reasons);
+    const codeOnlyChange = options.codeOnly || detectedCodeOnly || hasDeferredNonCode;
     const runReasons = [...reasons];
     reasons.clear();
 
-    if (codeOnlyChange) {
+    if (hasDeferredNonCode) {
+      const nonCodePaths = collectNonCodePaths(new Set(runReasons));
+      process.stderr.write(
+        `[swarmvault watch] Non-code changes detected (${nonCodePaths.length} file(s)) — run \`swarmvault compile\` to include LLM re-analysis.\n`
+      );
+    } else if (codeOnlyChange) {
       process.stderr.write("[swarmvault watch] Code-only changes detected — skipping LLM re-analysis.\n");
     }
 
