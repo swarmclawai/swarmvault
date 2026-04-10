@@ -114,7 +114,8 @@ const vaultProfileConfigSchema = z.object({
   dashboardPack: vaultDashboardPackSchema.default("default"),
   guidedSessionMode: guidedSessionModeSchema.default("insights_only"),
   dataviewBlocks: z.boolean().default(false),
-  guidedIngestDefault: z.boolean().default(false)
+  guidedIngestDefault: z.boolean().default(false),
+  deepLintDefault: z.boolean().default(false)
 });
 
 /**
@@ -157,7 +158,8 @@ const vaultConfigSchema = z.object({
     dashboardPack: "default",
     guidedSessionMode: "insights_only",
     dataviewBlocks: false,
-    guidedIngestDefault: false
+    guidedIngestDefault: false,
+    deepLintDefault: false
   }),
   projects: z
     .record(
@@ -235,7 +237,8 @@ export function defaultVaultProfileConfig(): VaultProfileConfig {
     dashboardPack: "default",
     guidedSessionMode: "insights_only",
     dataviewBlocks: false,
-    guidedIngestDefault: false
+    guidedIngestDefault: false,
+    deepLintDefault: false
   };
 }
 
@@ -245,7 +248,8 @@ export function personalResearchProfileConfig(): VaultProfileConfig {
     dashboardPack: "reader",
     guidedSessionMode: "canonical_review",
     dataviewBlocks: true,
-    guidedIngestDefault: true
+    guidedIngestDefault: true,
+    deepLintDefault: true
   };
 }
 
@@ -257,7 +261,8 @@ export function normalizeVaultProfileConfig(profile?: Partial<VaultProfileConfig
     dashboardPack: profile?.dashboardPack ?? inferDashboardPackFromPresets(presets),
     guidedSessionMode: profile?.guidedSessionMode ?? inferGuidedSessionModeFromPresets(presets),
     dataviewBlocks: profile?.dataviewBlocks ?? presets.length > 0,
-    guidedIngestDefault: profile?.guidedIngestDefault ?? false
+    guidedIngestDefault: profile?.guidedIngestDefault ?? false,
+    deepLintDefault: profile?.deepLintDefault ?? false
   };
 }
 

@@ -70,7 +70,7 @@ Create a workspace with:
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
-`--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` starter profile also sets `profile.guidedIngestDefault: true`, so guided ingest/source flows are on by default until you override them with `--no-guide`.
+`--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` starter profile also sets `profile.guidedIngestDefault: true` and `profile.deepLintDefault: true`, so guided ingest/source and lint flows are on by default until you override them with `--no-guide` or `--no-deep`.
 
 ### `swarmvault source add|list|reload|review|guide|session|delete`
 
@@ -225,7 +225,7 @@ Each step:
 
 The command also writes a hub page linking the root question, saved step pages, and generated follow-up questions.
 
-### `swarmvault lint [--deep] [--web] [--conflicts]`
+### `swarmvault lint [--deep] [--no-deep] [--web] [--conflicts]`
 
 Run anti-drift and vault health checks such as stale pages, missing graph artifacts, contradiction findings, and other structural issues.
 
@@ -238,7 +238,9 @@ Run anti-drift and vault health checks such as stale pages, missing graph artifa
 - `candidate_page`
 - `follow_up_question`
 
-`--web` can only be used with `--deep`. It enriches deep-lint findings with external evidence snippets and URLs from a configured web-search provider.
+Set `profile.deepLintDefault: true` when deep lint should be the default for `swarmvault lint`, and use `--no-deep` when one run should stay structural only.
+
+`--web` can only be used when deep lint is enabled, either explicitly with `--deep` or through `profile.deepLintDefault`. It enriches deep-lint findings with external evidence snippets and URLs from a configured web-search provider.
 
 `--conflicts` filters the results down to contradiction-focused findings so you can audit conflicting claims without the rest of the lint output.
 

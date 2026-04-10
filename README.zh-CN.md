@@ -80,7 +80,7 @@ swarmvault graph push neo4j --dry-run
 
 对于非常大的图，`swarmvault graph serve` 和 `swarmvault graph export --html` 会自动进入 overview mode。若你仍想强制渲染完整画布，请添加 `--full`。
 
-`swarmvault init --profile` 支持 `default`、`personal-research`，也支持 `reader,timeline` 这种逗号分隔的 preset 组合。若要自定义知识库行为，请直接编辑 `swarmvault.config.json` 里的 `profile` 配置块，并把 `swarmvault.schema.md` 继续当作人工维护的意图层。
+`swarmvault init --profile` 支持 `default`、`personal-research`，也支持 `reader,timeline` 这种逗号分隔的 preset 组合。`personal-research` 起步 profile 会同时开启 `profile.guidedIngestDefault` 和 `profile.deepLintDefault`，所以 ingest/source 与 lint 默认都会走更强的路径，除非你显式传入 `--no-guide` 或 `--no-deep`。若要自定义知识库行为，请直接编辑 `swarmvault.config.json` 里的 `profile` 配置块，并把 `swarmvault.schema.md` 继续当作人工维护的意图层。
 
 <!-- readme-section:provider-setup -->
 ## 可选：添加模型提供方
@@ -244,9 +244,11 @@ clawhub install swarmvault
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
-**可配置 profile** - 通过 `swarmvault.config.json` 中的 `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault` 和 `profile.dataviewBlocks` 组合出自己的知识库模式，而不是等待新的硬编码产品模式。`personal-research` 只是一个起步别名。
+**可配置 profile** - 通过 `swarmvault.config.json` 中的 `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.deepLintDefault` 和 `profile.dataviewBlocks` 组合出自己的知识库模式，而不是等待新的硬编码产品模式。`personal-research` 只是一个起步别名。
 
 **引导式 session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>` 和 `source session <id>` 会创建可恢复的 source session，写入 `wiki/outputs/source-sessions/`，并在你接受之前阶段化 source review、source guide，以及基于 profile 配置流向 canonical 页面或 `wiki/insights/` 的更新提案。在 `swarmvault.config.json` 中设置 `profile.guidedIngestDefault: true` 可以让 ingest 和 source 命令默认使用引导式模式；用 `--no-guide` 覆盖。
+
+**deep lint 默认值** - 在 `swarmvault.config.json` 中设置 `profile.deepLintDefault: true`，可以让 `swarmvault lint` 默认包含 LLM 驱动的 advisory deep lint；如果某一次只想运行结构性检查，用 `--no-deep` 覆盖即可。
 
 **知识仪表盘** - `wiki/dashboards/` 会生成 recent sources、reading log、timeline、source sessions、source guides、research map、contradictions 和 open questions 页面。默认先保证普通 Markdown 可读；当 `profile.dataviewBlocks` 打开时，会额外附加适合 Obsidian Dataview 的查询块。
 

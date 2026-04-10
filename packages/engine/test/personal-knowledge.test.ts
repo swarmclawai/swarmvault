@@ -132,7 +132,7 @@ afterEach(async () => {
 });
 
 describe("personal knowledge workflows", () => {
-  it("initializes a personal-research profile with guided-ingest starter artifacts", async () => {
+  it("initializes a personal-research profile with guided-ingest and deep-lint starter defaults", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir, { profile: "personal-research" });
 
@@ -143,6 +143,7 @@ describe("personal knowledge workflows", () => {
         guidedSessionMode?: string;
         dataviewBlocks?: boolean;
         guidedIngestDefault?: boolean;
+        deepLintDefault?: boolean;
       };
     };
     expect(config.profile?.presets).toEqual(["reader", "timeline", "thesis"]);
@@ -150,6 +151,7 @@ describe("personal knowledge workflows", () => {
     expect(config.profile?.guidedSessionMode).toBe("canonical_review");
     expect(config.profile?.dataviewBlocks).toBe(true);
     expect(config.profile?.guidedIngestDefault).toBe(true);
+    expect(config.profile?.deepLintDefault).toBe(true);
 
     const schema = await fs.readFile(path.join(rootDir, "swarmvault.schema.md"), "utf8");
     expect(schema).toContain("one-source-at-a-time guided ingest");
@@ -167,7 +169,7 @@ describe("personal knowledge workflows", () => {
     expect(playbook).toContain("Active profile presets");
   });
 
-  it("supports composed profile presets and dataview-friendly dashboards", async () => {
+  it("supports composed profile presets, dataview dashboards, and explicit lint defaults", async () => {
     const rootDir = await createTempWorkspace();
     const researchDir = path.join(rootDir, "research");
     await fs.mkdir(researchDir, { recursive: true });
@@ -181,6 +183,7 @@ describe("personal knowledge workflows", () => {
         guidedSessionMode?: string;
         dataviewBlocks?: boolean;
         guidedIngestDefault?: boolean;
+        deepLintDefault?: boolean;
       };
     };
     expect(config.profile?.presets).toEqual(["reader", "timeline"]);
@@ -188,6 +191,7 @@ describe("personal knowledge workflows", () => {
     expect(config.profile?.guidedSessionMode).toBe("canonical_review");
     expect(config.profile?.dataviewBlocks).toBe(true);
     expect(config.profile?.guidedIngestDefault).toBe(false);
+    expect(config.profile?.deepLintDefault).toBe(false);
 
     await ingestDirectory(rootDir, researchDir, { repoRoot: researchDir });
     await compileVault(rootDir);

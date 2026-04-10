@@ -80,7 +80,7 @@ swarmvault graph push neo4j --dry-run
 
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you want the entire canvas rendered anyway.
 
-`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For custom vault behavior, edit the `profile` block in `swarmvault.config.json` and keep `swarmvault.schema.md` as the human-written intent layer.
+`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. The `personal-research` starter profile turns on both `profile.guidedIngestDefault` and `profile.deepLintDefault`, so ingest/source and lint flows start in the stronger path unless you pass `--no-guide` or `--no-deep`. For custom vault behavior, edit the `profile` block in `swarmvault.config.json` and keep `swarmvault.schema.md` as the human-written intent layer.
 
 <!-- readme-section:provider-setup -->
 ## Optional: Add a Model Provider
@@ -248,9 +248,11 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 
-**Configurable profiles** - compose vault behavior with `profile.presets`, `profile.dashboardPack`, `profile.guidedSessionMode`, `profile.guidedIngestDefault`, and `profile.dataviewBlocks` in `swarmvault.config.json` instead of waiting for hardcoded product modes. `personal-research` is just a starter alias.
+**Configurable profiles** - compose vault behavior with `profile.presets`, `profile.dashboardPack`, `profile.guidedSessionMode`, `profile.guidedIngestDefault`, `profile.deepLintDefault`, and `profile.dataviewBlocks` in `swarmvault.config.json` instead of waiting for hardcoded product modes. `personal-research` is just a starter alias.
 
 **Guided sessions** - `ingest --guide`, `source add --guide`, `source reload --guide`, `source guide <id>`, and `source session <id>` create resumable source sessions under `wiki/outputs/source-sessions/`, stage source reviews and source guides, and route approval-bundled updates either to canonical source/concept/entity pages or to `wiki/insights/`, depending on the configured guided-session mode. Set `profile.guidedIngestDefault: true` in `swarmvault.config.json` to make guided mode the default for ingest and source commands; use `--no-guide` to override.
+
+**Deep lint defaults** - set `profile.deepLintDefault: true` in `swarmvault.config.json` to make `swarmvault lint` include the LLM-powered advisory pass by default. Use `--no-deep` when you want one structural-only lint run without changing the profile.
 
 **Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source sessions, source guides, a research map, contradictions, and open questions. The pages work as plain markdown first, and `profile.dataviewBlocks` can append Dataview blocks when you want a more Obsidian-native view.
 

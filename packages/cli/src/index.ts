@@ -67,9 +67,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.2";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.21";
   } catch {
-    return "0.7.2";
+    return "0.7.21";
   }
 }
 
@@ -774,12 +774,15 @@ program
 program
   .command("lint")
   .description("Run anti-drift and wiki-health checks.")
-  .option("--deep", "Run LLM-powered advisory lint", false)
+  .option("--deep", "Run LLM-powered advisory lint (default: from config)")
+  .option("--no-deep", "Skip deep lint even if enabled in config")
   .option("--web", "Augment deep lint with configured web search", false)
   .option("--conflicts", "Filter to contradiction findings only", false)
   .action(async (options: { deep?: boolean; web?: boolean; conflicts?: boolean }) => {
+    const lintConfig = await loadVaultConfig(process.cwd()).catch(() => null);
+    const deepEnabled = options.deep ?? lintConfig?.config.profile.deepLintDefault ?? false;
     const findings = await lintVault(process.cwd(), {
-      deep: options.deep ?? false,
+      deep: deepEnabled,
       web: options.web ?? false,
       conflicts: options.conflicts ?? false
     });

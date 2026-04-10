@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.21
+
+- Added `profile.deepLintDefault` so vault profiles can make `swarmvault lint` run the advisory deep-lint pass by default, while `--no-deep` still forces a structural-only lint run when needed
+- Updated the CLI, README surfaces, package docs, skill docs, and website configuration/lint docs so the new deep-lint default behavior is documented alongside the existing guided-ingest profile defaults
+
 ## 0.7.2
 
 - Added a standalone `templates/llm-wiki-schema.md` starter so people can begin with the LLM Wiki pattern and the raw/wiki/schema three-layer architecture before installing the full CLI

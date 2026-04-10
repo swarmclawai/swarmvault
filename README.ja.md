@@ -80,7 +80,7 @@ swarmvault graph push neo4j --dry-run
 
 とても大きなグラフでは、`swarmvault graph serve` と `swarmvault graph export --html` は自動で overview mode で始まります。全面表示したい場合は `--full` を付けてください。
 
-`swarmvault init --profile` は `default`、`personal-research`、そして `reader,timeline` のようなカンマ区切り preset list を受け付けます。独自のボルト挙動にしたい場合は `swarmvault.config.json` の `profile` ブロックを編集し、`swarmvault.schema.md` は人間が書く意図レイヤーとして使い続けてください。
+`swarmvault init --profile` は `default`、`personal-research`、そして `reader,timeline` のようなカンマ区切り preset list を受け付けます。`personal-research` の starter profile は `profile.guidedIngestDefault` と `profile.deepLintDefault` を両方有効にするので、ingest/source と lint は `--no-guide` や `--no-deep` を付けない限り強いパスで始まります。独自のボルト挙動にしたい場合は `swarmvault.config.json` の `profile` ブロックを編集し、`swarmvault.schema.md` は人間が書く意図レイヤーとして使い続けてください。
 
 <!-- readme-section:provider-setup -->
 ## 任意: モデルプロバイダーを追加
@@ -244,9 +244,11 @@ clawhub install swarmvault
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
-**設定可能な profile** - `swarmvault.config.json` の `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.dataviewBlocks` を組み合わせて、自分向けの vault mode を作れます。`personal-research` はあくまで starter alias です。
+**設定可能な profile** - `swarmvault.config.json` の `profile.presets`、`profile.dashboardPack`、`profile.guidedSessionMode`、`profile.guidedIngestDefault`、`profile.deepLintDefault`、`profile.dataviewBlocks` を組み合わせて、自分向けの vault mode を作れます。`personal-research` はあくまで starter alias です。
 
 **ガイド付き session** - `ingest --guide`、`source add --guide`、`source reload --guide`、`source guide <id>`、`source session <id>` は再開可能な source session を作成し、`wiki/outputs/source-sessions/` に残しながら、source review、source guide、そして profile 設定に応じて canonical page あるいは `wiki/insights/` へ向かう更新案を受け入れ前に段階化します。`swarmvault.config.json` で `profile.guidedIngestDefault: true` を設定すると、ingest と source コマンドでガイド付きモードがデフォルトになります。`--no-guide` でオーバーライドできます。
+
+**deep lint の既定値** - `swarmvault.config.json` で `profile.deepLintDefault: true` を設定すると、`swarmvault lint` は LLM ベースの advisory deep lint を既定で含むようになります。特定の実行だけ構造チェックに戻したい場合は `--no-deep` を使ってください。
 
 **知識ダッシュボード** - `wiki/dashboards/` には recent sources、reading log、timeline、source sessions、source guides、research map、contradictions、open questions が出力されます。まず plain markdown として読めることを優先し、`profile.dataviewBlocks` を有効にすると Obsidian Dataview 向けのクエリも追加されます。
 

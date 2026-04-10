@@ -212,6 +212,7 @@ export interface VaultProfileConfig {
   guidedSessionMode: GuidedSessionMode;
   dataviewBlocks: boolean;
   guidedIngestDefault: boolean;
+  deepLintDefault: boolean;
 }
 
 export interface VaultConfig {

@@ -62,7 +62,7 @@ For very large graphs, `swarmvault graph serve` and `swarmvault graph export --h
 
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom.
 
-`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For a custom vault style, edit the `profile` block in `swarmvault.config.json` directly; `swarmvault.schema.md` stays the human-written intent layer. The `personal-research` starter profile also enables `profile.guidedIngestDefault`, so guided ingest/source flows are on by default until you opt out with `--no-guide`.
+`swarmvault init --profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For a custom vault style, edit the `profile` block in `swarmvault.config.json` directly; `swarmvault.schema.md` stays the human-written intent layer. The `personal-research` starter profile also enables `profile.guidedIngestDefault` and `profile.deepLintDefault`, so guided ingest/source and lint flows are on by default until you opt out with `--no-guide` or `--no-deep`.
 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
 
@@ -92,7 +92,7 @@ The published ClawHub package is intentionally text-only in this release.
 5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when you want the stronger guided-session workflow. Set `profile.guidedIngestDefault: true` when guided mode should be the default for ingest/source commands, and use `--no-guide` to force the lighter path for a specific run. Profiles using `guidedSessionMode: "canonical_review"` stage approval-queued canonical page edits; `insights_only` profiles keep exploratory synthesis under `wiki/insights/`.
 6. Compile with `swarmvault compile` or `swarmvault compile --approve`.
 7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search.
-8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable.
+8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
 9. Use `swarmvault graph serve`, `swarmvault graph export`, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
 ## What SwarmVault Writes

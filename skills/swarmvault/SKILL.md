@@ -1,7 +1,7 @@
 ---
 name: swarmvault
 description: "Use SwarmVault when the user needs a local-first knowledge vault that writes durable markdown, graph, search, dashboard, review, and MCP artifacts to disk from books, notes, transcripts, exports, datasets, slide decks, files, URLs, code, and recurring source workflows."
-version: "0.7.2"
+version: "0.7.21"
 metadata: '{"openclaw":{"requires":{"anyBins":["swarmvault","vault"]},"install":[{"id":"node","kind":"node","package":"@swarmvaultai/cli","bins":["swarmvault","vault"],"label":"Install SwarmVault CLI (npm)"}],"emoji":"🗃️","homepage":"https://www.swarmvault.ai/docs"}}'
 ---
 
@@ -30,7 +30,7 @@ For onboarding, examples, command references, or troubleshooting, read the bundl
 8. Resolve staged work with `swarmvault review list|show|accept|reject` and `swarmvault candidate list|promote|archive`.
 9. Ask questions with `swarmvault query "<question>"`. It saves durable answers into `wiki/outputs/` by default; add `--no-save` only for ephemeral checks.
 10. Use `swarmvault explore "<question>" --steps <n>` for save-first multi-step research loops, or `--format report|slides|chart|image` when the artifact should be presentation-oriented.
-11. Run `swarmvault lint` whenever the schema changed, artifacts look stale, or compile/query results drift.
+11. Run `swarmvault lint` whenever the schema changed, artifacts look stale, or compile/query results drift. Set `profile.deepLintDefault: true` in `swarmvault.config.json` when the advisory deep-lint pass should be the default, and use `--no-deep` when you need a structural-only run.
 12. Use `swarmvault mcp` when another agent or tool should browse, search, and query the vault through MCP.
 13. Use `swarmvault graph serve` or `swarmvault graph export --html <output>` when graph inspection or sharing will help.
 
