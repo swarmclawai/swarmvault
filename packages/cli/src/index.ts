@@ -67,9 +67,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.1";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.2";
   } catch {
-    return "0.7.1";
+    return "0.7.2";
   }
 }
 
@@ -267,7 +267,8 @@ program
   .description("Ingest a local file path, directory path, or URL into the raw SwarmVault workspace.")
   .argument("<input>", "Local file path, directory path, or URL")
   .option("--review", "Stage a source review artifact after ingest and compile", false)
-  .option("--guide", "Stage a guided source integration bundle after ingest and compile", false)
+  .option("--guide", "Stage a guided source integration bundle after ingest and compile (default: from config)")
+  .option("--no-guide", "Skip guided mode even if enabled in config")
   .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
   .option("--include-assets", "Download remote image assets when ingesting URLs", true)
   .option("--no-include-assets", "Skip downloading remote image assets when ingesting URLs")
@@ -300,6 +301,8 @@ program
       }
     ) => {
       const guideAnswers = readGuideAnswersFile(options.answersFile);
+      const vaultConfig = await loadVaultConfig(process.cwd()).catch(() => null);
+      const guideEnabled = options.guide ?? vaultConfig?.config.profile.guidedIngestDefault ?? false;
       const maxAssetSize =
         typeof options.maxAssetSize === "string" && options.maxAssetSize.trim()
           ? parsePositiveInt(options.maxAssetSize, 0) || undefined
@@ -332,7 +335,7 @@ program
         : null;
       if (directoryResult) {
         const scope =
-          options.review || options.guide
+          options.review || guideEnabled
             ? await (async () => {
                 const pathModule = await import("node:path");
                 const absoluteInput = pathModule.resolve(process.cwd(), input);
@@ -357,14 +360,14 @@ program
             : undefined;
         const shouldStage = Boolean(scope && (directoryResult.imported.length || directoryResult.updated.length));
         const review =
-          shouldStage && options.review && !options.guide
+          shouldStage && options.review && !guideEnabled
             ? await (async () => {
                 await compileVault(process.cwd(), {});
                 return await reviewSourceScope(process.cwd(), scope!);
               })()
             : undefined;
         const guide =
-          shouldStage && options.guide
+          shouldStage && guideEnabled
             ? await (async () => {
                 await compileVault(process.cwd(), {});
                 return await guideSourceScope(process.cwd(), scope!, { answers: guideAnswers });
@@ -399,14 +402,14 @@ program
       const ingest = await ingestInputDetailed(process.cwd(), input, commonOptions);
       const scope = sourceScopeFromManifests(input, [...ingest.created, ...ingest.updated, ...ingest.unchanged]);
       const review =
-        options.review && !options.guide && scope && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
+        options.review && !guideEnabled && scope && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
           ? await (async () => {
               await compileVault(process.cwd(), {});
               return await reviewSourceScope(process.cwd(), scope);
             })()
           : undefined;
       const guide =
-        options.guide && scope && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
+        guideEnabled && scope && (ingest.created.length || ingest.updated.length || ingest.unchanged.length)
           ? await (async () => {
               await compileVault(process.cwd(), {});
               return await guideSourceScope(process.cwd(), scope, { answers: guideAnswers });
@@ -465,7 +468,8 @@ source
   .option("--no-compile", "Register and sync without compiling the vault")
   .option("--no-brief", "Skip source brief generation after sync")
   .option("--review", "Stage a source review artifact after sync and compile", false)
-  .option("--guide", "Stage a guided source integration bundle after sync and compile", false)
+  .option("--guide", "Stage a guided source integration bundle after sync and compile (default: from config)")
+  .option("--no-guide", "Skip guided mode even if enabled in config")
   .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
@@ -483,11 +487,13 @@ source
       }
     ) => {
       const guideAnswers = readGuideAnswersFile(options.answersFile);
+      const addConfig = await loadVaultConfig(process.cwd()).catch(() => null);
+      const guideEnabled = options.guide ?? addConfig?.config.profile.guidedIngestDefault ?? false;
       const result = await addManagedSource(process.cwd(), input, {
         compile: options.compile,
         brief: options.brief,
         review: options.review,
-        guide: options.guide,
+        guide: guideEnabled,
         guideAnswers,
         maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
         maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
@@ -539,7 +545,8 @@ source
   .option("--no-compile", "Re-sync without compiling the vault")
   .option("--no-brief", "Skip source brief generation after sync")
   .option("--review", "Stage a source review artifact after sync and compile", false)
-  .option("--guide", "Stage a guided source integration bundle after sync and compile", false)
+  .option("--guide", "Stage a guided source integration bundle after sync and compile (default: from config)")
+  .option("--no-guide", "Skip guided mode even if enabled in config")
   .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
@@ -558,13 +565,15 @@ source
       }
     ) => {
       const guideAnswers = readGuideAnswersFile(options.answersFile);
+      const reloadConfig = await loadVaultConfig(process.cwd()).catch(() => null);
+      const guideEnabled = options.guide ?? reloadConfig?.config.profile.guidedIngestDefault ?? false;
       const result = await reloadManagedSources(process.cwd(), {
         id,
         all: options.all ?? false,
         compile: options.compile,
         brief: options.brief,
         review: options.review,
-        guide: options.guide,
+        guide: guideEnabled,
         guideAnswers,
         maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
         maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined

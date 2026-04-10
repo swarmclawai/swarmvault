@@ -70,7 +70,7 @@ Create a workspace with:
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
 
-`--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`.
+`--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` starter profile also sets `profile.guidedIngestDefault: true`, so guided ingest/source flows are on by default until you override them with `--no-guide`.
 
 ### `swarmvault source add|list|reload|review|guide|session|delete`
 
@@ -79,6 +79,7 @@ Manage recurring source roots through a registry-backed workflow.
 - `source add <input>` supports local files, local directories, public GitHub repo root URLs such as `https://github.com/karpathy/micrograd`, and docs/wiki/help/reference/tutorial hubs
 - by default `source add` registers the source, syncs it into the vault, runs one compile, and writes a source brief to `wiki/outputs/source-briefs/<source-id>.md`
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
+- set `profile.guidedIngestDefault: true` when guided mode should be the default for `source add` and `source reload`, and use `--no-guide` for individual light-path runs
 - `source list` shows every managed source with its kind, status, and current brief path
 - `source reload [id]` re-syncs one source, or use `--all` to refresh everything in the registry and compile once
 - `source review <id>` stages a lighter source-scoped review artifact
@@ -90,6 +91,7 @@ Useful flags:
 
 - `--all`
 - `--guide`
+- `--no-guide`
 - `--answers-file <path>`
 - `--no-compile`
 - `--no-brief`
@@ -109,12 +111,14 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - URL ingest still localizes remote image references by default
 - local file and archive ingest supports markdown, text, reStructuredText, HTML, PDF, Word, RTF, OpenDocument, EPUB, CSV/TSV, Excel, PowerPoint, Jupyter notebooks, BibTeX, Org-mode, AsciiDoc, transcripts, Slack exports, email, calendar, structured config/data, developer manifests, images, and code
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
+- set `profile.guidedIngestDefault: true` when guided mode should be the default for `ingest`, and use `--no-guide` to force a plain ingest for one run
 - code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, and Vue single-file components
 
 Useful flags:
 
 - `--repo-root <path>`
 - `--answers-file <path>`
+- `--no-guide`
 - `--include <glob...>`
 - `--exclude <glob...>`
 - `--max-files <n>`

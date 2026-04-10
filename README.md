@@ -8,15 +8,23 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**A local-first knowledge compiler for AI agents.** Turn books, articles, notes, transcripts, mail exports, calendars, datasets, slide decks, screenshots, URLs, and code into a persistent knowledge vault. Instead of losing work inside chat history, you get a markdown wiki, a knowledge graph, local search, dashboards, and reviewable artifacts that stay on disk.
+**A local-first knowledge compiler for AI agents**, built on the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern. Most "chat with your docs" tools answer a question and throw away the work. SwarmVault keeps a **durable wiki** between you and raw sources — the LLM does the bookkeeping, you do the thinking.
 
 Documentation on the website is currently English-first. If wording drifts between translations, [README.md](README.md) is the canonical source.
 
-Discord: https://discord.gg/sbEavS8cPV
+### Three-Layer Architecture
 
-> Most "chat with your docs" tools answer a question and throw away the work. SwarmVault treats the vault itself as the product. Every operation writes durable artifacts you can inspect, diff, and keep improving.
+SwarmVault uses three layers, following the pattern described by Andrej Karpathy:
 
-SwarmVault is inspired by Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) gist. The core pattern is the same: keep a durable wiki between you and raw sources. SwarmVault turns that pattern into a local toolchain with graph, search, review, automation, and optional model-backed synthesis.
+1. **Raw sources** (`raw/`) — your curated collection of source documents. Books, articles, papers, transcripts, code, images, datasets. These are immutable: SwarmVault reads from them but never modifies them.
+2. **The wiki** (`wiki/`) — LLM-generated and human-authored markdown. Source summaries, entity pages, concept pages, cross-references, dashboards, and outputs. The wiki is the persistent, compounding artifact.
+3. **The schema** (`swarmvault.schema.md`) — defines how the wiki is structured, what conventions to follow, and what matters in your domain. You and the LLM co-evolve this over time.
+
+> In the tradition of Vannevar Bush's Memex (1945) — a personal, curated knowledge store with associative trails between documents — SwarmVault treats the connections between sources as valuable as the sources themselves. The part Bush couldn't solve was who does the maintenance. The LLM handles that.
+
+Turn books, articles, notes, transcripts, mail exports, calendars, datasets, slide decks, screenshots, URLs, and code into a persistent knowledge vault with a knowledge graph, local search, dashboards, and reviewable artifacts that stay on disk. Use it for **personal knowledge management**, **research deep-dives**, **book companions**, **code documentation**, **business intelligence**, or any domain where you accumulate knowledge over time and want it organized rather than scattered.
+
+SwarmVault turns the LLM Wiki pattern into a local toolchain with graph navigation, search, review, automation, and optional model-backed synthesis. You can also start with just the [standalone schema template](templates/llm-wiki-schema.md) — zero install, any LLM agent — and graduate to the full CLI when you outgrow it.
 
 <!-- readme-section:install -->
 ## Install
@@ -163,7 +171,7 @@ swarmvault source session file-customer-call-srt-12345678
 swarmvault source reload --all
 ```
 
-`source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. Add `--guide` when you want a resumable guided session under `wiki/outputs/source-sessions/`, a staged source review and source guide, plus approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`. Profiles using `insights_only` keep the guided synthesis in `wiki/insights/` instead. It now works for recurring local files as well as directories, public repos, and docs hubs. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
+`source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. Add `--guide` when you want a resumable guided session under `wiki/outputs/source-sessions/`, a staged source review and source guide, plus approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`. Profiles using `insights_only` keep the guided synthesis in `wiki/insights/` instead. Set `profile.guidedIngestDefault: true` in `swarmvault.config.json` to make guided mode the default for `ingest`, `source add`, and `source reload`; use `--no-guide` when you need the lighter path for a specific run. It now works for recurring local files as well as directories, public repos, and docs hubs. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
 
 <!-- readme-section:agent-setup -->
 ## Agent and MCP Setup
@@ -240,9 +248,9 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 
-**Configurable profiles** - compose vault behavior with `profile.presets`, `profile.dashboardPack`, `profile.guidedSessionMode`, and `profile.dataviewBlocks` in `swarmvault.config.json` instead of waiting for hardcoded product modes. `personal-research` is just a starter alias.
+**Configurable profiles** - compose vault behavior with `profile.presets`, `profile.dashboardPack`, `profile.guidedSessionMode`, `profile.guidedIngestDefault`, and `profile.dataviewBlocks` in `swarmvault.config.json` instead of waiting for hardcoded product modes. `personal-research` is just a starter alias.
 
-**Guided sessions** - `ingest --guide`, `source add --guide`, `source reload --guide`, `source guide <id>`, and `source session <id>` create resumable source sessions under `wiki/outputs/source-sessions/`, stage source reviews and source guides, and route approval-bundled updates either to canonical source/concept/entity pages or to `wiki/insights/`, depending on the configured guided-session mode.
+**Guided sessions** - `ingest --guide`, `source add --guide`, `source reload --guide`, `source guide <id>`, and `source session <id>` create resumable source sessions under `wiki/outputs/source-sessions/`, stage source reviews and source guides, and route approval-bundled updates either to canonical source/concept/entity pages or to `wiki/insights/`, depending on the configured guided-session mode. Set `profile.guidedIngestDefault: true` in `swarmvault.config.json` to make guided mode the default for ingest and source commands; use `--no-guide` to override.
 
 **Knowledge dashboards** - `wiki/dashboards/` gives you recent sources, a reading log, a timeline, source sessions, source guides, a research map, contradictions, and open questions. The pages work as plain markdown first, and `profile.dataviewBlocks` can append Dataview blocks when you want a more Obsidian-native view.
 
@@ -287,6 +295,9 @@ Claude Code, OpenCode, Gemini CLI, and Copilot also support `--hook` for graph-f
 | code-repo | Repo ingest, module pages, graph reports, benchmarks | [`worked/code-repo/`](worked/code-repo/) |
 | capture | Research-aware `add` capture with normalized metadata | [`worked/capture/`](worked/capture/) |
 | mixed-corpus | Compile, review, save-first output loops | [`worked/mixed-corpus/`](worked/mixed-corpus/) |
+| book-reading | Chapter-by-chapter fan wiki with character and theme pages | [`worked/book-reading/`](worked/book-reading/) |
+| research-deep-dive | Papers and articles building an evolving thesis with contradictions | [`worked/research-deep-dive/`](worked/research-deep-dive/) |
+| personal-knowledge-base | Journal, health, podcasts — a personal Memex | [`worked/personal-knowledge-base/`](worked/personal-knowledge-base/) |
 
 Each folder has real input files and actual output so you can run it yourself and verify. See the [examples guide](https://www.swarmvault.ai/docs/getting-started/examples) for step-by-step walkthroughs.
 

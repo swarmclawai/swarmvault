@@ -137,12 +137,19 @@ describe("personal knowledge workflows", () => {
     await initVault(rootDir, { profile: "personal-research" });
 
     const config = JSON.parse(await fs.readFile(path.join(rootDir, "swarmvault.config.json"), "utf8")) as {
-      profile?: { presets?: string[]; dashboardPack?: string; guidedSessionMode?: string; dataviewBlocks?: boolean };
+      profile?: {
+        presets?: string[];
+        dashboardPack?: string;
+        guidedSessionMode?: string;
+        dataviewBlocks?: boolean;
+        guidedIngestDefault?: boolean;
+      };
     };
     expect(config.profile?.presets).toEqual(["reader", "timeline", "thesis"]);
     expect(config.profile?.dashboardPack).toBe("reader");
     expect(config.profile?.guidedSessionMode).toBe("canonical_review");
     expect(config.profile?.dataviewBlocks).toBe(true);
+    expect(config.profile?.guidedIngestDefault).toBe(true);
 
     const schema = await fs.readFile(path.join(rootDir, "swarmvault.schema.md"), "utf8");
     expect(schema).toContain("one-source-at-a-time guided ingest");
@@ -168,12 +175,19 @@ describe("personal knowledge workflows", () => {
 
     await initVault(rootDir, { profile: "reader,timeline" });
     const config = JSON.parse(await fs.readFile(path.join(rootDir, "swarmvault.config.json"), "utf8")) as {
-      profile?: { presets?: string[]; dashboardPack?: string; guidedSessionMode?: string; dataviewBlocks?: boolean };
+      profile?: {
+        presets?: string[];
+        dashboardPack?: string;
+        guidedSessionMode?: string;
+        dataviewBlocks?: boolean;
+        guidedIngestDefault?: boolean;
+      };
     };
     expect(config.profile?.presets).toEqual(["reader", "timeline"]);
     expect(config.profile?.dashboardPack).toBe("reader");
     expect(config.profile?.guidedSessionMode).toBe("canonical_review");
     expect(config.profile?.dataviewBlocks).toBe(true);
+    expect(config.profile?.guidedIngestDefault).toBe(false);
 
     await ingestDirectory(rootDir, researchDir, { repoRoot: researchDir });
     await compileVault(rootDir);
