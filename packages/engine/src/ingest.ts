@@ -37,6 +37,7 @@ import {
   extractStructuredData,
   extractTranscriptText,
   extractXlsxText,
+  extractYoutubeTranscript,
   isSlackExportArchive,
   isSlackExportDirectory
 } from "./extraction.js";
@@ -299,6 +300,12 @@ const IMAGE_EXTENSIONS = new Set([
 
 function isImagePath(filePath: string): boolean {
   return IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+const YOUTUBE_URL_PATTERN = /(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([\w-]{11})/i;
+
+function parseYoutubeVideoId(url: string): string | undefined {
+  return url.match(YOUTUBE_URL_PATTERN)?.[1];
 }
 
 function isStructuredTextMime(mimeType: string): boolean {
@@ -2560,6 +2567,31 @@ async function prepareFileInput(
 
 async function prepareUrlInputs(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput[]> {
   await validateUrlSafety(input);
+
+  const youtubeVideoId = parseYoutubeVideoId(input);
+  if (youtubeVideoId) {
+    const extracted = await extractYoutubeTranscript({ videoId: youtubeVideoId, url: input });
+    const title = extracted.title ?? `YouTube ${youtubeVideoId}`;
+    const extractedText = extracted.extractedText;
+    const payloadBytes = Buffer.from(extractedText ?? "", "utf8");
+
+    return [
+      finalizePreparedInput({
+        title,
+        originType: "url",
+        sourceKind: "youtube",
+        url: normalizeOriginUrl(input),
+        mimeType: "text/html",
+        storedExtension: ".md",
+        payloadBytes,
+        extractedText,
+        extractionArtifact: extracted.artifact,
+        extractionHash: buildExtractionHash(extractedText, extracted.artifact),
+        details: extracted.artifact.metadata
+      })
+    ];
+  }
+
   const response = await fetch(input);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${input}: ${response.status} ${response.statusText}`);
