@@ -91,6 +91,14 @@ Karpathy の [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9
 <!-- readme-section:install -->
 ## インストール
 
+### デスクトップアプリ（Node.js不要）
+
+macOS、Windows、Linux用のデスクトップアプリをダウンロード——ランタイム内蔵:
+
+**[デスクトップアプリをダウンロード](https://www.swarmvault.ai/download)** | [GitHub Releases](https://github.com/swarmclawai/swarmvault-desktop/releases)
+
+### CLI
+
 SwarmVault には Node `>=24` が必要です。
 
 ```bash

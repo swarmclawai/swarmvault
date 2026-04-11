@@ -91,6 +91,14 @@ If you liked Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf
 <!-- readme-section:install -->
 ## Install
 
+### Desktop App (no Node.js required)
+
+Download the desktop app for macOS, Windows, or Linux — bundles its own runtime:
+
+**[Download Desktop App](https://www.swarmvault.ai/download)** | [GitHub Releases](https://github.com/swarmclawai/swarmvault-desktop/releases)
+
+### CLI
+
 SwarmVault requires Node `>=24`.
 
 ```bash
