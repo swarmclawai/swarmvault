@@ -148,7 +148,8 @@ const vaultConfigSchema = z.object({
     lintProvider: z.string().min(1),
     visionProvider: z.string().min(1),
     imageProvider: z.string().min(1).optional(),
-    embeddingProvider: z.string().min(1).optional()
+    embeddingProvider: z.string().min(1).optional(),
+    audioProvider: z.string().min(1).optional()
   }),
   viewer: z.object({
     port: z.number().int().positive()
@@ -327,7 +328,8 @@ export function defaultVaultConfig(profile: VaultProfileConfig = defaultVaultPro
       queryProvider: "local",
       lintProvider: "local",
       visionProvider: "local",
-      imageProvider: "local"
+      imageProvider: "local",
+      audioProvider: undefined
     },
     viewer: {
       port: 4123
