@@ -15,6 +15,7 @@ import {
   createHtmlReadabilityExtractionArtifact,
   createPlainTextExtractionArtifact,
   extractAsciiDocText,
+  extractAudioTranscription,
   extractBibTeXText,
   extractCalendarEvents,
   extractCsvText,
@@ -269,6 +270,9 @@ function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLan
     filePath.toLowerCase().endsWith(".potm")
   ) {
     return "pptx";
+  }
+  if (mimeType.startsWith("audio/") || /\.(mp3|wav|m4a|ogg|flac|webm|aac|wma)$/i.test(filePath)) {
+    return "audio";
   }
   if (mimeType.startsWith("image/") || isImagePath(filePath)) {
     return "image";
@@ -1967,7 +1971,8 @@ function shouldDeferWatchSemanticRefresh(sourceKind: SourceManifest["sourceKind"
     sourceKind === "chat_export" ||
     sourceKind === "email" ||
     sourceKind === "calendar" ||
-    sourceKind === "image"
+    sourceKind === "image" ||
+    sourceKind === "audio"
   );
 }
 
@@ -2507,6 +2512,15 @@ async function prepareFileInputs(
     title = extracted.title?.trim() || title;
     extractedText = extracted.extractedText;
     extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "audio") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractAudioTranscription(rootDir, {
+      mimeType,
+      bytes: payloadBytes,
+      fileName: absoluteInput
+    });
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
   } else {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
   }
@@ -2775,6 +2789,14 @@ async function prepareUrlInputs(rootDir: string, input: string, options: Normali
         bytes: payloadBytes
       });
       title = extracted.title?.trim() || title;
+      extractedText = extracted.extractedText;
+      extractionArtifact = extracted.artifact;
+    } else if (sourceKind === "audio") {
+      const extracted = await extractAudioTranscription(rootDir, {
+        mimeType,
+        bytes: payloadBytes,
+        fileName: inputUrl.pathname
+      });
       extractedText = extracted.extractedText;
       extractionArtifact = extracted.artifact;
     }

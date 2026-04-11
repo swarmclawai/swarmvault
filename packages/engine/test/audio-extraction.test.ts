@@ -52,7 +52,7 @@ describe("OpenAiCompatibleProviderAdapter.transcribeAudio", () => {
     expect(result.language).toBe("en");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/audio/transcriptions");
     expect(init.method).toBe("POST");
     expect(init.body).toBeInstanceOf(FormData);

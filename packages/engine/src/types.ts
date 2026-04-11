@@ -261,6 +261,7 @@ export interface VaultConfig {
     visionProvider: string;
     imageProvider?: string;
     embeddingProvider?: string;
+    audioProvider?: string;
   };
   viewer: {
     port: number;
@@ -287,6 +288,9 @@ export interface VaultConfig {
   };
   graphSinks?: {
     neo4j?: Neo4jGraphSinkConfig;
+  };
+  graph?: {
+    communityResolution?: number;
   };
   webSearch?: {
     providers: Record<string, WebSearchProviderConfig>;

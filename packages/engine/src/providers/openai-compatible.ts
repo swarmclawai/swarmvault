@@ -269,7 +269,7 @@ export class OpenAiCompatibleProviderAdapter extends BaseProviderAdapter {
     const fileName = request.fileName ?? `audio.${extension}`;
 
     const formData = new FormData();
-    formData.append("file", new File([request.bytes], path.basename(fileName), { type: request.mimeType }));
+    formData.append("file", new File([new Uint8Array(request.bytes)], path.basename(fileName), { type: request.mimeType }));
     formData.append("model", this.model);
     formData.append("response_format", "verbose_json");
     if (request.language) {
