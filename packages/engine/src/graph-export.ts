@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import matter from "gray-matter";
 import { loadVaultConfig } from "./config.js";
 import {
   cypherStringLiteral,
@@ -14,7 +15,7 @@ import {
 } from "./graph-interchange.js";
 import { renderGraphReportHtml } from "./graph-report-html.js";
 import type { GraphArtifact, GraphExportFormat, GraphExportResult, GraphNode, GraphPage, GraphReportArtifact } from "./types.js";
-import { ensureDir, fileExists, readJsonFile } from "./utils.js";
+import { ensureDir, fileExists, readJsonFile, slugify } from "./utils.js";
 
 const NODE_COLORS: Record<string, string> = {
   source: "#f59e0b",
@@ -752,20 +753,31 @@ function deduplicateFileName(baseName: string, used: Set<string>): string {
   return name;
 }
 
-export async function exportObsidianVault(rootDir: string, outputDir: string): Promise<GraphExportResult> {
-  const graph = await loadGraph(rootDir);
-  const resolvedOutputDir = path.resolve(outputDir);
-  await ensureDir(resolvedOutputDir);
+function typePluralDir(nodeType: string): string {
+  const map: Record<string, string> = {
+    source: "sources",
+    module: "modules",
+    symbol: "symbols",
+    concept: "concepts",
+    entity: "entities",
+    rationale: "rationales"
+  };
+  return map[nodeType] ?? "other";
+}
 
-  const nodesById = graphNodeById(graph);
-  const communities = sortedCommunities(graph);
+function obsidianNodeSlug(node: GraphNode, pageById: Map<string, GraphPage>): string {
+  if (node.pageId) {
+    const page = pageById.get(node.pageId);
+    if (page) return path.basename(page.path, ".md");
+  }
+  return slugify(node.label);
+}
 
-  // Build adjacency: for each node, collect its edges with neighbor info
-  const adjacency = new Map<
-    string,
-    Array<{ neighborId: string; relation: string; evidenceClass: string; confidence: number; direction: "out" | "in" }>
-  >();
-  for (const edge of graph.edges) {
+type AdjacencyEntry = { neighborId: string; relation: string; evidenceClass: string; confidence: number; direction: "out" | "in" };
+
+function buildAdjacency(edges: GraphArtifact["edges"]): Map<string, AdjacencyEntry[]> {
+  const adjacency = new Map<string, AdjacencyEntry[]>();
+  for (const edge of edges) {
     if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
     if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
     adjacency.get(edge.source)!.push({
@@ -783,56 +795,204 @@ export async function exportObsidianVault(rootDir: string, outputDir: string): P
       direction: "in"
     });
   }
+  return adjacency;
+}
 
-  // Track used filenames and map node id -> filename
-  const usedFileNames = new Set<string>();
-  const nodeFileName = new Map<string, string>();
-  for (const node of [...graph.nodes].sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id))) {
-    const name = deduplicateFileName(safeFileName(node.label), usedFileNames);
-    nodeFileName.set(node.id, name);
+async function listFilesRecursive(dir: string, base = ""): Promise<string[]> {
+  const results: string[] = [];
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    const rel = base ? `${base}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      results.push(...(await listFilesRecursive(path.join(dir, entry.name), rel)));
+    } else {
+      results.push(rel);
+    }
+  }
+  return results;
+}
+
+function connectionsSection(
+  nodeIds: string[],
+  adjacency: Map<string, AdjacencyEntry[]>,
+  nodesById: Map<string, GraphNode>,
+  wikilinkTarget: Map<string, string>
+): string[] {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const nodeId of nodeIds) {
+    for (const entry of adjacency.get(nodeId) ?? []) {
+      const key = `${entry.neighborId}:${entry.relation}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const neighbor = nodesById.get(entry.neighborId);
+      if (!neighbor) continue;
+      const target = wikilinkTarget.get(entry.neighborId);
+      if (!target) continue;
+      lines.push(`- [[${target}|${neighbor.label}]] \u2014 ${entry.relation} (${entry.evidenceClass}, ${entry.confidence.toFixed(2)})`);
+    }
+  }
+  return lines;
+}
+
+export async function exportObsidianVault(rootDir: string, outputDir: string): Promise<GraphExportResult> {
+  const graph = await loadGraph(rootDir);
+  const { paths } = await loadVaultConfig(rootDir);
+  const resolvedOutputDir = path.resolve(outputDir);
+  await ensureDir(resolvedOutputDir);
+
+  const nodesById = graphNodeById(graph);
+  const pageById = graphPageById(graph);
+  const communities = sortedCommunities(graph);
+  const adjacency = buildAdjacency(graph.edges);
+
+  // Group nodes by their pageId
+  const nodesByPageId = new Map<string, GraphNode[]>();
+  for (const node of graph.nodes) {
+    if (node.pageId && pageById.has(node.pageId)) {
+      const list = nodesByPageId.get(node.pageId) ?? [];
+      list.push(node);
+      nodesByPageId.set(node.pageId, list);
+    }
+  }
+
+  // Build orphan node slug map (for nodes without a wiki page)
+  const orphanNodes = graph.nodes.filter((node) => !node.pageId || !pageById.has(node.pageId));
+  const usedOrphanSlugs = new Set<string>();
+  const orphanFilePath = new Map<string, string>();
+  for (const node of [...orphanNodes].sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id))) {
+    const slug = deduplicateFileName(obsidianNodeSlug(node, pageById), usedOrphanSlugs);
+    orphanFilePath.set(node.id, `graph/nodes/${typePluralDir(node.type)}/${slug}.md`);
+  }
+
+  // Build wikilink target map: node id -> wikilink path (without .md)
+  const wikilinkTarget = new Map<string, string>();
+  for (const node of graph.nodes) {
+    if (node.pageId) {
+      const page = pageById.get(node.pageId);
+      if (page) {
+        wikilinkTarget.set(node.id, page.path.replace(/\.md$/, ""));
+        continue;
+      }
+    }
+    const orphanPath = orphanFilePath.get(node.id);
+    if (orphanPath) {
+      wikilinkTarget.set(node.id, orphanPath.replace(/\.md$/, ""));
+    }
   }
 
   let fileCount = 0;
 
-  // Write node files
-  for (const node of graph.nodes) {
-    const fileName = nodeFileName.get(node.id)!;
-    const lines: string[] = [
-      "---",
-      `id: ${JSON.stringify(node.id)}`,
-      `type: ${JSON.stringify(node.type)}`,
-      `community: ${JSON.stringify(node.communityId ?? null)}`,
-      `confidence: ${node.confidence ?? null}`,
-      `source_class: ${JSON.stringify(node.sourceClass ?? null)}`,
-      `tags: ${JSON.stringify(node.tags ?? [])}`,
-      "---",
-      "",
-      `# ${node.label}`,
-      ""
-    ];
+  // Layer 1: Copy wiki pages with enriched frontmatter and graph connections
+  const wikiFiles = await listFilesRecursive(paths.wikiDir);
+  const pageByPath = new Map(graph.pages.map((p) => [p.path, p]));
 
-    const neighbors = adjacency.get(node.id) ?? [];
-    if (neighbors.length > 0) {
-      lines.push("## Connections", "");
-      for (const neighbor of neighbors) {
-        const neighborNode = nodesById.get(neighbor.neighborId);
-        if (!neighborNode) continue;
-        const neighborFile = nodeFileName.get(neighbor.neighborId) ?? safeFileName(neighborNode.label);
-        lines.push(`- [[${neighborFile}]] \u2014 ${neighbor.relation} (${neighbor.evidenceClass}, ${neighbor.confidence.toFixed(2)})`);
-      }
-      lines.push("");
+  for (const relPath of wikiFiles) {
+    if (!relPath.endsWith(".md")) continue;
+    const srcFile = path.join(paths.wikiDir, relPath);
+    const destFile = path.join(resolvedOutputDir, relPath);
+    await ensureDir(path.dirname(destFile));
+
+    let rawContent: string;
+    try {
+      rawContent = await fs.readFile(srcFile, "utf8");
+    } catch {
+      continue;
     }
 
-    await fs.writeFile(path.join(resolvedOutputDir, `${fileName}.md`), lines.join("\n"), "utf8");
+    // Find the graph page matching this wiki file
+    const matchingPage = pageByPath.get(relPath);
+    const pageNodes = matchingPage ? (nodesByPageId.get(matchingPage.id) ?? []) : [];
+
+    // Enrich frontmatter
+    const parsed = matter(rawContent);
+    const data = parsed.data as Record<string, unknown>;
+
+    if (pageNodes.length > 0) {
+      // Add graph community from primary node
+      const primaryNode = pageNodes[0];
+      if (primaryNode.communityId) {
+        data.graph_community = primaryNode.communityId;
+      }
+
+      // Add aliases: node labels that differ from the page title
+      const title = (data.title as string) ?? "";
+      const nodeAliases = pageNodes.map((n) => n.label).filter((label) => label.toLowerCase() !== title.toLowerCase());
+      const existingAliases: string[] = Array.isArray(data.aliases) ? (data.aliases as string[]) : [];
+      const mergedAliases = [...new Set([...existingAliases, ...nodeAliases])];
+      if (mergedAliases.length > 0) {
+        data.aliases = mergedAliases;
+      }
+    }
+
+    // Rebuild content with enriched frontmatter
+    let outputContent = matter.stringify(parsed.content, data);
+
+    // Append graph connections section
+    if (pageNodes.length > 0) {
+      const connLines = connectionsSection(
+        pageNodes.map((n) => n.id),
+        adjacency,
+        nodesById,
+        wikilinkTarget
+      );
+      if (connLines.length > 0) {
+        outputContent = `${outputContent.trimEnd()}\n\n## Graph Connections\n\n${connLines.join("\n")}\n`;
+      }
+    }
+
+    await fs.writeFile(destFile, outputContent, "utf8");
     fileCount++;
   }
 
-  // Write community files
+  // Layer 2: Create orphan node stubs
+  for (const node of orphanNodes) {
+    const relPath = orphanFilePath.get(node.id)!;
+    const destFile = path.join(resolvedOutputDir, relPath);
+    await ensureDir(path.dirname(destFile));
+
+    const slug = path.basename(relPath, ".md");
+    const aliases = node.label !== slug ? [node.label] : [];
+
+    const frontmatter: Record<string, unknown> = {
+      id: node.id,
+      type: node.type,
+      community: node.communityId ?? null,
+      confidence: node.confidence ?? null,
+      source_class: node.sourceClass ?? null,
+      tags: node.tags ?? []
+    };
+    if (aliases.length > 0) {
+      frontmatter.aliases = aliases;
+    }
+
+    const lines = [`# ${node.label}`, ""];
+    const connLines = connectionsSection([node.id], adjacency, nodesById, wikilinkTarget);
+    if (connLines.length > 0) {
+      lines.push("## Connections", "", ...connLines, "");
+    }
+
+    const content = matter.stringify(lines.join("\n"), frontmatter);
+    await fs.writeFile(destFile, content, "utf8");
+    fileCount++;
+  }
+
+  // Write overlay community files only for communities not already covered by wiki pages
   const usedCommunityFileNames = new Set<string>();
   for (const community of communities) {
+    // Skip if the wiki already has a page for this community (copied in Layer 1)
+    const wikiCommunityPage = graph.pages.find(
+      (p) => p.kind === "community_summary" && p.nodeIds.some((nid) => community.nodeIds.includes(nid))
+    );
+    if (wikiCommunityPage) continue;
+
     const memberNodes = community.nodeIds.map((id) => nodesById.get(id)).filter((n): n is GraphNode => Boolean(n));
 
-    // Compute cohesion: internal edges / max possible edges
     const memberIdSet = new Set(community.nodeIds);
     let internalEdges = 0;
     for (const edge of graph.edges) {
@@ -841,10 +1001,9 @@ export async function exportObsidianVault(rootDir: string, outputDir: string): P
       }
     }
     const n = memberNodes.length;
-    const maxPossible = n * (n - 1); // directed graph
+    const maxPossible = n * (n - 1);
     const cohesion = maxPossible > 0 ? internalEdges / maxPossible : 0;
 
-    // Find bridge nodes: nodes connected to nodes in other communities
     const bridgeNodes = memberNodes.filter((node) => {
       const neighbors = adjacency.get(node.id) ?? [];
       return neighbors.some((nb) => {
@@ -853,38 +1012,114 @@ export async function exportObsidianVault(rootDir: string, outputDir: string): P
       });
     });
 
-    const communityFileName = deduplicateFileName(`_Community_${safeFileName(community.label)}`, usedCommunityFileNames);
-    const lines: string[] = [
-      "---",
-      `id: ${JSON.stringify(community.id)}`,
-      `node_count: ${memberNodes.length}`,
-      `cohesion: ${cohesion.toFixed(4)}`,
-      "---",
-      "",
-      `# ${community.label}`,
-      "",
-      "## Members",
-      ""
-    ];
+    const communitySlug = deduplicateFileName(safeFileName(community.label), usedCommunityFileNames);
+    const destFile = path.join(resolvedOutputDir, "graph", "communities", `${communitySlug}.md`);
+    await ensureDir(path.dirname(destFile));
 
+    const lines: string[] = [`# ${community.label}`, "", "## Members", ""];
     for (const member of memberNodes) {
-      const memberFile = nodeFileName.get(member.id) ?? safeFileName(member.label);
-      lines.push(`- [[${memberFile}]]`);
+      const target = wikilinkTarget.get(member.id);
+      if (target) {
+        lines.push(`- [[${target}|${member.label}]]`);
+      } else {
+        lines.push(`- ${member.label}`);
+      }
     }
     lines.push("");
 
     if (bridgeNodes.length > 0) {
       lines.push("## Bridge Nodes", "");
       for (const bridge of bridgeNodes) {
-        const bridgeFile = nodeFileName.get(bridge.id) ?? safeFileName(bridge.label);
-        lines.push(`- [[${bridgeFile}]]`);
+        const target = wikilinkTarget.get(bridge.id);
+        if (target) {
+          lines.push(`- [[${target}|${bridge.label}]]`);
+        } else {
+          lines.push(`- ${bridge.label}`);
+        }
       }
       lines.push("");
     }
 
-    await fs.writeFile(path.join(resolvedOutputDir, `${communityFileName}.md`), lines.join("\n"), "utf8");
+    const frontmatter = {
+      id: community.id,
+      node_count: memberNodes.length,
+      cohesion: Number(cohesion.toFixed(4))
+    };
+    const content = matter.stringify(lines.join("\n"), frontmatter);
+    await fs.writeFile(destFile, content, "utf8");
     fileCount++;
   }
+
+  // Copy outputs/assets directory if it exists
+  const outputsAssetsDir = path.join(paths.wikiDir, "outputs", "assets");
+  try {
+    const assetFiles = await listFilesRecursive(outputsAssetsDir);
+    for (const relAsset of assetFiles) {
+      const src = path.join(outputsAssetsDir, relAsset);
+      const dest = path.join(resolvedOutputDir, "outputs", "assets", relAsset);
+      await ensureDir(path.dirname(dest));
+      await fs.copyFile(src, dest);
+      fileCount++;
+    }
+  } catch {
+    // No outputs/assets directory
+  }
+
+  // Copy raw/assets directory if it exists
+  try {
+    const rawAssetFiles = await listFilesRecursive(paths.rawAssetsDir);
+    for (const relAsset of rawAssetFiles) {
+      const src = path.join(paths.rawAssetsDir, relAsset);
+      const dest = path.join(resolvedOutputDir, "raw", "assets", relAsset);
+      await ensureDir(path.dirname(dest));
+      await fs.copyFile(src, dest);
+      fileCount++;
+    }
+  } catch {
+    // No raw/assets directory
+  }
+
+  // Write .obsidian config
+  const obsidianDir = path.join(resolvedOutputDir, ".obsidian");
+  await ensureDir(obsidianDir);
+  const projectIds = Object.keys(
+    graph.pages.reduce(
+      (acc, page) => {
+        for (const pid of page.projectIds) acc[pid] = true;
+        return acc;
+      },
+      {} as Record<string, boolean>
+    )
+  );
+  const colorGroups = projectIds.map((pid, index) => ({
+    query: `tag:#project/${pid}`,
+    color: ["#0ea5e9", "#22c55e", "#f59e0b", "#8b5cf6", "#fb7185", "#14b8a6"][index % 6]
+  }));
+
+  await fs.writeFile(
+    path.join(obsidianDir, "app.json"),
+    JSON.stringify(
+      { newFileLocation: "folder", newFileFolderPath: "outputs", attachmentFolderPath: "raw/assets", useMarkdownLinks: false },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(obsidianDir, "core-plugins.json"),
+    JSON.stringify(["file-explorer", "global-search", "graph", "backlink", "tag-pane", "page-preview", "outline"], null, 2),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(obsidianDir, "graph.json"),
+    JSON.stringify(
+      { colorGroups, "collapse-filter": false, search: "", showTags: true, showAttachments: false, showOrphans: true },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  fileCount += 3;
 
   return { format: "obsidian", outputPath: resolvedOutputDir, fileCount };
 }

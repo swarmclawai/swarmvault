@@ -4284,7 +4284,7 @@ function htmlCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
     }
 
     // Symbols: custom elements (tag name contains `-`) become class-kind symbols.
-    if (tagName && tagName.includes("-")) {
+    if (tagName?.includes("-")) {
       if (!seenSymbolNames.has(tagName)) {
         seenSymbolNames.add(tagName);
         draftSymbols.push({

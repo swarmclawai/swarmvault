@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
-import type { GuidedSourceSessionQuestion, SourceClass } from "@swarmvaultai/engine";
+import type { GraphArtifact, GuidedSourceSessionQuestion, SourceClass } from "@swarmvaultai/engine";
 import {
   acceptApproval,
   addInput,
@@ -22,6 +23,7 @@ import {
   exportObsidianVault,
   getGitHookStatus,
   getWatchStatus,
+  graphDiff,
   guideManagedSource,
   guideSourceScope,
   importInbox,
@@ -62,19 +64,21 @@ import { collectCliNotices, collectHeuristicProviderNotice } from "./notices.js"
 
 const program = new Command();
 const CLI_VERSION = readCliVersion();
+let activeCommand: Command | null = null;
 
 program
   .name("swarmvault")
   .description("SwarmVault is a local-first knowledge compiler with graph outputs and optional provider-backed workflows.")
   .version(CLI_VERSION)
+  .enablePositionalOptions()
   .option("--json", "Emit structured JSON output", false);
 
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.25";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.26";
   } catch {
-    return "0.7.25";
+    return "0.7.26";
   }
 }
 
@@ -117,7 +121,7 @@ function slugForCli(value: string): string {
 }
 
 function isJson(): boolean {
-  return program.opts().json === true;
+  return activeCommand?.opts().json === true || program.opts().json === true;
 }
 
 function emitJson(data: unknown): void {
@@ -838,7 +842,7 @@ program
     }
   });
 
-const graph = program.command("graph").description("Graph-related commands.");
+const graph = program.command("graph").description("Graph-related commands.").enablePositionalOptions();
 const graphPush = graph.command("push").description("Push the compiled graph into external sinks.");
 
 graphPush
@@ -1413,6 +1417,302 @@ program
   );
 
 program
+  .command("demo")
+  .description("Try SwarmVault with a bundled sample vault — zero config, zero API keys.")
+  .option("--port <port>", "Port for the graph viewer")
+  .option("--no-serve", "Skip launching the graph viewer after compile")
+  .action(async (options: { port?: string; serve?: boolean }) => {
+    const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+
+    const demoDir = await mkdtemp(path.join(tmpdir(), "swarmvault-demo-"));
+    if (!isJson()) {
+      log(`Creating demo vault in ${demoDir}`);
+    }
+
+    const rawDir = path.join(demoDir, "raw", "sources");
+    await mkdir(rawDir, { recursive: true });
+
+    await writeFile(
+      path.join(rawDir, "llm-wiki-pattern.md"),
+      [
+        "# The LLM Wiki Pattern",
+        "",
+        "Most AI tools answer a question then throw away the work. The LLM Wiki pattern",
+        "keeps a durable wiki between you and raw sources. The LLM does the bookkeeping —",
+        "updating cross-references, noting contradictions, maintaining consistency — while",
+        "you do the thinking.",
+        "",
+        "## Three Layers",
+        "",
+        "1. **Raw sources** — immutable documents: books, articles, papers, transcripts, code.",
+        "2. **The wiki** — LLM-generated markdown: summaries, entity pages, concept pages, cross-references.",
+        "3. **The schema** — rules for how the wiki is organized and what matters in your domain.",
+        "",
+        "## Why This Beats RAG",
+        "",
+        "RAG re-derives knowledge on every query. The wiki compiles knowledge once and compounds",
+        "it over time. Good answers get filed back as new pages, so exploration builds on itself.",
+        "",
+        "## Key Operations",
+        "",
+        "- **Ingest** — read a source, write summaries, update cross-references",
+        "- **Query** — search the wiki, synthesize answers, file results back",
+        "- **Lint** — health-check for contradictions, orphans, stale claims",
+        ""
+      ].join("\n")
+    );
+
+    await writeFile(
+      path.join(rawDir, "knowledge-graphs.md"),
+      [
+        "# Knowledge Graphs for AI",
+        "",
+        "A knowledge graph represents information as typed nodes and edges with provenance.",
+        "Unlike flat document stores, graphs let you traverse relationships, detect communities,",
+        "and find surprising connections between concepts.",
+        "",
+        "## Node Types",
+        "",
+        "- **Sources** — the raw documents that feed the graph",
+        "- **Concepts** — abstract ideas extracted from sources",
+        "- **Entities** — named things: people, tools, organizations",
+        "- **Modules** — code units with import/export relationships",
+        "",
+        "## Edge Semantics",
+        "",
+        "Every edge carries an evidence class: `extracted` (directly found), `inferred`",
+        "(derived by reasoning), or `conflicted` (contradictory evidence). This provenance",
+        "tracking prevents hallucination from compounding silently.",
+        "",
+        "## Contradiction Detection",
+        "",
+        "When two sources make conflicting claims, the graph flags the contradiction rather",
+        "than silently picking one. This is critical for research wikis where outdated claims",
+        "from older papers may conflict with newer findings.",
+        "",
+        "RAG systems do not track contradictions because they re-derive everything per query.",
+        "A compiled wiki with a graph layer can detect and surface them automatically.",
+        ""
+      ].join("\n")
+    );
+
+    await writeFile(
+      path.join(rawDir, "local-first-tools.md"),
+      [
+        "# Local-First AI Tools",
+        "",
+        "Local-first means your data stays on your machine by default. No cloud dependency,",
+        "no API keys required for basic operation. Privacy is the default, not an option.",
+        "",
+        "## Advantages",
+        "",
+        "- **Privacy** — sensitive documents never leave your machine",
+        "- **Speed** — no network latency for search and graph operations",
+        "- **Reliability** — works offline, no service outages",
+        "- **Cost** — no per-query API charges for basic workflows",
+        "",
+        "## The Heuristic Provider",
+        "",
+        "A heuristic provider uses deterministic text analysis — keyword extraction, TF-IDF,",
+        "structural parsing — instead of LLM inference. It produces lower-quality summaries",
+        "but runs instantly with zero setup. This makes it ideal for first-run experiences",
+        "and air-gapped environments.",
+        "",
+        "For sharper concept extraction, pair with a local LLM via Ollama. This keeps",
+        "everything on-device while getting model-backed analysis.",
+        ""
+      ].join("\n")
+    );
+
+    await initVault(demoDir, {});
+    await ingestDirectory(demoDir, rawDir, {});
+    await compileVault(demoDir, {});
+
+    const { paths } = await loadVaultConfig(demoDir);
+
+    let graphStats = "";
+    try {
+      const raw = await readFile(paths.graphPath, "utf-8");
+      const graph: GraphArtifact = JSON.parse(raw);
+      graphStats = ` (${graph.nodes.length} nodes, ${graph.edges.length} edges)`;
+    } catch {}
+
+    if (!isJson()) {
+      log("");
+      log(`Demo vault created${graphStats}.`);
+      log("");
+      log("What just happened:");
+      log("  1. Created 3 sample sources about LLM wikis, knowledge graphs, and local-first tools");
+      log("  2. Ingested and compiled them into a knowledge graph");
+      log("  3. Generated wiki pages with cross-references and a graph report");
+      log("");
+      log(`Vault location: ${demoDir}`);
+    }
+
+    if (options.serve !== false) {
+      const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
+      const server = await startGraphServer(demoDir, port, { full: false });
+      if (isJson()) {
+        emitJson({ demoDir, graphStats: graphStats.trim(), port: server.port, url: `http://localhost:${server.port}` });
+      } else {
+        log(`Graph viewer running at http://localhost:${server.port}`);
+        log("");
+        log("Try next:");
+        log(`  cd ${demoDir}`);
+        log('  swarmvault query "How does contradiction detection work?"');
+        log("  swarmvault lint");
+      }
+      process.on("SIGINT", async () => {
+        try {
+          await server.close();
+        } catch {}
+        process.exit(0);
+      });
+    } else if (isJson()) {
+      emitJson({ demoDir, graphStats: graphStats.trim() });
+    } else {
+      log("");
+      log("Try next:");
+      log(`  cd ${demoDir}`);
+      log("  swarmvault graph serve");
+      log('  swarmvault query "How does contradiction detection work?"');
+    }
+  });
+
+program
+  .command("diff")
+  .description("Show what changed in the knowledge graph since the last compile.")
+  .action(async () => {
+    const rootDir = process.cwd();
+    const { paths } = await loadVaultConfig(rootDir);
+
+    let currentGraph: GraphArtifact;
+    try {
+      const raw = await readFile(paths.graphPath, "utf-8");
+      currentGraph = JSON.parse(raw);
+    } catch {
+      if (isJson()) {
+        emitJson({ error: "No compiled graph found. Run swarmvault compile first." });
+      } else {
+        log("No compiled graph found. Run swarmvault compile first.");
+      }
+      return;
+    }
+
+    // Try to get previous graph from git
+    let previousGraph: GraphArtifact | undefined;
+    const { execFileSync } = await import("node:child_process");
+    try {
+      const relPath = paths.graphPath.replace(`${rootDir}/`, "");
+      const previousRaw = execFileSync("git", ["show", `HEAD:${relPath}`], {
+        cwd: rootDir,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      previousGraph = JSON.parse(previousRaw);
+    } catch {
+      // No git history or not in a git repo — show current state summary instead
+    }
+
+    if (!previousGraph) {
+      if (isJson()) {
+        emitJson({
+          status: "no-baseline",
+          current: {
+            nodes: currentGraph.nodes.length,
+            edges: currentGraph.edges.length,
+            pages: currentGraph.pages.length,
+            communities: currentGraph.communities?.length ?? 0
+          }
+        });
+      } else {
+        log("No previous graph found (not in a git repo or no prior commit).");
+        log("");
+        log("Current graph:");
+        log(`  ${currentGraph.nodes.length} nodes, ${currentGraph.edges.length} edges, ${currentGraph.pages.length} pages`);
+        if (currentGraph.communities?.length) {
+          log(`  ${currentGraph.communities.length} communities`);
+        }
+        const conflicted = currentGraph.edges.filter((e) => e.status === "conflicted");
+        if (conflicted.length) {
+          log(`  ${conflicted.length} conflicted edges`);
+        }
+      }
+      return;
+    }
+
+    const diff = graphDiff(previousGraph, currentGraph);
+
+    if (isJson()) {
+      emitJson(diff);
+      return;
+    }
+
+    if (diff.summary === "No changes") {
+      log("No changes since last commit.");
+      return;
+    }
+
+    log(diff.summary);
+    log("");
+
+    if (diff.addedNodes.length) {
+      log("Added nodes:");
+      for (const node of diff.addedNodes) {
+        log(`  + [${node.type}] ${node.label}`);
+      }
+      log("");
+    }
+
+    if (diff.removedNodes.length) {
+      log("Removed nodes:");
+      for (const node of diff.removedNodes) {
+        log(`  - [${node.type}] ${node.label}`);
+      }
+      log("");
+    }
+
+    if (diff.addedPages.length) {
+      log("Added pages:");
+      for (const page of diff.addedPages) {
+        log(`  + [${page.kind}] ${page.title} (${page.path})`);
+      }
+      log("");
+    }
+
+    if (diff.removedPages.length) {
+      log("Removed pages:");
+      for (const page of diff.removedPages) {
+        log(`  - [${page.kind}] ${page.title} (${page.path})`);
+      }
+      log("");
+    }
+
+    if (diff.addedEdges.length) {
+      log(`Added edges: ${diff.addedEdges.length}`);
+      for (const edge of diff.addedEdges.slice(0, 20)) {
+        log(`  + ${edge.source} -[${edge.relation}]-> ${edge.target} (${edge.evidenceClass})`);
+      }
+      if (diff.addedEdges.length > 20) {
+        log(`  ... and ${diff.addedEdges.length - 20} more`);
+      }
+      log("");
+    }
+
+    if (diff.removedEdges.length) {
+      log(`Removed edges: ${diff.removedEdges.length}`);
+      for (const edge of diff.removedEdges.slice(0, 20)) {
+        log(`  - ${edge.source} -[${edge.relation}]-> ${edge.target}`);
+      }
+      if (diff.removedEdges.length > 20) {
+        log(`  ... and ${diff.removedEdges.length - 20} more`);
+      }
+    }
+  });
+
+program
   .command("scan")
   .description("Quick-start: initialize, ingest, compile, and serve a graph viewer in one command.")
   .argument("<directory>", "Directory to scan")
@@ -1453,6 +1753,22 @@ program
       emitJson({ ...result, compiled });
     }
   });
+
+function enableStructuredJsonOnSubcommands(command: Command): void {
+  for (const subcommand of command.commands) {
+    const hasJsonOption = subcommand.options.some((option) => option.attributeName() === "json");
+    if (!hasJsonOption) {
+      subcommand.option("--json", "Emit structured JSON output", false);
+    }
+    enableStructuredJsonOnSubcommands(subcommand);
+  }
+}
+
+enableStructuredJsonOnSubcommands(program);
+
+program.hook("preAction", (_command, actionCommand) => {
+  activeCommand = actionCommand;
+});
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);

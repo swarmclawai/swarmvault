@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.26
+
+- Added first-class audio ingest with provider-backed transcription through `tasks.audioProvider`, plus native YouTube URL transcript capture that writes extracted text and metadata into the normal source, extract, compile, and search pipeline
+- Added `swarmvault demo` for a zero-config sample vault walkthrough and `swarmvault diff` for showing graph-level changes against the last committed `state/graph.json`
+- Upgraded `graph export --obsidian` so exported vaults preserve wiki folder structure, add graph frontmatter and connection sections, emit orphan node stubs plus community notes, copy referenced assets, and ship a minimal `.obsidian` config
+- Added optional `graph.communityResolution` configuration while keeping adaptive default Louvain resolution selection for smaller or sparser graphs
+- Refreshed the OSS README set, package docs, skill bundle docs, and website docs to cover the new ingest paths, CLI commands, graph export behavior, and configuration surface
+
 ## 0.7.25
 
 - Added `--commit` support to `ingest`, `compile`, and `query`, plus an exported auto-commit helper for git-backed vault workflows that want wiki and state changes committed immediately

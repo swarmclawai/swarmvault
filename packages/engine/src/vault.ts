@@ -1620,9 +1620,16 @@ function indexCompiledFrom(pages: GraphPage[]): string[] {
   return uniqueStrings(pages.flatMap((page) => page.sourceIds));
 }
 
+function autoResolution(nodeCount: number, edgeCount: number): number {
+  if (nodeCount <= 20) return 0.5;
+  if (edgeCount / Math.max(1, nodeCount) < 2) return 0.8;
+  return 1.0;
+}
+
 function deriveGraphMetrics(
   nodes: GraphNode[],
-  edges: GraphEdge[]
+  edges: GraphEdge[],
+  options?: { resolution?: number }
 ): {
   nodes: GraphNode[];
   communities: GraphArtifact["communities"];
@@ -1674,7 +1681,8 @@ function deriveGraphMetrics(
 
   /* Louvain requires at least one edge; fall back to singleton communities
      for disconnected graphs (e.g. single-source vaults). */
-  const louvainMapping: Record<string, number> = louvainGraph.size > 0 ? louvain(louvainGraph, { resolution: 1 }) : {};
+  const effectiveResolution = options?.resolution ?? autoResolution(louvainGraph.order, louvainGraph.size);
+  const louvainMapping: Record<string, number> = louvainGraph.size > 0 ? louvain(louvainGraph, { resolution: effectiveResolution }) : {};
 
   /* Group nodes by their Louvain community number.  Isolated nodes (no edges)
      each get their own singleton community. */
@@ -1887,7 +1895,8 @@ function buildGraph(
   analyses: SourceAnalysis[],
   pages: GraphPage[],
   sourceProjects: Record<string, string | null>,
-  _codeIndex: CodeIndexArtifact
+  _codeIndex: CodeIndexArtifact,
+  options?: { communityResolution?: number }
 ): GraphArtifact {
   const manifestsById = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
   const goPackageSymbolLookups = buildGoPackageSymbolLookups(analyses, manifestsById);
@@ -2274,7 +2283,7 @@ function buildGraph(
     manifests,
     analyses
   );
-  const metrics = deriveGraphMetrics(graphNodes, enriched.edges);
+  const metrics = deriveGraphMetrics(graphNodes, enriched.edges, { resolution: options?.communityResolution });
 
   return {
     generatedAt: new Date().toISOString(),
@@ -2890,7 +2899,9 @@ async function syncVaultArtifacts(
 
   const compiledPages = records.map((record) => record.page);
   const basePages = [...compiledPages, ...input.outputPages, ...input.insightPages];
-  const structuralGraph = buildGraph(input.manifests, input.analyses, basePages, input.sourceProjects, input.codeIndex);
+  const structuralGraph = buildGraph(input.manifests, input.analyses, basePages, input.sourceProjects, input.codeIndex, {
+    communityResolution: config.graph?.communityResolution
+  });
   const contradictions = detectContradictions(input.analyses);
   for (const contradiction of contradictions) {
     const edgeId = `contradiction:${contradiction.sourceIdA}->${contradiction.sourceIdB}`;
@@ -2914,7 +2925,9 @@ async function syncVaultArtifacts(
           const edges = uniqueBy([...structuralGraph.edges, ...embeddingEdges], (edge) => edge.id).sort((left, right) =>
             left.id.localeCompare(right.id)
           );
-          const metrics = deriveGraphMetrics(resetGraphNodeMetrics(structuralGraph.nodes), edges);
+          const metrics = deriveGraphMetrics(resetGraphNodeMetrics(structuralGraph.nodes), edges, {
+            resolution: config.graph?.communityResolution
+          });
           return {
             ...structuralGraph,
             nodes: metrics.nodes,

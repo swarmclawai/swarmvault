@@ -5,12 +5,40 @@
 <!-- readme-language-nav:end -->
 
 [![npm](https://img.shields.io/npm/v/@swarmvaultai/cli)](https://www.npmjs.com/package/@swarmvaultai/cli)
+[![npm downloads](https://img.shields.io/npm/dw/@swarmvaultai/cli)](https://www.npmjs.com/package/@swarmvaultai/cli)
+[![GitHub stars](https://img.shields.io/github/stars/swarmclawai/swarmvault)](https://github.com/swarmclawai/swarmvault)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
 **面向 AI 代理的本地优先知识编译器**，基于 [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) 模式构建。大多数”和文档聊天”的工具只回答一次问题，然后把过程全部丢掉。SwarmVault 在你和原始资料之间维护一个**持久化 wiki** —— LLM 负责记录整理，你负责思考。
 
 网站文档目前仍以英文为主。如果不同语言版本之间的表述出现偏差，请以 [README.md](README.md) 为准。
+
+<!-- readme-section:try-it -->
+## 30 秒体验
+
+```bash
+npm install -g @swarmvaultai/cli
+swarmvault scan ./your-repo       # 指向你自己的代码库或文档
+# → 知识图谱在浏览器中打开
+```
+
+没有现成的仓库？试试内置 demo —— 创建一个包含三个来源的示例 vault 并打开图谱查看器：
+
+```bash
+swarmvault demo
+```
+
+![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
+
+这条命令会初始化一个 vault、导入来源、编译知识图谱并打开交互式查看器。无需 API key —— 内置的 heuristic provider 完全离线运行。
+
+**磁盘上的产物：**
+
+- **知识图谱** —— 带类型化节点（sources、concepts、entities、code modules）和来源追溯边
+- **可搜索的 wiki 页面** —— 源摘要、概念页、实体页、交叉引用
+- **矛盾检测** —— 跨来源的冲突声明自动标记
+- **图谱报告** —— 惊喜评分、god nodes、社区检测、自然语言解释
 
 ### 三层架构
 
@@ -25,6 +53,40 @@ SwarmVault 采用三层架构，遵循 Andrej Karpathy 描述的模式：
 把书籍、文章、笔记、转录稿、邮件导出、日历、数据集、幻灯片、截图、URL 和代码编译成持久化知识库，包含知识图谱、本地搜索、仪表盘和可审查的工件。可用于**个人知识管理**、**研究深潜**、**读书伴侣**、**代码文档**、**商业智能**，或任何需要长期积累知识并加以组织的领域。
 
 SwarmVault 把 LLM Wiki 模式做成了带有图谱导航、搜索、审查、自动化和可选模型增强的本地工具链。你也可以从[独立 schema 模板](templates/llm-wiki-schema.md)开始 —— 零安装，任何 LLM 代理 —— 当你需要更多功能时再升级到完整 CLI。
+
+<!-- readme-section:why -->
+## 为什么选择 SwarmVault
+
+如果你喜欢 Karpathy 的 [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)，SwarmVault 就是它的生产级版本。以下是它如何解决社区最关注的问题：
+
+**"幻觉不会越积越多吗？"** —— 每条边都标记为 `extracted`、`inferred` 或 `ambiguous`。矛盾检测会标记冲突声明。`compile --approve` 把所有变更放入可审查的 approval bundle。新概念先进入 `wiki/candidates/`。`lint --conflicts` 可按需审计矛盾。
+
+**"能扩展到 100 页以上吗？"** —— 可以。混合搜索把 SQLite 全文索引与语义 embeddings 合并，不需要把每个页面都塞进上下文。`compile --max-tokens` 裁剪输出以适配有限窗口。图谱导航（`graph query`、`graph path`、`graph explain`）让你可以遍历而非搜索。
+
+**"只能个人使用吗？"** —— Git 工作流（`--commit`）、watch 模式加 git hooks、定时自动化和 MCP server 让它适合团队使用。Agent 集成覆盖 12 个工具。
+
+**"需要 API key 吗？"** —— 不需要。内置 `heuristic` provider 完全离线。如果想要更高质量的提取，可以搭配免费的本地 LLM，例如 [Ollama](https://ollama.com)。云端 provider 是可选的。
+
+<!-- readme-section:comparison -->
+## 从 Gist 到生产
+
+| | Karpathy Gist | **SwarmVault** |
+|---|:---:|:---:|
+| 三层架构 | 描述 | **已实现** |
+| Ingest / query / lint | 手动 | **CLI 命令** |
+| 一条命令启动 | — | **`swarmvault scan`** |
+| 类型化知识图谱 | — | **是** |
+| 交互式图谱查看器 | — | **是** |
+| 30+ 输入格式 | — | **是** |
+| 代码感知（tree-sitter AST） | — | **是** |
+| 离线 / 无需 API key | — | **是** |
+| 矛盾检测 | 提及 | **自动** |
+| Approval 审批队列 | — | **是** |
+| 12 种 agent 集成 | — | **是** |
+| Neo4j / 图谱导出 | — | **是** |
+| MCP server | — | **是** |
+| Watch 模式 + git hooks | — | **是** |
+| 混合搜索 + rerank | index.md | **SQLite FTS + embeddings** |
 
 <!-- readme-section:install -->
 ## 安装
@@ -62,25 +124,30 @@ my-vault/
 └── agent/                     面向代理生成的辅助文件
 ```
 
-![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
-
 ```bash
+# 完整工作流 —— 分步执行
 swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./meeting.srt --guide
+swarmvault ingest ./customer-call.mp3
+swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
 swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
+swarmvault diff
 swarmvault graph blast ./src/index.ts
 swarmvault query "What is the auth flow?"
 swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
+swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault graph push neo4j --dry-run
 ```
 
 想要对本地仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve` 会将当前目录初始化为 vault，导入该目录并完成编译；加上 `--no-serve` 时不会启动图谱查看器。
+
+如果你想在还没准备真实素材前就先做一次零配置体验，也可以运行 `swarmvault demo --no-serve`。它会创建一个临时示例 vault，写入内置来源并立即完成编译。
 
 对于非常大的图，`swarmvault graph serve` 和 `swarmvault graph export --html` 会自动进入 overview mode。若你仍想强制渲染完整画布，请添加 `--full`。
 
@@ -170,6 +237,8 @@ ollama pull gemma4
 
 其他可选后端、任务路由方式与能力配置请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
 
+如果要导入音频文件，请把 `tasks.audioProvider` 指向具备 `audio` 能力的 provider。YouTube 转录导入则不需要模型 provider。
+
 ## 直接指向可重复使用的来源
 
 最容易感受到 SwarmVault 价值的方式，是使用 managed-source 工作流：
@@ -236,7 +305,9 @@ clawhub install swarmvault
 | 聊天导出 | Slack 导出 `.zip`、解压后的 Slack 导出目录 | 本地提取按频道/日期分组的对话 |
 | 邮件 | `.eml .mbox` | 本地提取单封邮件并展开邮箱文件 |
 | 日历 | `.ics` | 本地展开 `VEVENT` 事件 |
+| 音频 | `.mp3 .wav .m4a .aac .ogg .webm` 及其他 `audio/*` 文件 | 在已配置 `tasks.audioProvider` 时进行 provider 驱动的转录 |
 | HTML | `.html`、URL | Readability + Turndown 转 Markdown（URL 抓取） |
+| YouTube URL | `youtube.com/watch`、`youtu.be`、`youtube.com/embed`、`youtube.com/shorts` | 直接抓取转录文本，并提取标题与视频元数据 |
 | Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider（已配置时） |
 | Research | arXiv、DOI、文章、X/Twitter | 通过 `swarmvault add` 标准化为 Markdown |
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
@@ -276,6 +347,12 @@ clawhub install swarmvault
 **图谱健康信号** - graph report 产物现在还会给出 community cohesion 摘要、孤立节点与高歧义边的告警，以及针对薄弱或模糊图区域的更明确 follow-up questions。
 
 **图谱 blast radius 与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
+
+**图谱 diff** - `swarmvault diff` 将当前知识图谱与上次提交的版本进行对比，显示新增/移除的节点、边和页面，让你清楚看到每次 compile 改变了什么。
+
+**Obsidian 图谱导出** - `graph export --obsidian` 会写出一个适合 Obsidian 打开的笔记包，保留原有 wiki 目录结构，附加图谱连接、社区页面、孤立节点 stub、复制后的资产文件，以及最小化的 `.obsidian` 配置。
+
+**自适应图谱社区划分** - SwarmVault 会根据小图或稀疏图自动调整 Louvain community resolution；如果你想固定聚类结果，可以在 `swarmvault.config.json` 中设置 `graph.communityResolution`。
 
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
@@ -327,16 +404,18 @@ Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用于 grap
 <!-- readme-section:worked-examples -->
 ## 示例项目
 
-| 示例 | 重点 | 来源 |
-|------|------|------|
-| code-repo | 仓库 ingest、模块页、图谱报告、benchmark | [`worked/code-repo/`](worked/code-repo/) |
-| capture | 面向研究资料的 `add` 捕获与标准化元数据 | [`worked/capture/`](worked/capture/) |
-| mixed-corpus | compile、review、save-first 输出循环 | [`worked/mixed-corpus/`](worked/mixed-corpus/) |
-| book-reading | 逐章阅读构建角色和主题页的粉丝 wiki | [`worked/book-reading/`](worked/book-reading/) |
-| research-deep-dive | 论文和文章构建带矛盾检测的演化论点 | [`worked/research-deep-dive/`](worked/research-deep-dive/) |
-| personal-knowledge-base | 日记、健康、播客 —— 个人 Memex | [`worked/personal-knowledge-base/`](worked/personal-knowledge-base/) |
+每个目录都包含真实输入文件和实际输出结果，你可以直接运行验证。
 
-每个目录都包含真实输入文件和实际输出结果，你可以直接运行验证。分步演示见 [examples guide](https://www.swarmvault.ai/docs/getting-started/examples)。
+| 示例 | 展示内容 | 来源 |
+|------|----------|------|
+| **[research-deep-dive](worked/research-deep-dive/)** | 论文和文章构建带跨来源矛盾检测的演化论点 | `worked/research-deep-dive/` |
+| **[personal-knowledge-base](worked/personal-knowledge-base/)** | 日记、健康笔记、播客编译成带仪表盘的个人 Memex | `worked/personal-knowledge-base/` |
+| **[book-reading](worked/book-reading/)** | 逐章阅读构建角色和主题页，随阅读积累 | `worked/book-reading/` |
+| **[code-repo](worked/code-repo/)** | 仓库 ingest、模块页、图谱报告、benchmark | `worked/code-repo/` |
+| **[capture](worked/capture/)** | 面向研究资料的 `add` 捕获，支持 arXiv、DOI、URL 标准化元数据 | `worked/capture/` |
+| **[mixed-corpus](worked/mixed-corpus/)** | compile、review、save-first 输出循环，跨混合输入类型 | `worked/mixed-corpus/` |
+
+分步演示见 [examples guide](https://www.swarmvault.ai/docs/getting-started/examples)。
 
 <!-- readme-section:providers -->
 ## Providers

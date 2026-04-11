@@ -17,8 +17,11 @@ Install the CLI it depends on:
 ```bash
 npm install -g @swarmvaultai/cli
 swarmvault --version
+swarmvault demo --no-serve
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./meeting.srt --guide
+swarmvault ingest ./customer-call.mp3
+swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
 swarmvault source session transcript-or-session-id
 ```
 
@@ -47,22 +50,29 @@ npm install -g @swarmvaultai/cli@latest
 ```bash
 swarmvault init --obsidian --profile personal-research
 swarmvault init --obsidian --profile reader,timeline
+swarmvault demo --no-serve
 swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source session file-customer-call-srt-12345678
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./src --repo-root .
+swarmvault ingest ./customer-call.mp3
+swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile --max-tokens 120000
+swarmvault diff
 swarmvault query "What is the auth flow?"
 swarmvault graph blast ./src/index.ts
 swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
+swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault mcp
 ```
 
 For the fastest scratch walkthrough of a local repo or docs tree, run `swarmvault scan ./path --no-serve`. It initializes the current directory as a vault, ingests that directory, compiles immediately, and leaves the graph viewer closed when you only need the generated artifacts.
 
-For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need lighter sharing or Obsidian-native artifacts.
+If you want the same zero-config walkthrough without supplying your own inputs first, run `swarmvault demo --no-serve`. It creates a temporary demo vault with bundled sources and compiles it immediately.
+
+For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need lighter sharing or Obsidian-native artifacts. `swarmvault diff` compares the current graph against the last committed graph so you can inspect graph-level changes after a compile.
 
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom. Code files are always parsed locally via tree-sitter; only non-code text or image sources go to configured model providers.
 
@@ -71,6 +81,8 @@ The default `heuristic` provider is a valid local/offline starting point. Add a 
 For local semantic graph query without API keys, point `tasks.embeddingProvider` at an embedding-capable local backend such as Ollama, not `heuristic`.
 
 With an embedding-capable provider available, SwarmVault can also merge semantic page matches into local search by default. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `search.rerank: true` when you want the configured `queryProvider` to rerank the merged top hits before answering.
+
+Audio file ingest uses `tasks.audioProvider` when you configure a provider with `audio` capability. YouTube transcript ingest works without a model provider. If you want to pin graph clustering instead of using the adaptive default, set `graph.communityResolution` in `swarmvault.config.json`.
 
 `swarmvault lint --deep --web` augments deep-lint findings with external evidence from a configured `webSearch` adapter. Web search is currently scoped to deep lint; compile, query, and explore stay on local vault state plus your configured LLM providers.
 
@@ -85,7 +97,7 @@ Source-scoped artifacts are intentionally split by role:
 | Source guide | `source guide`, `source add --guide`, `ingest --guide` | Guided walkthrough with approval-bundled updates in `wiki/outputs/source-guides/` |
 | Source session | `source session`, `source add --guide`, `ingest --guide` | Resumable workflow state in `wiki/outputs/source-sessions/` and `state/source-sessions/` |
 
-Supported non-code ingest includes `.pdf`, the full Word family (`.docx`, `.docm`, `.dotx`, `.dotm`), `.rtf`, `.odt`, `.odp`, `.ods`, `.epub`, `.csv`, `.tsv`, the full Excel family (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.xltx`, `.xltm`), the full PowerPoint family (`.pptx`, `.pptm`, `.potx`, `.potm`), `.ipynb` (Jupyter notebooks), `.bib` (BibTeX), `.org` (Org-mode), `.adoc`/`.asciidoc`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.ico`, `.heic`, `.heif`, `.avif`, `.jxl`), markdown/MDX/text notes, structured config/data (`.json`, `.jsonc`, `.json5`, `.yaml`, `.toml`, `.xml`, `.ini`, `.conf`, `.cfg`, `.env`, `.properties`) with schema hints, common developer manifests (`package.json`, `tsconfig.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `go.sum`, `Dockerfile`, `Makefile`, `LICENSE`, `.gitignore`, `.editorconfig`, and similar) via content-sniffed text ingest so they are never silently dropped, browser clips, and research URLs captured through `swarmvault add`.
+Supported non-code ingest includes `.pdf`, the full Word family (`.docx`, `.docm`, `.dotx`, `.dotm`), `.rtf`, `.odt`, `.odp`, `.ods`, `.epub`, `.csv`, `.tsv`, the full Excel family (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.xltx`, `.xltm`), the full PowerPoint family (`.pptx`, `.pptm`, `.potx`, `.potm`), `.ipynb` (Jupyter notebooks), `.bib` (BibTeX), `.org` (Org-mode), `.adoc`/`.asciidoc`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.webm`, and other `audio/*` inputs) through `tasks.audioProvider`, direct YouTube transcript URLs, images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.ico`, `.heic`, `.heif`, `.avif`, `.jxl`), markdown/MDX/text notes, structured config/data (`.json`, `.jsonc`, `.json5`, `.yaml`, `.toml`, `.xml`, `.ini`, `.conf`, `.cfg`, `.env`, `.properties`) with schema hints, common developer manifests (`package.json`, `tsconfig.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `go.sum`, `Dockerfile`, `Makefile`, `LICENSE`, `.gitignore`, `.editorconfig`, and similar) via content-sniffed text ingest so they are never silently dropped, browser clips, and research URLs captured through `swarmvault add`.
 
 Supported code ingest covers `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.sh`, `.bash`, `.zsh`, `.py`, `.go`, `.rs`, `.java`, `.kt`, `.kts`, `.scala`, `.sc`, `.dart`, `.lua`, `.zig`, `.cs`, `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hh`, `.hpp`, `.hxx`, `.php`, `.rb`, `.ps1`, `.psm1`, `.psd1`, `.ex`, `.exs`, `.ml`, `.mli`, `.m`, `.mm`, `.res`, `.resi`, `.sol`, `.vue`, `.css`, `.html`, `.htm`, plus extensionless executable scripts with `#!/usr/bin/env node|python|ruby|bash|zsh` shebangs. Each language goes through a tree-sitter AST walk to extract symbols, imports, and local module references.
 

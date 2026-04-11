@@ -6,7 +6,7 @@ import { extractAudioTranscription } from "../src/extraction.js";
 import { createProvider } from "../src/index.js";
 import { OpenAiCompatibleProviderAdapter } from "../src/providers/openai-compatible.js";
 import * as registry from "../src/providers/registry.js";
-import type { ProviderConfig } from "../src/types.js";
+import type { ProviderAdapter, ProviderConfig } from "../src/types.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -121,7 +121,7 @@ describe("extractAudioTranscription", () => {
         language: "en"
       })
     };
-    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as any);
+    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as unknown as ProviderAdapter);
 
     const result = await extractAudioTranscription("/tmp/test-vault", {
       mimeType: "audio/mpeg",
@@ -160,7 +160,7 @@ describe("extractAudioTranscription", () => {
       generateText: vi.fn(),
       generateStructured: vi.fn()
     };
-    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as any);
+    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as unknown as ProviderAdapter);
 
     const result = await extractAudioTranscription("/tmp/test-vault", {
       mimeType: "audio/mpeg",

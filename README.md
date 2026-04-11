@@ -5,12 +5,40 @@
 <!-- readme-language-nav:end -->
 
 [![npm](https://img.shields.io/npm/v/@swarmvaultai/cli)](https://www.npmjs.com/package/@swarmvaultai/cli)
+[![npm downloads](https://img.shields.io/npm/dw/@swarmvaultai/cli)](https://www.npmjs.com/package/@swarmvaultai/cli)
+[![GitHub stars](https://img.shields.io/github/stars/swarmclawai/swarmvault)](https://github.com/swarmclawai/swarmvault)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
 **A local-first knowledge compiler for AI agents**, built on the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern. Most "chat with your docs" tools answer a question and throw away the work. SwarmVault keeps a **durable wiki** between you and raw sources — the LLM does the bookkeeping, you do the thinking.
 
 Documentation on the website is currently English-first. If wording drifts between translations, [README.md](README.md) is the canonical source.
+
+<!-- readme-section:try-it -->
+## Try It in 30 Seconds
+
+```bash
+npm install -g @swarmvaultai/cli
+swarmvault scan ./your-repo       # point it at your own codebase or docs
+# → knowledge graph opens in your browser
+```
+
+No repo handy? Try the built-in demo — creates a sample vault with three sources and opens the graph viewer:
+
+```bash
+swarmvault demo
+```
+
+![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
+
+That single command initializes a vault, ingests sources, compiles a knowledge graph, and opens an interactive viewer. No API keys needed — the built-in heuristic provider runs fully offline.
+
+**What you get on disk:**
+
+- **Knowledge graph** with typed nodes (sources, concepts, entities, code modules) and provenance-tracked edges
+- **Searchable wiki pages** — source summaries, concept pages, entity pages, cross-references
+- **Contradiction detection** — conflicting claims across sources flagged automatically
+- **Graph report** — surprise scoring, god nodes, community detection, plain-English explanations
 
 ### Three-Layer Architecture
 
@@ -25,6 +53,40 @@ SwarmVault uses three layers, following the pattern described by Andrej Karpathy
 Turn books, articles, notes, transcripts, mail exports, calendars, datasets, slide decks, screenshots, URLs, and code into a persistent knowledge vault with a knowledge graph, local search, dashboards, and reviewable artifacts that stay on disk. Use it for **personal knowledge management**, **research deep-dives**, **book companions**, **code documentation**, **business intelligence**, or any domain where you accumulate knowledge over time and want it organized rather than scattered.
 
 SwarmVault turns the LLM Wiki pattern into a local toolchain with graph navigation, search, review, automation, and optional model-backed synthesis. You can also start with just the [standalone schema template](templates/llm-wiki-schema.md) — zero install, any LLM agent — and graduate to the full CLI when you outgrow it.
+
+<!-- readme-section:why -->
+## Why SwarmVault
+
+If you liked Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), SwarmVault is the production-grade version. Here's how it addresses the most common concerns from the community:
+
+**"Won't hallucinations compound?"** — Every edge is tagged `extracted`, `inferred`, or `ambiguous`. Contradiction detection flags conflicting claims. `compile --approve` stages all changes into reviewable approval bundles. New concepts land in `wiki/candidates/` first. `lint --conflicts` audits for contradictions on demand.
+
+**"Does it scale past 100 pages?"** — Yes. Hybrid search merges SQLite full-text with semantic embeddings, so queries work without fitting every page into context. `compile --max-tokens` trims output to fit bounded windows. Graph navigation (`graph query`, `graph path`, `graph explain`) lets you traverse rather than search.
+
+**"Is it just for personal use?"** — Git-backed workflows (`--commit`), watch mode with git hooks, scheduled automation, and an MCP server make it usable for teams. Agent integrations cover 12 tools from Claude Code to Copilot.
+
+**"Do I need API keys?"** — No. The built-in `heuristic` provider is fully offline. For sharper extraction, pair with a free local LLM via [Ollama](https://ollama.com). Cloud providers are optional.
+
+<!-- readme-section:comparison -->
+## From Gist to Production
+
+| | Karpathy's Gist | **SwarmVault** |
+|---|:---:|:---:|
+| Three-layer architecture | described | **implemented** |
+| Ingest / query / lint | manual | **CLI commands** |
+| One-command setup | — | **`swarmvault scan`** |
+| Typed knowledge graph | — | **yes** |
+| Interactive graph viewer | — | **yes** |
+| 30+ input formats | — | **yes** |
+| Code-aware (tree-sitter AST) | — | **yes** |
+| Offline / no API keys | — | **yes** |
+| Contradiction detection | mentioned | **automatic** |
+| Approval queues | — | **yes** |
+| 12 agent integrations | — | **yes** |
+| Neo4j / graph export | — | **yes** |
+| MCP server | — | **yes** |
+| Watch mode + git hooks | — | **yes** |
+| Hybrid search + rerank | index.md | **SQLite FTS + embeddings** |
 
 <!-- readme-section:install -->
 ## Install
@@ -62,21 +124,24 @@ my-vault/
 └── agent/                     generated agent-facing helpers
 ```
 
-![SwarmVault graph workspace](https://www.swarmvault.ai/images/screenshots/graph-workspace.png)
-
 ```bash
+# Full workflow — step by step
 swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./meeting.srt --guide
+swarmvault ingest ./customer-call.mp3
+swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
 swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
+swarmvault diff
 swarmvault graph blast ./src/index.ts
 swarmvault query "What is the auth flow?"
 swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
+swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault graph push neo4j --dry-run
 ```
 
@@ -170,6 +235,8 @@ For cloud-hosted models, add a provider block with your API key:
 
 See the [provider docs](https://www.swarmvault.ai/docs/providers) for optional backends, task routing, and capability-specific configuration examples.
 
+For audio files, point `tasks.audioProvider` at a provider with `audio` capability. YouTube transcript ingest does not require a model provider.
+
 ## Point It At Recurring Sources
 
 The fastest way to make SwarmVault useful is the managed-source flow:
@@ -236,7 +303,9 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Chat exports | Slack export `.zip`, extracted Slack export directories | Local channel/day conversation extraction |
 | Email | `.eml .mbox` | Local message extraction and mailbox expansion |
 | Calendar | `.ics` | Local VEVENT expansion |
+| Audio | `.mp3 .wav .m4a .aac .ogg .webm` and other `audio/*` files | Provider-backed transcription via `tasks.audioProvider` when configured |
 | HTML | `.html`, URLs | Readability + Turndown to markdown (URL ingest) |
+| YouTube URLs | `youtube.com/watch`, `youtu.be`, `youtube.com/embed`, `youtube.com/shorts` | Direct transcript capture with extracted title and video metadata |
 | Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider (when configured) |
 | Research | arXiv, DOI, articles, X/Twitter | Normalized markdown via `swarmvault add` |
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
@@ -280,6 +349,12 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 **Graph report health signals** - graph report artifacts now include community-cohesion summaries, isolated-node and ambiguity warnings, and sharper follow-up questions when the graph has weakly connected or ambiguous regions.
 
 **Graph blast radius and report export** - `graph blast <target>` traces reverse import impact through module dependencies, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
+
+**Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
+
+**Obsidian graph export** - `graph export --obsidian` writes an Obsidian-friendly bundle that preserves wiki folders, appends graph connections, emits community notes and orphan-node stubs, copies assets, and includes a minimal `.obsidian` config.
+
+**Adaptive graph communities** - SwarmVault auto-tunes Louvain community resolution for very small or sparse graphs, and you can pin a specific value with `graph.communityResolution` in `swarmvault.config.json`.
 
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
@@ -331,16 +406,18 @@ Claude Code, OpenCode, Gemini CLI, and Copilot also support `--hook` for graph-f
 <!-- readme-section:worked-examples -->
 ## Worked Examples
 
-| Example | Focus | Source |
-|---------|-------|--------|
-| code-repo | Repo ingest, module pages, graph reports, benchmarks | [`worked/code-repo/`](worked/code-repo/) |
-| capture | Research-aware `add` capture with normalized metadata | [`worked/capture/`](worked/capture/) |
-| mixed-corpus | Compile, review, save-first output loops | [`worked/mixed-corpus/`](worked/mixed-corpus/) |
-| book-reading | Chapter-by-chapter fan wiki with character and theme pages | [`worked/book-reading/`](worked/book-reading/) |
-| research-deep-dive | Papers and articles building an evolving thesis with contradictions | [`worked/research-deep-dive/`](worked/research-deep-dive/) |
-| personal-knowledge-base | Journal, health, podcasts — a personal Memex | [`worked/personal-knowledge-base/`](worked/personal-knowledge-base/) |
+Each folder has real input files and actual output so you can run it yourself and verify.
 
-Each folder has real input files and actual output so you can run it yourself and verify. See the [examples guide](https://www.swarmvault.ai/docs/getting-started/examples) for step-by-step walkthroughs.
+| Example | What it shows | Source |
+|---------|---------------|--------|
+| **[research-deep-dive](worked/research-deep-dive/)** | Papers and articles building an evolving thesis with contradiction detection across sources | `worked/research-deep-dive/` |
+| **[personal-knowledge-base](worked/personal-knowledge-base/)** | Journal entries, health notes, podcasts compiled into a personal Memex with dashboards | `worked/personal-knowledge-base/` |
+| **[book-reading](worked/book-reading/)** | Chapter-by-chapter fan wiki with character and theme pages that compound as you read | `worked/book-reading/` |
+| **[code-repo](worked/code-repo/)** | Repo ingest, module pages, graph reports, benchmarks | `worked/code-repo/` |
+| **[capture](worked/capture/)** | Research-aware `add` capture with normalized metadata from arXiv, DOI, URLs | `worked/capture/` |
+| **[mixed-corpus](worked/mixed-corpus/)** | Compile, review, save-first output loops across mixed input types | `worked/mixed-corpus/` |
+
+See the [examples guide](https://www.swarmvault.ai/docs/getting-started/examples) for step-by-step walkthroughs.
 
 <!-- readme-section:providers -->
 ## Providers

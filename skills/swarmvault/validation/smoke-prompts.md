@@ -11,6 +11,7 @@ Prompt:
 Expected shape:
 
 - initializes or confirms the vault
+- may use `swarmvault demo --no-serve` for the fastest zero-config walkthrough
 - may use `swarmvault scan <directory> --no-serve` when the task is a quick local repo walkthrough
 - points at `swarmvault.schema.md`
 - mentions `wiki/` and `state/`
@@ -50,6 +51,7 @@ Prompt:
 Expected shape:
 
 - uses `swarmvault add`
+- may use `swarmvault ingest` for direct audio files or YouTube transcript URLs
 - compiles before answering if needed
 - points at contradiction/report artifacts when conflicts exist
 
@@ -76,6 +78,7 @@ Expected shape:
 
 - uses `swarmvault graph serve` or `graph export --html`
 - may suggest `graph export --report`, `graph export --html-standalone`, `graph export --canvas`, or `graph export --obsidian` when a lighter shareable artifact is a better fit
+- may suggest `swarmvault diff` when the user is asking what a compile changed
 - may use `graph blast <target>` when the user is asking about change impact instead of broad graph browsing
 - mentions `swarmvault mcp`
 - prefers existing report and graph artifacts when already present

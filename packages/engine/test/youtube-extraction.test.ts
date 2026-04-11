@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe("extractYoutubeTranscript", () => {
   it("returns formatted markdown with transcript and metadata", async () => {
-    mockFetchTranscript.mockResolvedValue({
+    const transcript = {
       videoDetails: {
         videoId: "dQw4w9WgXcQ",
         title: "Test Video",
@@ -32,7 +32,8 @@ describe("extractYoutubeTranscript", () => {
         { text: "Hello world.", offset: 0, duration: 2, lang: "en" },
         { text: "This is a test.", offset: 2, duration: 3, lang: "en" }
       ]
-    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any -- mock overloaded return
+    };
+    mockFetchTranscript.mockResolvedValue(transcript as unknown as never);
 
     const result = await extractYoutubeTranscript({
       videoId: "dQw4w9WgXcQ",

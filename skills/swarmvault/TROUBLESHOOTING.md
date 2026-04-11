@@ -27,6 +27,12 @@ Check whether the vault is still using the built-in `heuristic` provider. That i
 
 For local semantic graph query, `embeddingProvider` must point at an embedding-capable backend such as `ollama` or another OpenAI-compatible embeddings service. The built-in `heuristic` provider does not generate embeddings.
 
+## Audio files ingest, but no transcript appears
+
+Audio ingest needs `tasks.audioProvider` to point at a provider with `audio` capability. Without that, SwarmVault still ingests the source and records an extraction warning instead of failing the whole run.
+
+YouTube transcript ingest does not need a model provider, but it can still fail when the video has no accessible captions or the upstream transcript fetch path is unavailable.
+
 ## Source reviews or dashboards did not appear
 
 If you expected a source-scoped guide or review page, use one of these flows:
@@ -61,6 +67,8 @@ Then verify:
 - `wiki/graph/report.md`
 - `state/graph.json`
 - `state/search.sqlite`
+
+If the vault lives inside git and you want a quick graph-level delta, run `swarmvault diff`.
 
 ## Agent install or hooks seem stale
 

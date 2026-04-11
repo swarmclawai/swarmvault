@@ -8,6 +8,7 @@ Use this when the user wants to compile a codebase into durable module pages, gr
 swarmvault init --obsidian
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault compile --approve
+swarmvault diff
 swarmvault review list
 swarmvault review show <approval-id> --diff
 swarmvault review accept <approval-id>
@@ -20,6 +21,7 @@ swarmvault graph serve
 - `wiki/code/` contains module pages
 - `wiki/outputs/source-briefs/` contains a repo onboarding brief
 - `state/code-index.json` exists for repo-aware symbol/import resolution
+- `swarmvault diff` reflects the graph-level additions and removals when the vault is inside git
 - `state/approvals/` contains staged review bundles when `--approve` is used
 - `wiki/graph/report.md` highlights the important modules, bridge nodes, and contradictions
 

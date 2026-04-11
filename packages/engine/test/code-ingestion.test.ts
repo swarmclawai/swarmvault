@@ -1972,7 +1972,7 @@ describe("code-aware ingestion", () => {
         "#!/usr/bin/env zsh",
         "",
         "function collect_options() {",
-        '    local lines=( ${(f)"$(echo -e "a\\nb\\nc")"} )',
+        `    local lines=( \${(f)"$(echo -e "a\\nb\\nc")"} )`,
         "    print -l $lines",
         "}",
         "",

@@ -3,6 +3,7 @@
 ## Setup
 
 ```bash
+swarmvault demo --no-serve
 swarmvault init
 swarmvault init --obsidian --profile personal-research
 swarmvault init --obsidian --profile reader,timeline
@@ -22,6 +23,8 @@ swarmvault source review <source-id>
 swarmvault source guide <source-id>
 swarmvault source delete <source-id>
 swarmvault ingest <path-or-url>
+swarmvault ingest ./customer-call.mp3
+swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
 swarmvault ingest <path-or-url> --commit
 swarmvault ingest <path-or-url> --guide
 swarmvault ingest <directory> --repo-root .
@@ -35,6 +38,7 @@ swarmvault inbox import <path>
 swarmvault compile
 swarmvault compile --max-tokens 120000
 swarmvault compile --approve
+swarmvault diff
 swarmvault query "<question>"
 swarmvault query "<question>" --commit
 swarmvault explore "<question>" --steps 3

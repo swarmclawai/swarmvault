@@ -2,7 +2,7 @@
 
 `@swarmvaultai/cli` is the global command-line entry point for SwarmVault.
 
-It gives you the `swarmvault` command for building a local-first knowledge vault from files, reStructuredText and DOCX documents, URLs, browser clips, saved query outputs, and guided exploration runs.
+It gives you the `swarmvault` command for building a local-first knowledge vault from files, audio transcripts, YouTube URLs, reStructuredText and DOCX documents, browser clips, saved query outputs, and guided exploration runs.
 
 ## Install
 
@@ -24,6 +24,7 @@ mkdir my-vault
 cd my-vault
 swarmvault init --obsidian --profile personal-research
 swarmvault init --obsidian --profile reader,timeline
+swarmvault demo
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source add ./exports/customer-call.srt --guide
@@ -32,9 +33,12 @@ swarmvault source list
 swarmvault source reload --all
 sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
+swarmvault ingest ./customer-call.mp3
+swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
 swarmvault ingest ./repo
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile --max-tokens 120000
+swarmvault diff
 swarmvault benchmark
 swarmvault query "What keeps recurring?" --commit
 swarmvault query "Turn this into slides" --format slides
@@ -86,6 +90,23 @@ Quick-start a scratch vault from a local directory in one command.
 
 Use this when you want the fastest repo or docs-tree walkthrough without first deciding on managed-source registration.
 
+### `swarmvault demo [--port <port>] [--no-serve]`
+
+Create a temporary sample vault with bundled sources, compile it immediately, and launch the graph viewer unless you pass `--no-serve`.
+
+- writes the demo vault under the system temp directory
+- requires no API keys or extra setup
+- is the fastest way to inspect the full init + ingest + compile + graph workflow on a clean machine
+- respects `--port` when you want a specific viewer port
+
+### `swarmvault diff`
+
+Compare the current `state/graph.json` against the last committed graph in git.
+
+- when a prior committed graph exists, prints added and removed nodes, pages, and edges
+- when no git baseline exists, falls back to a summary of the current graph state
+- supports `--json` for structured automation output
+
 ### `swarmvault source add|list|reload|review|guide|session|delete`
 
 Manage recurring source roots through a registry-backed workflow.
@@ -132,7 +153,8 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
 - use `source add` instead when the same local directory, public GitHub repo root, or docs hub should stay registered and reloadable
 - URL ingest still localizes remote image references by default
-- local file and archive ingest supports markdown, text, reStructuredText, HTML, PDF, Word, RTF, OpenDocument, EPUB, CSV/TSV, Excel, PowerPoint, Jupyter notebooks, BibTeX, Org-mode, AsciiDoc, transcripts, Slack exports, email, calendar, structured config/data, developer manifests, images, and code
+- YouTube URLs short-circuit to direct transcript capture instead of generic HTML fetch
+- local file and archive ingest supports markdown, text, reStructuredText, HTML, PDF, Word, RTF, OpenDocument, EPUB, CSV/TSV, Excel, PowerPoint, Jupyter notebooks, BibTeX, Org-mode, AsciiDoc, transcripts, Slack exports, email, calendar, audio, structured config/data, developer manifests, images, and code
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
 - set `profile.guidedIngestDefault: true` when guided mode should be the default for `ingest`, and use `--no-guide` to force a plain ingest for one run
 - code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, and Vue single-file components
@@ -156,6 +178,8 @@ Useful flags:
 Repo ingest defaults to `first_party` material. The extra `--include-*` flags opt dependency trees, resource bundles, and generated output back in when you actually want them in the vault.
 
 Large repo ingest now emits low-noise progress on materially large batches, and parser compatibility failures stay local to the affected source instead of aborting unrelated analysis.
+
+Audio files use `tasks.audioProvider` when you configure a provider with `audio` capability. When no such provider is configured, SwarmVault still ingests the source and records an explicit extraction warning instead of failing. YouTube transcript ingest does not require a model provider.
 
 When `--commit` is set, SwarmVault stages `wiki/` and `state/` changes and creates a git commit when the vault root is inside a git worktree. Outside git, it becomes a no-op instead of failing.
 
@@ -361,10 +385,12 @@ Export the current graph as one or more shareable formats:
 - `--graphml` for graph-tool interoperability
 - `--cypher` for Neo4j-style import scripts
 - `--json` for a deterministic machine-readable graph package
-- `--obsidian` for an Obsidian-friendly markdown vault with one note per node plus community notes
+- `--obsidian` for an Obsidian-friendly markdown vault that preserves wiki folders, appends graph connections, emits orphan-node stubs and community notes, copies assets, and writes a minimal `.obsidian/` config
 - `--canvas` for an Obsidian canvas grouped by community
 
 You can combine multiple flags in one run to write several exports at once.
+
+Set `graph.communityResolution` in `swarmvault.config.json` when you want to pin the Louvain clustering resolution used by graph reports and Obsidian community output instead of relying on the adaptive default.
 
 ### `swarmvault graph push neo4j`
 

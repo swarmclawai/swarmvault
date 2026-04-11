@@ -207,6 +207,11 @@ const vaultConfigSchema = z.object({
       neo4j: neo4jGraphSinkConfigSchema.optional()
     })
     .optional(),
+  graph: z
+    .object({
+      communityResolution: z.number().positive().optional()
+    })
+    .optional(),
   webSearch: z
     .object({
       providers: z.record(z.string(), webSearchProviderConfigSchema),

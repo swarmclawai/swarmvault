@@ -26,7 +26,7 @@ import {
   searchVault
 } from "./vault.js";
 
-const SERVER_VERSION = "0.7.25";
+const SERVER_VERSION = "0.7.26";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
