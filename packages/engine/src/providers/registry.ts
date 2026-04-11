@@ -61,7 +61,8 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
           "vision",
           "embeddings",
           "streaming",
-          "image_generation"
+          "image_generation",
+          "audio"
         ])
       });
     case "ollama":
@@ -78,7 +79,8 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
           "vision",
           "embeddings",
           "streaming",
-          "local"
+          "local",
+          "audio"
         ])
       });
     case "openai-compatible":
@@ -87,7 +89,7 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
         apiKey: envOrUndefined(config.apiKeyEnv),
         headers: config.headers,
         apiStyle: config.apiStyle ?? "responses",
-        capabilities: resolveCapabilities(config, ["chat", "structured", "embeddings"])
+        capabilities: resolveCapabilities(config, ["chat", "structured", "embeddings", "audio"])
       });
     case "openrouter":
       return createOpenAiCompatiblePreset(id, "openrouter", config, {
@@ -101,7 +103,7 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
         baseUrl: "https://api.groq.com/openai/v1",
         apiKeyEnv: "GROQ_API_KEY",
         apiStyle: "chat",
-        capabilities: ["chat", "structured", "embeddings"]
+        capabilities: ["chat", "structured", "embeddings", "audio"]
       });
     case "together":
       return createOpenAiCompatiblePreset(id, "together", config, {

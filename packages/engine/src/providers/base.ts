@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import { z } from "zod";
 import type {
+  AudioTranscriptionRequest,
+  AudioTranscriptionResponse,
   GenerationAttachment,
   GenerationRequest,
   GenerationResponse,
@@ -32,6 +34,10 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
 
   public async generateImage(_request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
     throw new Error(`Provider ${this.id} does not support image generation.`);
+  }
+
+  public async transcribeAudio(_request: AudioTranscriptionRequest): Promise<AudioTranscriptionResponse> {
+    throw new Error(`Provider ${this.id} does not support audio transcription.`);
   }
 
   public async generateStructured<T>(request: GenerationRequest, schema: z.ZodType<T>): Promise<T> {

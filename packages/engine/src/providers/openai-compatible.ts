@@ -1,5 +1,8 @@
+import path from "node:path";
 import { z } from "zod";
 import type {
+  AudioTranscriptionRequest,
+  AudioTranscriptionResponse,
   GenerationRequest,
   GenerationResponse,
   ImageGenerationRequest,
@@ -258,6 +261,44 @@ export class OpenAiCompatibleProviderAdapter extends BaseProviderAdapter {
       width: request.width,
       height: request.height,
       revisedPrompt: image.revised_prompt
+    };
+  }
+
+  public async transcribeAudio(request: AudioTranscriptionRequest): Promise<AudioTranscriptionResponse> {
+    const extension = request.mimeType.split("/")[1]?.split("+")[0] ?? "bin";
+    const fileName = request.fileName ?? `audio.${extension}`;
+
+    const formData = new FormData();
+    formData.append("file", new File([request.bytes], path.basename(fileName), { type: request.mimeType }));
+    formData.append("model", this.model);
+    formData.append("response_format", "verbose_json");
+    if (request.language) {
+      formData.append("language", request.language);
+    }
+
+    const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
+      method: "POST",
+      headers: {
+        ...buildAuthHeaders(this.apiKey),
+        ...this.headers
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(`Provider ${this.id} audio transcription failed: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = (await response.json()) as {
+      text?: string;
+      duration?: number;
+      language?: string;
+    };
+
+    return {
+      text: payload.text ?? "",
+      duration: payload.duration,
+      language: payload.language
     };
   }
 
