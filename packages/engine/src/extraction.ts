@@ -6,6 +6,7 @@ import { parse as parseCsvSync } from "csv-parse/sync";
 import { strFromU8, unzipSync } from "fflate";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
+import { fetchTranscript } from "youtube-transcript-plus";
 import { z } from "zod";
 import { firstMarkdownHeading } from "./markdown-ast.js";
 import { getProviderForTask } from "./providers/registry.js";
@@ -269,6 +270,64 @@ export async function extractAudioTranscription(
         providerId: provider.id,
         providerModel: provider.model,
         warnings: [`Audio transcription failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+export async function extractYoutubeTranscript(input: {
+  videoId: string;
+  url: string;
+}): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const result = await fetchTranscript(input.videoId, { videoDetails: true });
+
+    const details = result.videoDetails;
+    const title = details?.title ?? `YouTube ${input.videoId}`;
+    const transcriptText = result.segments?.map((part: { text: string }) => part.text).join(" ") ?? "";
+
+    const sections: string[] = [`# ${title}`];
+
+    const metaLines: string[] = [];
+    if (details?.author) metaLines.push(`**Author:** ${details.author}`);
+    if (details?.lengthSeconds) {
+      const seconds = details.lengthSeconds;
+      const minutes = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      metaLines.push(`**Duration:** ${minutes}:${String(secs).padStart(2, "0")}`);
+    }
+    if (details?.viewCount) metaLines.push(`**Views:** ${Number(details.viewCount).toLocaleString()}`);
+    metaLines.push(`**URL:** ${input.url}`);
+
+    if (metaLines.length) {
+      sections.push(metaLines.join("\n"));
+    }
+
+    if (transcriptText.trim()) {
+      sections.push(`## Transcript\n\n${transcriptText.trim()}`);
+    }
+
+    const extractedText = sections.join("\n\n");
+
+    const metadata: Record<string, string> = {};
+    if (details?.title) metadata.title = details.title;
+    if (details?.author) metadata.author = details.author;
+    if (details?.lengthSeconds) metadata.duration = String(details.lengthSeconds);
+    if (details?.viewCount) metadata.viewCount = String(details.viewCount);
+
+    return {
+      title,
+      extractedText: extractedText || undefined,
+      artifact: {
+        ...extractionMetadata("youtube", "text/html", "youtube_transcript"),
+        metadata: Object.keys(metadata).length ? metadata : undefined
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("youtube", "text/html", "youtube_transcript"),
+        warnings: [`YouTube transcript extraction failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
       }
     };
   }
