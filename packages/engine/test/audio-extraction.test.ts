@@ -2,8 +2,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultVaultConfig } from "../src/config.js";
+import { extractAudioTranscription } from "../src/extraction.js";
 import { createProvider } from "../src/index.js";
 import { OpenAiCompatibleProviderAdapter } from "../src/providers/openai-compatible.js";
+import * as registry from "../src/providers/registry.js";
 import type { ProviderConfig } from "../src/types.js";
 
 afterEach(() => {
@@ -101,5 +103,71 @@ describe("provider audio capability", () => {
   it("anthropic provider does not include audio capability", async () => {
     const provider = await createProvider("test", { type: "anthropic", model: "claude-sonnet-4-20250514" } as ProviderConfig, rootDir);
     expect(provider.capabilities.has("audio")).toBe(false);
+  });
+});
+
+describe("extractAudioTranscription", () => {
+  it("returns transcript text and artifact when provider is available", async () => {
+    const mockProvider = {
+      id: "mock-audio",
+      type: "openai" as const,
+      model: "whisper-1",
+      capabilities: new Set(["audio", "chat", "structured"] as const),
+      generateText: vi.fn(),
+      generateStructured: vi.fn(),
+      transcribeAudio: vi.fn().mockResolvedValue({
+        text: "The quick brown fox jumps over the lazy dog.",
+        duration: 5.2,
+        language: "en"
+      })
+    };
+    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as any);
+
+    const result = await extractAudioTranscription("/tmp/test-vault", {
+      mimeType: "audio/mpeg",
+      bytes: Buffer.from("fake-audio"),
+      fileName: "test.mp3"
+    });
+
+    expect(result.extractedText).toBe("The quick brown fox jumps over the lazy dog.");
+    expect(result.artifact.extractor).toBe("audio_transcription");
+    expect(result.artifact.sourceKind).toBe("audio");
+    expect(result.artifact.providerId).toBe("mock-audio");
+    expect(result.artifact.providerModel).toBe("whisper-1");
+    expect(result.artifact.metadata?.duration).toBe("5.2");
+    expect(result.artifact.metadata?.language).toBe("en");
+  });
+
+  it("returns warning artifact when no audio provider is configured", async () => {
+    vi.spyOn(registry, "getProviderForTask").mockRejectedValue(new Error('No provider configured for task "audioProvider".'));
+
+    const result = await extractAudioTranscription("/tmp/test-vault", {
+      mimeType: "audio/wav",
+      bytes: Buffer.from("fake-audio")
+    });
+
+    expect(result.extractedText).toBeUndefined();
+    expect(result.artifact.warnings).toBeDefined();
+    expect(result.artifact.warnings![0]).toContain("unavailable");
+  });
+
+  it("returns warning artifact when provider lacks audio capability", async () => {
+    const mockProvider = {
+      id: "no-audio",
+      type: "heuristic" as const,
+      model: "heuristic-v1",
+      capabilities: new Set(["chat", "structured"] as const),
+      generateText: vi.fn(),
+      generateStructured: vi.fn()
+    };
+    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as any);
+
+    const result = await extractAudioTranscription("/tmp/test-vault", {
+      mimeType: "audio/mpeg",
+      bytes: Buffer.from("fake-audio")
+    });
+
+    expect(result.extractedText).toBeUndefined();
+    expect(result.artifact.warnings![0]).toContain("unavailable");
   });
 });

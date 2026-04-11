@@ -213,6 +213,67 @@ export async function extractImageWithVision(
   }
 }
 
+export async function extractAudioTranscription(
+  rootDir: string,
+  input: { mimeType: string; bytes: Buffer; fileName?: string }
+): Promise<{ extractedText?: string; artifact: SourceExtractionArtifact }> {
+  let provider: ProviderAdapter;
+  try {
+    provider = await getProviderForTask(rootDir, "audioProvider");
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("audio", input.mimeType, "audio_transcription"),
+        warnings: [`Audio transcription unavailable: ${error instanceof Error ? error.message : "provider not configured"}`]
+      }
+    };
+  }
+
+  if (!provider.capabilities.has("audio") || !provider.transcribeAudio) {
+    return {
+      artifact: {
+        ...extractionMetadata("audio", input.mimeType, "audio_transcription"),
+        warnings: [`Audio transcription unavailable for provider ${provider.id}. Configure a provider with audio capability.`]
+      }
+    };
+  }
+
+  try {
+    const result = await provider.transcribeAudio({
+      mimeType: input.mimeType,
+      bytes: input.bytes,
+      fileName: input.fileName
+    });
+
+    const metadata: Record<string, string> = {};
+    if (result.duration !== undefined) {
+      metadata.duration = String(result.duration);
+    }
+    if (result.language) {
+      metadata.language = result.language;
+    }
+
+    return {
+      extractedText: result.text || undefined,
+      artifact: {
+        ...extractionMetadata("audio", input.mimeType, "audio_transcription"),
+        providerId: provider.id,
+        providerModel: provider.model,
+        metadata: Object.keys(metadata).length ? metadata : undefined
+      }
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("audio", input.mimeType, "audio_transcription"),
+        providerId: provider.id,
+        providerModel: provider.model,
+        warnings: [`Audio transcription failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
 function normalizePdfMetadata(raw: unknown): Record<string, string> | undefined {
   if (!raw || typeof raw !== "object") {
     return undefined;
