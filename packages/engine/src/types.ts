@@ -9,7 +9,8 @@ export const providerCapabilitySchema = z.enum([
   "embeddings",
   "streaming",
   "local",
-  "image_generation"
+  "image_generation",
+  "audio"
 ]);
 
 export type ProviderCapability = z.infer<typeof providerCapabilitySchema>;
@@ -89,6 +90,8 @@ export type SourceKind =
   | "chat_export"
   | "email"
   | "calendar"
+  | "audio"
+  | "youtube"
   | "binary"
   | "code";
 export type SourceCaptureType = "arxiv" | "doi" | "tweet" | "article" | "url";
@@ -168,6 +171,19 @@ export interface ImageGenerationResponse {
   revisedPrompt?: string;
 }
 
+export interface AudioTranscriptionRequest {
+  mimeType: string;
+  bytes: Buffer;
+  fileName?: string;
+  language?: string;
+}
+
+export interface AudioTranscriptionResponse {
+  text: string;
+  duration?: number;
+  language?: string;
+}
+
 export interface ProviderAdapter {
   readonly id: string;
   readonly type: ProviderType;
@@ -177,6 +193,7 @@ export interface ProviderAdapter {
   generateStructured<T>(request: GenerationRequest, schema: z.ZodType<T>): Promise<T>;
   embedTexts?(texts: string[]): Promise<number[][]>;
   generateImage?(request: ImageGenerationRequest): Promise<ImageGenerationResponse>;
+  transcribeAudio?(request: AudioTranscriptionRequest): Promise<AudioTranscriptionResponse>;
 }
 
 export interface ProviderConfig {
@@ -350,7 +367,9 @@ export type ExtractionKind =
   | "chat_export_text"
   | "email_text"
   | "calendar_text"
-  | "image_vision";
+  | "image_vision"
+  | "audio_transcription"
+  | "youtube_transcript";
 
 export interface ExtractionTerm {
   name: string;
