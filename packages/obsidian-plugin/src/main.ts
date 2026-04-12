@@ -1,4 +1,5 @@
 import { FileSystemAdapter, Notice, Plugin, type WorkspaceLeaf } from "obsidian";
+import cliCompat from "../cli-compat.json";
 import { ManagedProcesses } from "./cli/managed-processes";
 import { CliRunner } from "./cli/run";
 import { compareSemver, probeCliVersion } from "./cli/version-check";
@@ -12,10 +13,7 @@ import { RunLogView } from "./views/RunLogView";
 import { readFreshness } from "./workspace/freshness";
 import { resolveWorkspaceRoot } from "./workspace/resolve-root";
 
-interface PluginManifestLike {
-  version: string;
-  swarmvaultCliMinVersion?: string;
-}
+const MIN_CLI_VERSION: string = cliCompat.minCliVersion;
 
 export default class SwarmVaultPlugin extends Plugin {
   settings: SwarmVaultSettings = { ...DEFAULT_SETTINGS };
@@ -157,11 +155,10 @@ export default class SwarmVaultPlugin extends Plugin {
   private async verifyCli(opts: { silent?: boolean } = {}): Promise<void> {
     try {
       const info = await probeCliVersion(this.settings.cliBinary, this.cliRunner);
-      const manifestMin = this.manifestMinCliVersion();
       this.updateStatusBar({ cliVersion: info.version, cliMissing: false });
-      if (manifestMin && compareSemver(info.version, manifestMin) < 0 && !opts.silent) {
+      if (compareSemver(info.version, MIN_CLI_VERSION) < 0 && !opts.silent) {
         new Notice(
-          `SwarmVault CLI ${info.version} is older than the required ${manifestMin}. Run \`npm i -g @swarmvaultai/cli@latest\`.`,
+          `SwarmVault CLI ${info.version} is older than the required ${MIN_CLI_VERSION}. Run \`npm i -g @swarmvaultai/cli@latest\`.`,
           10_000
         );
       }
@@ -176,10 +173,5 @@ export default class SwarmVaultPlugin extends Plugin {
           : String(err);
       new Notice(message, 8_000);
     }
-  }
-
-  private manifestMinCliVersion(): string | null {
-    const manifest = this.manifest as unknown as PluginManifestLike | undefined;
-    return manifest?.swarmvaultCliMinVersion ?? null;
   }
 }

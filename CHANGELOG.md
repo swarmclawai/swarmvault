@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.30
+
+- Prepared the Obsidian plugin for the community marketplace submission: rewrote the manifest description so it no longer references the host app, removed the disallowed `swarmvaultCliMinVersion` and `fundingUrl` fields, and relocated the CLI compatibility pin to `packages/obsidian-plugin/cli-compat.json` (bundled into the plugin at build time)
+- Added `manifest.json` at the repo root as a byte-identical copy of the plugin manifest so the Obsidian validator can fetch it via the standard repo-root URL
+- Tightened `check-release-sync.mjs` to enforce the marketplace allow-list of manifest keys, verify the root manifest matches the plugin manifest exactly, and pin `cli-compat.json` minCliVersion to be at or below the monorepo root version
+
 ## 0.7.29
 
 - Added first-party Obsidian plugin (`@swarmvaultai/obsidian-plugin`) that drives the SwarmVault CLI from inside Obsidian: status bar shows workspace + compile freshness, command palette runs init/ingest/add/compile/lint/watch/serve, Query from current note returns answers with page_id→wikilink citations, Run Log view streams live stdout/stderr of every invocation, and long-running `watch`/`graph serve` processes are tracked in a managed-processes registry that drains on plugin unload

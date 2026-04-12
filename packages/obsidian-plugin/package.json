@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/obsidian-plugin",
-  "version": "0.7.29",
+  "version": "0.7.30",
   "description": "Drive your SwarmVault workspace from inside Obsidian.",
   "private": true,
   "type": "module",

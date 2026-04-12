@@ -26,8 +26,14 @@ const viewerPackageJson = JSON.parse(await fs.readFile(path.join(repoRoot, "pack
 const obsidianPluginPackageJson = JSON.parse(
   await fs.readFile(path.join(repoRoot, "packages", "obsidian-plugin", "package.json"), "utf8")
 );
-const obsidianPluginManifest = JSON.parse(
-  await fs.readFile(path.join(repoRoot, "packages", "obsidian-plugin", "manifest.json"), "utf8")
+const obsidianPluginManifestRaw = await fs.readFile(
+  path.join(repoRoot, "packages", "obsidian-plugin", "manifest.json"),
+  "utf8"
+);
+const obsidianPluginManifest = JSON.parse(obsidianPluginManifestRaw);
+const obsidianRootManifestRaw = await fs.readFile(path.join(repoRoot, "manifest.json"), "utf8");
+const obsidianPluginCliCompat = JSON.parse(
+  await fs.readFile(path.join(repoRoot, "packages", "obsidian-plugin", "cli-compat.json"), "utf8")
 );
 const skillContent = await fs.readFile(path.join(repoRoot, "skills", "swarmvault", "SKILL.md"), "utf8");
 const cliSource = await fs.readFile(path.join(repoRoot, "packages", "cli", "src", "index.ts"), "utf8");
@@ -59,14 +65,35 @@ assertCondition(
   obsidianPluginManifest.version === rootVersion,
   `Obsidian plugin manifest.json version ${obsidianPluginManifest.version} does not match root package version ${rootVersion}`
 );
+const ALLOWED_MANIFEST_KEYS = new Set([
+  "id",
+  "name",
+  "version",
+  "minAppVersion",
+  "description",
+  "author",
+  "authorUrl",
+  "fundingUrl",
+  "helpUrl",
+  "isDesktopOnly"
+]);
+for (const key of Object.keys(obsidianPluginManifest)) {
+  assertCondition(
+    ALLOWED_MANIFEST_KEYS.has(key),
+    `Obsidian plugin manifest.json contains disallowed key \`${key}\`. Obsidian's marketplace validator rejects unknown fields.`
+  );
+}
 assertCondition(
-  typeof obsidianPluginManifest.swarmvaultCliMinVersion === "string" &&
-    obsidianPluginManifest.swarmvaultCliMinVersion.length > 0,
-  "Obsidian plugin manifest.json must declare swarmvaultCliMinVersion"
+  obsidianPluginManifestRaw === obsidianRootManifestRaw,
+  "Root manifest.json must be byte-identical to packages/obsidian-plugin/manifest.json. Copy the plugin manifest to the repo root before release."
 );
 assertCondition(
-  compareSemver(obsidianPluginManifest.swarmvaultCliMinVersion, rootVersion) <= 0,
-  `Obsidian plugin swarmvaultCliMinVersion ${obsidianPluginManifest.swarmvaultCliMinVersion} must be <= root version ${rootVersion}`
+  typeof obsidianPluginCliCompat.minCliVersion === "string" && obsidianPluginCliCompat.minCliVersion.length > 0,
+  "packages/obsidian-plugin/cli-compat.json must declare minCliVersion"
+);
+assertCondition(
+  compareSemver(obsidianPluginCliCompat.minCliVersion, rootVersion) <= 0,
+  `Obsidian plugin cli-compat.json minCliVersion ${obsidianPluginCliCompat.minCliVersion} must be <= root version ${rootVersion}`
 );
 
 console.log(`Release sync check passed for version ${rootVersion}.`);
