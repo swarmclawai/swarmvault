@@ -1608,6 +1608,28 @@ export interface BenchmarkSummary {
   reductionRatio: number;
 }
 
+/**
+ * Per-source-class slice of a benchmark run. The graph-guided tokens are
+ * computed against the same traversal seeds that produced the corpus-wide
+ * numbers, then narrowed to nodes/edges/pages whose `sourceClass` matches
+ * this class. The naive tokens come from manifests whose
+ * {@link SourceManifest.sourceClass} matches this class. Empty classes are
+ * represented as zeroed entries rather than being omitted so downstream
+ * consumers never have to branch on `undefined`.
+ */
+export interface BenchmarkByClassEntry {
+  sourceClass: SourceClass;
+  sourceCount: number;
+  pageCount: number;
+  nodeCount: number;
+  godNodeCount: number;
+  corpusWords: number;
+  corpusTokens: number;
+  finalContextTokens: number;
+  reductionRatio: number;
+  perQuestion: BenchmarkQuestionResult[];
+}
+
 export interface BenchmarkArtifact {
   generatedAt: string;
   graphHash: string;
@@ -1620,6 +1642,7 @@ export interface BenchmarkArtifact {
   sampleQuestions: string[];
   perQuestion: BenchmarkQuestionResult[];
   summary: BenchmarkSummary;
+  byClass: Record<SourceClass, BenchmarkByClassEntry>;
 }
 
 export interface EmbeddingCacheEntry {
@@ -1665,6 +1688,24 @@ export interface GraphReportArtifact {
     stale: boolean;
     summary: BenchmarkSummary;
     questionCount: number;
+    /**
+     * Compact per-source-class mirror of the benchmark summary. Populated
+     * from {@link BenchmarkArtifact.byClass} whenever the benchmark artifact
+     * is available at report build time. Kept optional so older benchmark
+     * files without a `byClass` field still produce a valid report.
+     */
+    byClass?: Record<
+      SourceClass,
+      {
+        sourceCount: number;
+        pageCount: number;
+        nodeCount: number;
+        godNodeCount: number;
+        finalContextTokens: number;
+        naiveCorpusTokens: number;
+        reductionRatio: number;
+      }
+    >;
   };
   godNodes: Array<{
     nodeId: string;

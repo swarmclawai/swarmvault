@@ -1,7 +1,39 @@
-import type { GraphArtifact, GraphReportArtifact } from "./types.js";
+import { ALL_SOURCE_CLASSES } from "./source-classification.js";
+import type { GraphArtifact, GraphReportArtifact, SourceClass } from "./types.js";
 
 function htmlEscape(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+const SOURCE_CLASS_LABELS: Record<SourceClass, string> = {
+  first_party: "First-party",
+  third_party: "Third-party",
+  resource: "Resource",
+  generated: "Generated"
+};
+
+/**
+ * Emit the per-source-class benchmark table in the HTML report. Returns an
+ * empty string when the report has no benchmark or the benchmark predates
+ * the `byClass` payload so the report stays valid without it.
+ */
+function renderBenchmarkByClassSection(report: GraphReportArtifact | null): string {
+  const byClass = report?.benchmark?.byClass;
+  if (!byClass) {
+    return "";
+  }
+  const rows = ALL_SOURCE_CLASSES.map((sourceClass) => {
+    const entry = byClass[sourceClass];
+    const reductionPct = (entry.reductionRatio * 100).toFixed(1);
+    return `<tr><td>${htmlEscape(SOURCE_CLASS_LABELS[sourceClass])}</td><td>${entry.sourceCount}</td><td>${entry.pageCount}</td><td>${entry.nodeCount}</td><td>${entry.godNodeCount}</td><td>${entry.naiveCorpusTokens}</td><td>${entry.finalContextTokens}</td><td>${reductionPct}%</td></tr>`;
+  }).join("\n");
+  return `<h2>Benchmark By Source Class</h2>
+<table>
+<thead><tr><th>Class</th><th>Sources</th><th>Pages</th><th>Nodes</th><th>God Nodes</th><th>Naive Tokens</th><th>Guided Tokens</th><th>Reduction</th></tr></thead>
+<tbody>
+${rows}
+</tbody>
+</table>`;
 }
 
 function nodeTypeColor(type: string): string {
@@ -306,6 +338,8 @@ ${warnings.map((w) => `<li>${htmlEscape(w)}</li>`).join("\n")}
 </ul>`
     : ""
 }
+
+${renderBenchmarkByClassSection(report)}
 
 <h2>Pages</h2>
 <input type="text" id="page-filter" placeholder="Filter pages..." />

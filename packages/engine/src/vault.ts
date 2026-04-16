@@ -9,6 +9,7 @@ import { analysisSignature, analyzeSource } from "./analysis.js";
 import {
   benchmarkQueryTokens,
   buildBenchmarkArtifact,
+  buildBenchmarkByClass,
   defaultBenchmarkQuestionsForGraph,
   estimateCorpusWords,
   graphHash
@@ -24,7 +25,7 @@ import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence
 import { defaultVaultSchema, initWorkspace, loadVaultConfig, PRIMARY_SCHEMA_FILENAME } from "./config.js";
 import { runConsolidation } from "./consolidate.js";
 import { runDeepLint } from "./deep-lint.js";
-import { embeddingSimilarityEdges, semanticGraphMatches, semanticPageSearch } from "./embeddings.js";
+import { embeddingSimilarityEdges, filterGraphBySourceClass, semanticGraphMatches, semanticPageSearch } from "./embeddings.js";
 import { markSuperseded, resolveDecayConfig, runDecayPass } from "./freshness.js";
 import { enrichGraph } from "./graph-enrichment.js";
 import {
@@ -77,7 +78,7 @@ import {
   schemaCategoryLabels
 } from "./schema.js";
 import { mergeSearchResults, rebuildSearchIndex, searchPages } from "./search.js";
-import { aggregateManifestSourceClass } from "./source-classification.js";
+import { ALL_SOURCE_CLASSES, aggregateManifestSourceClass } from "./source-classification.js";
 import { listGuidedSourceSessions, updateGuidedSourceSessionStatus } from "./source-sessions.js";
 import type {
   ApprovalBundleType,
@@ -94,6 +95,7 @@ import type {
   ApprovalSummary,
   BenchmarkArtifact,
   BenchmarkOptions,
+  BenchmarkQuestionResult,
   BlastRadiusResult,
   CandidatePromotionConfig,
   CandidateRecord,
@@ -5907,11 +5909,20 @@ export async function benchmarkVault(rootDir: string, options: BenchmarkOptions 
   const manifests = await listManifests(rootDir);
   const pageContentsById = new Map<string, string>();
   let corpusWords = 0;
+  const perClassCorpusWords: Record<SourceClass, number> = {
+    first_party: 0,
+    third_party: 0,
+    resource: 0,
+    generated: 0
+  };
 
   for (const manifest of manifests) {
     const extractedText = await readExtractedText(rootDir, manifest);
     if (extractedText) {
-      corpusWords += estimateCorpusWords([extractedText]);
+      const words = estimateCorpusWords([extractedText]);
+      corpusWords += words;
+      const manifestClass = manifest.sourceClass ?? "first_party";
+      perClassCorpusWords[manifestClass] = (perClassCorpusWords[manifestClass] ?? 0) + words;
     }
   }
 
@@ -5945,11 +5956,56 @@ export async function benchmarkVault(rootDir: string, options: BenchmarkOptions 
     })
   );
 
+  // Per-class traversal: restrict seeds and traversal to a class-filtered
+  // graph view so the graph-guided token numbers for each class are honest
+  // rather than a naive re-slice of the corpus-wide result.
+  const perClassPerQuestion: Record<SourceClass, BenchmarkQuestionResult[]> = {
+    first_party: [],
+    third_party: [],
+    resource: [],
+    generated: []
+  };
+  for (const sourceClass of ALL_SOURCE_CLASSES) {
+    const filteredGraph = filterGraphBySourceClass(graph, sourceClass);
+    if (!filteredGraph.nodes.length) {
+      continue;
+    }
+    const classPageContents = new Map<string, string>();
+    for (const page of filteredGraph.pages) {
+      const content = pageContentsById.get(page.id);
+      if (content !== undefined) {
+        classPageContents.set(page.id, content);
+      }
+    }
+    const classResults = await Promise.all(
+      sampleQuestions.map(async (question) => {
+        const result = await runResolvedGraphQuery(rootDir, filteredGraph, question, { budget: 12 });
+        const metrics = benchmarkQueryTokens(filteredGraph, result, classPageContents);
+        return {
+          question,
+          queryTokens: metrics.queryTokens,
+          reduction: metrics.reduction,
+          visitedNodeIds: result.visitedNodeIds,
+          visitedEdgeIds: result.visitedEdgeIds,
+          pageIds: result.pageIds
+        } satisfies BenchmarkQuestionResult;
+      })
+    );
+    perClassPerQuestion[sourceClass] = classResults;
+  }
+
+  const byClass = buildBenchmarkByClass({
+    graph,
+    perClassCorpusWords,
+    perClassPerQuestion
+  });
+
   const artifact = buildBenchmarkArtifact({
     graph,
     corpusWords,
     questions: sampleQuestions,
-    perQuestion
+    perQuestion,
+    byClass
   });
 
   await writeJsonFile(paths.benchmarkPath, artifact);

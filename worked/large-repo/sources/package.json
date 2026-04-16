@@ -1,0 +1,11 @@
+{
+  "name": "large-repo-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fixture package.json for the SwarmVault large-repo worked example.",
+  "main": "dist/app.js",
+  "dependencies": {
+    "left-pad": "0.0.0"
+  }
+}

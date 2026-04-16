@@ -1,4 +1,13 @@
-import type { BenchmarkArtifact, BenchmarkQuestionResult, GraphArtifact, GraphPage, GraphQueryResult } from "./types.js";
+import { ALL_SOURCE_CLASSES } from "./source-classification.js";
+import type {
+  BenchmarkArtifact,
+  BenchmarkByClassEntry,
+  BenchmarkQuestionResult,
+  GraphArtifact,
+  GraphPage,
+  GraphQueryResult,
+  SourceClass
+} from "./types.js";
 import { normalizeWhitespace, sha256, uniqueBy } from "./utils.js";
 
 const CHARS_PER_TOKEN = 4;
@@ -151,11 +160,62 @@ export function defaultBenchmarkQuestionsForGraph(graph: GraphArtifact, maxQuest
   return uniqueBy(questions, (item) => item).slice(0, normalizedLimit);
 }
 
+/**
+ * Build the per-source-class slice of a benchmark artifact. The resulting
+ * record always has one entry per {@link ALL_SOURCE_CLASSES} member so
+ * callers never have to branch on `undefined`; classes absent from the vault
+ * collapse to zeroed entries. `perQuestion` values are already class-scoped
+ * by the caller, and corpus tokens are recomputed from `corpusWords` using
+ * the same 75-words-per-100-tokens ratio that
+ * {@link buildBenchmarkArtifact} applies to the aggregate.
+ */
+export function buildBenchmarkByClass(input: {
+  graph: GraphArtifact;
+  perClassCorpusWords: Record<SourceClass, number>;
+  perClassPerQuestion: Record<SourceClass, BenchmarkQuestionResult[]>;
+}): Record<SourceClass, BenchmarkByClassEntry> {
+  const entries = {} as Record<SourceClass, BenchmarkByClassEntry>;
+  for (const sourceClass of ALL_SOURCE_CLASSES) {
+    const corpusWords = Math.max(0, Math.round(input.perClassCorpusWords[sourceClass] ?? 0));
+    const corpusTokens = corpusWords > 0 ? Math.max(1, Math.round(corpusWords * (100 / 75))) : 0;
+    const sourceCount = input.graph.sources.filter((source) => source.sourceClass === sourceClass).length;
+    const pageCount = input.graph.pages.filter((page) => page.sourceClass === sourceClass).length;
+    const nodeCount = input.graph.nodes.filter((node) => node.sourceClass === sourceClass).length;
+    const godNodeCount = input.graph.nodes.filter((node) => node.sourceClass === sourceClass && Boolean(node.isGodNode)).length;
+    const perQuestionRaw = input.perClassPerQuestion[sourceClass] ?? [];
+    const perQuestion = perQuestionRaw
+      .filter((entry) => entry.queryTokens > 0)
+      .map((entry) => ({
+        ...entry,
+        reduction: corpusTokens > 0 ? Number((1 - entry.queryTokens / Math.max(1, corpusTokens)).toFixed(3)) : 0
+      }));
+    const finalContextTokens = perQuestion.length
+      ? Math.max(1, Math.round(perQuestion.reduce((total, entry) => total + entry.queryTokens, 0) / perQuestion.length))
+      : 0;
+    const reductionRatio =
+      finalContextTokens && corpusTokens > 0 ? Number((1 - finalContextTokens / Math.max(1, corpusTokens)).toFixed(3)) : 0;
+    entries[sourceClass] = {
+      sourceClass,
+      sourceCount,
+      pageCount,
+      nodeCount,
+      godNodeCount,
+      corpusWords,
+      corpusTokens,
+      finalContextTokens,
+      reductionRatio,
+      perQuestion
+    };
+  }
+  return entries;
+}
+
 export function buildBenchmarkArtifact(input: {
   graph: GraphArtifact;
   corpusWords: number;
   questions: string[];
   perQuestion: BenchmarkQuestionResult[];
+  byClass?: Record<SourceClass, BenchmarkByClassEntry>;
 }): BenchmarkArtifact {
   const corpusTokens = Math.max(1, Math.round(input.corpusWords * (100 / 75)));
   const perQuestion = input.perQuestion
@@ -181,6 +241,26 @@ export function buildBenchmarkArtifact(input: {
     reductionRatio
   } satisfies BenchmarkArtifact["summary"];
 
+  const emptyPerClassWords = {
+    first_party: 0,
+    third_party: 0,
+    resource: 0,
+    generated: 0
+  } satisfies Record<SourceClass, number>;
+  const emptyPerClassQuestions = {
+    first_party: [] as BenchmarkQuestionResult[],
+    third_party: [] as BenchmarkQuestionResult[],
+    resource: [] as BenchmarkQuestionResult[],
+    generated: [] as BenchmarkQuestionResult[]
+  } satisfies Record<SourceClass, BenchmarkQuestionResult[]>;
+  const byClass =
+    input.byClass ??
+    buildBenchmarkByClass({
+      graph: input.graph,
+      perClassCorpusWords: emptyPerClassWords,
+      perClassPerQuestion: emptyPerClassQuestions
+    });
+
   return {
     generatedAt: new Date().toISOString(),
     graphHash: graphHash(input.graph),
@@ -192,6 +272,7 @@ export function buildBenchmarkArtifact(input: {
     reductionRatio,
     sampleQuestions: input.questions,
     perQuestion,
-    summary
+    summary,
+    byClass
   };
 }

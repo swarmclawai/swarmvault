@@ -4,6 +4,7 @@ import { filterGraphBySourceClass, sourceClassBreakdown } from "./embeddings.js"
 import { describeSimilarityReasons } from "./graph-enrichment.js";
 import { shortestGraphPath } from "./graph-tools.js";
 import { resolveLargeRepoDefaults } from "./large-repo-defaults.js";
+import { ALL_SOURCE_CLASSES } from "./source-classification.js";
 import type {
   BenchmarkArtifact,
   Freshness,
@@ -1118,6 +1119,40 @@ function buildKnowledgeGaps(graph: GraphArtifact): {
   return { isolatedNodes, thinCommunityCount, ambiguousEdgeRatio, warnings };
 }
 
+const SOURCE_CLASS_LABELS: Record<SourceClass, string> = {
+  first_party: "First-party",
+  third_party: "Third-party",
+  resource: "Resource",
+  generated: "Generated"
+};
+
+/**
+ * Render the per-source-class benchmark breakdown as a Markdown table. Emits
+ * an empty array when the benchmark has no `byClass` payload so older
+ * benchmark artifacts that predate this slice do not produce a misleading
+ * all-zeros table.
+ */
+function benchmarkByClassTableLines(byClass: NonNullable<GraphReportArtifact["benchmark"]>["byClass"] | undefined): string[] {
+  if (!byClass) {
+    return [];
+  }
+  const lines: string[] = [
+    "### Benchmark By Source Class",
+    "",
+    "| Class | Sources | Pages | Nodes | God Nodes | Naive Tokens | Guided Tokens | Reduction |",
+    "| ----- | ------- | ----- | ----- | --------- | ------------ | ------------- | --------- |"
+  ];
+  for (const sourceClass of ALL_SOURCE_CLASSES) {
+    const entry = byClass[sourceClass];
+    const reductionPct = (entry.reductionRatio * 100).toFixed(1);
+    lines.push(
+      `| ${SOURCE_CLASS_LABELS[sourceClass]} | ${entry.sourceCount} | ${entry.pageCount} | ${entry.nodeCount} | ${entry.godNodeCount} | ${entry.naiveCorpusTokens} | ${entry.finalContextTokens} | ${reductionPct}% |`
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
 export function buildGraphReportArtifact(input: {
   graph: GraphArtifact;
   communityPages: Pick<GraphPage, "id" | "path" | "title">[];
@@ -1194,7 +1229,26 @@ export function buildGraphReportArtifact(input: {
           generatedAt: input.benchmark.generatedAt,
           stale: input.benchmarkStale ?? false,
           summary: input.benchmark.summary,
-          questionCount: input.benchmark.sampleQuestions.length
+          questionCount: input.benchmark.sampleQuestions.length,
+          byClass: input.benchmark.byClass
+            ? (Object.fromEntries(
+                ALL_SOURCE_CLASSES.map((sourceClass) => {
+                  const entry = input.benchmark?.byClass?.[sourceClass];
+                  return [
+                    sourceClass,
+                    {
+                      sourceCount: entry?.sourceCount ?? 0,
+                      pageCount: entry?.pageCount ?? 0,
+                      nodeCount: entry?.nodeCount ?? 0,
+                      godNodeCount: entry?.godNodeCount ?? 0,
+                      finalContextTokens: entry?.finalContextTokens ?? 0,
+                      naiveCorpusTokens: entry?.corpusTokens ?? 0,
+                      reductionRatio: entry?.reductionRatio ?? 0
+                    }
+                  ];
+                })
+              ) as NonNullable<GraphReportArtifact["benchmark"]>["byClass"])
+            : undefined
         }
       : undefined,
     godNodes: godNodes.map((node) => ({
@@ -1341,7 +1395,8 @@ export function buildGraphReportPage(input: {
           `- Unique Nodes Considered: ${input.report.benchmark.summary.uniqueVisitedNodes}`,
           `- Reduction Ratio: ${(input.report.benchmark.summary.reductionRatio * 100).toFixed(1)}%`,
           `- Questions: ${input.report.benchmark.questionCount}`,
-          ""
+          "",
+          ...benchmarkByClassTableLines(input.report.benchmark.byClass)
         ]
       : ["- No benchmark results yet.", ""]),
     "## Top God Nodes",

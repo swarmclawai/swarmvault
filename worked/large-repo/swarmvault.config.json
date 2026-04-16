@@ -1,0 +1,12 @@
+{
+  "graph": {
+    "similarityIdfFloor": 0.75,
+    "godNodeLimit": 12
+  },
+  "repoAnalysis": {
+    "extractClasses": ["first_party", "third_party", "resource", "generated"],
+    "classifyGlobs": {
+      "resource": ["assets/**"]
+    }
+  }
+}
