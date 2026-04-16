@@ -1,6 +1,28 @@
 import type { GraphArtifact, GraphEdge, GraphHyperedge, GraphNode, SourceAnalysis, SourceManifest } from "./types.js";
 import { normalizeWhitespace, sha256, uniqueBy } from "./utils.js";
 
+/**
+ * Inputs the caller may supply to tune similarity scoring for large repos.
+ * Both knobs are optional; defaults match the "small repo" behavior that
+ * shipped before the large-repo defaults pass.
+ */
+export interface EnrichGraphOptions {
+  /**
+   * Minimum IDF weight a shared feature must carry to contribute to a
+   * similarity score. Below this floor the feature is dropped entirely.
+   * Defaults to 0.5.
+   */
+  similarityIdfFloor?: number;
+  /**
+   * Hard cap on the number of inferred similarity edges emitted. When more
+   * candidate edges exist than the cap allows, the lowest-confidence edges
+   * are dropped first. Defaults to Infinity (no cap).
+   */
+  similarityEdgeCap?: number;
+}
+
+const DEFAULT_SIMILARITY_IDF_FLOOR = 0.5;
+
 type SimilarityReason = NonNullable<GraphEdge["similarityReasons"]>[number];
 
 type NodeContext = {
@@ -97,27 +119,111 @@ function hasDistinctScope(left: GraphNode, right: GraphNode): boolean {
   return leftOnly || rightOnly;
 }
 
-function supportCount(values: Set<string> | undefined): number {
-  return values?.size ?? 0;
+/**
+ * Base category weight — how much impact a single "supported" feature in
+ * each category has before IDF weighting is applied. Category weights match
+ * the old hand-tuned values so small-repo behavior stays stable while IDF
+ * scaling prevents generic shared tokens from dominating large repos.
+ */
+const CATEGORY_BASE_WEIGHT: Record<SimilarityReason, number> = {
+  shared_concept: 0.46,
+  shared_entity: 0.34,
+  shared_symbol: 0.24,
+  shared_rationale_theme: 0.18,
+  shared_source_type: 0.1,
+  shared_tag: 0.12
+};
+
+/**
+ * Build a `(reason, value) -> idf` map from the document-frequency table
+ * shared across all nodes. `documentCount` must be the total number of
+ * nodes that could, in principle, support any feature (i.e. the full
+ * context count). Using `log((N + 1) / (df + 1)) + 1` keeps IDF positive
+ * and avoids div-by-zero for rare features.
+ */
+function buildIdfTable(
+  featureDocFrequency: Map<SimilarityReason, Map<string, number>>,
+  documentCount: number
+): Map<SimilarityReason, Map<string, number>> {
+  const idf = new Map<SimilarityReason, Map<string, number>>();
+  const safeDocCount = Math.max(1, documentCount);
+  for (const [reason, values] of featureDocFrequency.entries()) {
+    const inner = new Map<string, number>();
+    for (const [value, df] of values.entries()) {
+      inner.set(value, Math.log((safeDocCount + 1) / (df + 1)) + 1);
+    }
+    idf.set(reason, inner);
+  }
+  return idf;
 }
 
-function similarityScore(reasons: Map<SimilarityReason, Set<string>>): number {
-  const concept = supportCount(reasons.get("shared_concept"));
-  const entity = supportCount(reasons.get("shared_entity"));
-  const symbol = supportCount(reasons.get("shared_symbol"));
-  const rationale = supportCount(reasons.get("shared_rationale_theme"));
-  const sourceType = supportCount(reasons.get("shared_source_type"));
-  const tag = supportCount(reasons.get("shared_tag"));
-  const categoryCount = [...reasons.keys()].length;
-  const weighted =
-    (concept ? 0.46 + Math.min(0.12, (concept - 1) * 0.04) : 0) +
-    (entity ? 0.34 + Math.min(0.1, (entity - 1) * 0.03) : 0) +
-    (symbol ? 0.24 + Math.min(0.08, (symbol - 1) * 0.02) : 0) +
-    (rationale ? 0.18 + Math.min(0.08, (rationale - 1) * 0.03) : 0) +
-    (sourceType ? 0.1 : 0) +
-    (tag ? 0.12 + Math.min(0.04, (tag - 1) * 0.02) : 0);
-  const categoryBonus = categoryCount >= 3 ? 0.08 : categoryCount === 2 ? 0.04 : 0;
+/**
+ * Score a pair's shared features using IDF-weighted overlap. Features with
+ * IDF below `floor` are ignored so generic tokens (e.g. "javascript" seen
+ * in most nodes) do not inflate similarity. Category structure (which
+ * categories lit up) still contributes a small bonus to recognize breadth.
+ */
+function similarityScore(
+  reasons: Map<SimilarityReason, Set<string>>,
+  idfTable: Map<SimilarityReason, Map<string, number>>,
+  floor: number
+): number {
+  let weighted = 0;
+  let activeCategories = 0;
+  for (const [reason, values] of reasons.entries()) {
+    const idfByValue = idfTable.get(reason);
+    let categoryContribution = 0;
+    let hitCount = 0;
+    for (const value of values) {
+      const idfValue = idfByValue?.get(value) ?? 0;
+      if (idfValue < floor) {
+        continue;
+      }
+      hitCount++;
+      const base = CATEGORY_BASE_WEIGHT[reason] ?? 0.1;
+      // First hit in a category gets base weight scaled by IDF so rare
+      // tokens contribute more than generic ones. Additional hits add a
+      // smaller, IDF-scaled bonus capped at 0.12 to prevent runaway scores
+      // from many repeated generic matches.
+      if (hitCount === 1) {
+        categoryContribution += Math.min(base * 2, base * idfValue);
+      } else {
+        categoryContribution += Math.min(0.12, 0.04 * idfValue);
+      }
+    }
+    if (categoryContribution > 0) {
+      weighted += categoryContribution;
+      activeCategories++;
+    }
+  }
+  const categoryBonus = activeCategories >= 3 ? 0.08 : activeCategories === 2 ? 0.04 : 0;
   return Math.min(0.96, weighted + categoryBonus);
+}
+
+/**
+ * Filter a reasons map in place-style (returns a new map) so it only keeps
+ * feature values whose IDF is at or above the floor. The pruned map drives
+ * downstream serialization of `similarityReasons` on the emitted edge.
+ */
+function pruneReasonsByIdf(
+  reasons: Map<SimilarityReason, Set<string>>,
+  idfTable: Map<SimilarityReason, Map<string, number>>,
+  floor: number
+): Map<SimilarityReason, Set<string>> {
+  const pruned = new Map<SimilarityReason, Set<string>>();
+  for (const [reason, values] of reasons.entries()) {
+    const idfByValue = idfTable.get(reason);
+    const keep = new Set<string>();
+    for (const value of values) {
+      if ((idfByValue?.get(value) ?? 0) >= floor) {
+        keep.add(value);
+      }
+    }
+    if (keep.size > 0) {
+      pruned.set(reason, keep);
+    }
+  }
+  return pruned;
 }
 
 export function describeSimilarityReasons(reasons: SimilarityReason[] | undefined): string {
@@ -200,12 +306,36 @@ function buildSemanticSimilarityEdges(
   nodes: GraphNode[],
   edges: GraphEdge[],
   manifests: SourceManifest[],
-  analyses: SourceAnalysis[]
+  analyses: SourceAnalysis[],
+  options?: EnrichGraphOptions
 ): GraphEdge[] {
+  const idfFloor = options?.similarityIdfFloor ?? DEFAULT_SIMILARITY_IDF_FLOOR;
+  const similarityEdgeCap = Math.max(0, options?.similarityEdgeCap ?? Number.POSITIVE_INFINITY);
   const contexts = nodeContexts(nodes, manifests, analyses);
   const contextsById = new Map(contexts.map((context) => [context.node.id, context]));
   const directPairs = new Set(edges.map((edge) => pairKey(edge.source, edge.target)));
   const pairReasons = new Map<string, Map<SimilarityReason, Set<string>>>();
+
+  /**
+   * Document frequency: how many contexts contain each (reason, value)
+   * feature. Used to derive IDF weights so generic tokens contribute less
+   * than rare ones. Counting per-context matches the "documents" analogy
+   * used in classic TF-IDF.
+   */
+  const featureDocFrequency = new Map<SimilarityReason, Map<string, number>>();
+  for (const context of contexts) {
+    for (const [reason, values] of context.featureValues.entries()) {
+      let inner = featureDocFrequency.get(reason);
+      if (!inner) {
+        inner = new Map<string, number>();
+        featureDocFrequency.set(reason, inner);
+      }
+      for (const value of values) {
+        inner.set(value, (inner.get(value) ?? 0) + 1);
+      }
+    }
+  }
+  const idfTable = buildIdfTable(featureDocFrequency, contexts.length);
 
   for (const reason of ["shared_concept", "shared_entity", "shared_symbol", "shared_rationale_theme", "shared_source_type"] as const) {
     const buckets = new Map<string, string[]>();
@@ -251,7 +381,7 @@ function buildSemanticSimilarityEdges(
     }
   }
 
-  return [...pairReasons.entries()]
+  const candidates = [...pairReasons.entries()]
     .flatMap(([key, reasons]) => {
       const [leftId, rightId] = key.split("|");
       const left = contextsById.get(leftId)?.node;
@@ -259,13 +389,20 @@ function buildSemanticSimilarityEdges(
       if (!left || !right) {
         return [];
       }
-      const confidence = similarityScore(reasons);
+      // Prune below-floor features before we score so the reasons list
+      // that ships on the edge matches the features that actually
+      // contributed to the confidence number.
+      const prunedReasons = pruneReasonsByIdf(reasons, idfTable, idfFloor);
+      if (prunedReasons.size === 0) {
+        return [];
+      }
+      const confidence = similarityScore(prunedReasons, idfTable, idfFloor);
       if (confidence < 0.5) {
         return [];
       }
       return [
         {
-          id: `similar:${sha256(`${left.id}|${right.id}|${[...reasons.keys()].sort().join(",")}`).slice(0, 16)}`,
+          id: `similar:${sha256(`${left.id}|${right.id}|${[...prunedReasons.keys()].sort().join(",")}`).slice(0, 16)}`,
           source: left.id,
           target: right.id,
           relation: "semantically_similar_to",
@@ -276,12 +413,17 @@ function buildSemanticSimilarityEdges(
             [...left.sourceIds, ...right.sourceIds].sort((a, b) => a.localeCompare(b)),
             (value) => value
           ),
-          similarityReasons: [...reasons.keys()].sort((a, b) => a.localeCompare(b)),
+          similarityReasons: [...prunedReasons.keys()].sort((a, b) => a.localeCompare(b)),
           similarityBasis: "feature_overlap" as const
         }
       ];
     })
     .sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
+
+  if (candidates.length > similarityEdgeCap) {
+    return candidates.slice(0, similarityEdgeCap);
+  }
+  return candidates;
 }
 
 function buildTopicHyperedges(graph: GraphArtifact): GraphHyperedge[] {
@@ -372,9 +514,10 @@ export function enrichGraph(
   graph: Omit<GraphArtifact, "hyperedges">,
   manifests: SourceManifest[],
   analyses: SourceAnalysis[],
-  extraSimilarityEdges: GraphEdge[] = []
+  extraSimilarityEdges: GraphEdge[] = [],
+  options?: EnrichGraphOptions
 ): Pick<GraphArtifact, "edges" | "hyperedges"> {
-  const similarityEdges = buildSemanticSimilarityEdges(graph.nodes, graph.edges, manifests, analyses);
+  const similarityEdges = buildSemanticSimilarityEdges(graph.nodes, graph.edges, manifests, analyses, options);
   const enrichedEdges = uniqueBy([...graph.edges, ...similarityEdges, ...extraSimilarityEdges], (edge) => edge.id).sort((left, right) =>
     left.id.localeCompare(right.id)
   );

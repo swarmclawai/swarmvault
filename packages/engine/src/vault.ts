@@ -37,6 +37,7 @@ import {
   topGodNodes
 } from "./graph-tools.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
+import { resolveLargeRepoDefaults } from "./large-repo-defaults.js";
 import { recordSession } from "./logs.js";
 import {
   buildAggregatePage,
@@ -1660,6 +1661,28 @@ function applyNormLabel(nodes: GraphNode[]): GraphNode[] {
   return nodes.map((node) => (node.normLabel ? node : { ...node, normLabel: computeNormLabel(node.label) }));
 }
 
+/**
+ * Build a deterministic, one-line explanation for why a node shows up as a
+ * god-node. Prefers the most specific signal available: degrees that cross
+ * many communities get a "bridges N communities" phrasing, outliers get a
+ * "NσN above mean" phrasing, and the fallback uses raw degree.
+ */
+function describeGodNodeReason(degree: number, communityCount: number, degreeMean: number, degreeStd: number): string {
+  const parts = [`degree ${degree}`];
+  if (communityCount >= 3) {
+    parts.push(`across ${communityCount} communities`);
+  } else if (communityCount === 2) {
+    parts.push("bridges 2 communities");
+  }
+  if (degreeStd > 0) {
+    const sigma = (degree - degreeMean) / degreeStd;
+    if (sigma >= 1.5) {
+      parts.push(`${sigma.toFixed(1)}σ above mean`);
+    }
+  }
+  return parts.join(", ");
+}
+
 function deriveGraphMetrics(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -1756,6 +1779,14 @@ function deriveGraphMetrics(
     .sort((left, right) => right - left);
   const godNodeThreshold = degreeValues[Math.max(0, Math.floor(degreeValues.length * 0.1) - 1)] ?? 0;
 
+  // Precompute degree mean and standard deviation over the non-source
+  // population so we can report how many σ above the mean each god node
+  // sits. The values are deterministic and identical per graph snapshot.
+  const degreeMean = degreeValues.length > 0 ? degreeValues.reduce((sum, value) => sum + value, 0) / degreeValues.length : 0;
+  const degreeVariance =
+    degreeValues.length > 0 ? degreeValues.reduce((sum, value) => sum + (value - degreeMean) ** 2, 0) / degreeValues.length : 0;
+  const degreeStd = Math.sqrt(degreeVariance);
+
   const nextNodes = nodes.map((node) => {
     const neighborCommunities = new Set(
       [...(adjacency.get(node.id) ?? [])]
@@ -1769,13 +1800,15 @@ function deriveGraphMetrics(
       [...(adjacency.get(node.id) ?? [])]
         .map((neighborId) => communityMap.get(neighborId))
         .find((communityId): communityId is string => Boolean(communityId));
+    const isGodNode = node.type !== "source" && degree >= godNodeThreshold && degree > 0;
 
     return {
       ...node,
       communityId: inferredCommunityId,
       degree,
       bridgeScore,
-      isGodNode: node.type !== "source" && degree >= godNodeThreshold && degree > 0
+      isGodNode,
+      surpriseReason: isGodNode ? describeGodNodeReason(degree, neighborCommunities.size, degreeMean, degreeStd) : undefined
     };
   });
 
@@ -1786,7 +1819,16 @@ function deriveGraphMetrics(
 }
 
 function resetGraphNodeMetrics(nodes: GraphNode[]): GraphNode[] {
-  return nodes.map(({ communityId: _communityId, degree: _degree, bridgeScore: _bridgeScore, isGodNode: _isGodNode, ...node }) => node);
+  return nodes.map(
+    ({
+      communityId: _communityId,
+      degree: _degree,
+      bridgeScore: _bridgeScore,
+      isGodNode: _isGodNode,
+      surpriseReason: _surpriseReason,
+      ...node
+    }) => node
+  );
 }
 
 type GoPackageSymbolLookup = {
@@ -1930,7 +1972,7 @@ function buildGraph(
   pages: GraphPage[],
   sourceProjects: Record<string, string | null>,
   _codeIndex: CodeIndexArtifact,
-  options?: { communityResolution?: number }
+  options?: { communityResolution?: number; config?: VaultConfig | null }
 ): GraphArtifact {
   const manifestsById = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
   const goPackageSymbolLookups = buildGoPackageSymbolLookups(analyses, manifestsById);
@@ -2352,6 +2394,10 @@ function buildGraph(
     ...conceptMap.values(),
     ...entityMap.values()
   ];
+  const repoDefaults = resolveLargeRepoDefaults({
+    nodeCount: graphNodes.length,
+    config: options?.config
+  });
   const enriched = enrichGraph(
     {
       generatedAt: new Date().toISOString(),
@@ -2362,7 +2408,12 @@ function buildGraph(
       pages
     },
     manifests,
-    analyses
+    analyses,
+    [],
+    {
+      similarityIdfFloor: repoDefaults.similarityIdfFloor,
+      similarityEdgeCap: repoDefaults.similarityEdgeCap
+    }
   );
   const metrics = deriveGraphMetrics(graphNodes, enriched.edges, { resolution: options?.communityResolution });
   const finalNodes = applyNormLabel(metrics.nodes);
@@ -2416,7 +2467,8 @@ async function buildGraphOrientationPages(
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
   schemaHash: string,
   previousCompiledAt?: string,
-  contradictions: DetectedContradiction[] = []
+  contradictions: DetectedContradiction[] = [],
+  config?: VaultConfig | null
 ): Promise<{ records: ManagedPageRecord[]; report: GraphReportArtifact }> {
   const benchmark = await readJsonFile<BenchmarkArtifact>(paths.benchmarkPath);
   const communityRecords: ManagedPageRecord[] = [];
@@ -2451,7 +2503,8 @@ async function buildGraphOrientationPages(
     benchmarkStale: benchmark ? benchmark.graphHash !== graphHash(graph) : false,
     recentResearchSources: recentResearchSourcePages(graph, previousCompiledAt),
     graphHash: graphHash(graph),
-    contradictions
+    contradictions,
+    config
   });
   const reportAbsolutePath = path.join(paths.wikiDir, "graph", "report.md");
   const reportRecord = await buildManagedGraphPage(
@@ -2987,7 +3040,8 @@ async function syncVaultArtifacts(
   const compiledPages = records.map((record) => record.page);
   const basePages = [...compiledPages, ...input.outputPages, ...input.insightPages];
   const structuralGraph = buildGraph(input.manifests, input.analyses, basePages, input.sourceProjects, input.codeIndex, {
-    communityResolution: config.graph?.communityResolution
+    communityResolution: config.graph?.communityResolution,
+    config
   });
   const contradictions = detectContradictions(input.analyses);
   for (const contradiction of contradictions) {
@@ -3028,7 +3082,8 @@ async function syncVaultArtifacts(
     paths,
     globalSchemaHash,
     input.previousState?.generatedAt,
-    contradictions
+    contradictions,
+    config
   );
   const preliminaryPages = [...basePages, ...graphOrientation.records.map((record) => record.page)];
   const dashboardRecords = await buildDashboardRecords(
@@ -3293,7 +3348,9 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
         },
         paths,
         globalSchemaHash,
-        compileState?.generatedAt
+        compileState?.generatedAt,
+        [],
+        config
       )
     : { records: [], report: null };
   const dashboardRecords = currentGraph
@@ -5930,9 +5987,15 @@ export async function readGraphReport(rootDir: string): Promise<GraphReportArtif
   return readJsonFile<GraphReportArtifact>(path.join(paths.wikiDir, "graph", "report.json"));
 }
 
-export async function listGodNodes(rootDir: string, limit = 10): Promise<GraphNode[]> {
+export async function listGodNodes(rootDir: string, limit?: number): Promise<GraphNode[]> {
   const graph = await ensureCompiledGraph(rootDir);
-  return topGodNodes(graph, limit);
+  const { config } = await loadVaultConfig(rootDir);
+  const defaults = resolveLargeRepoDefaults({
+    nodeCount: graph.nodes.length,
+    config
+  });
+  const effectiveLimit = limit ?? defaults.godNodeLimit;
+  return topGodNodes(graph, effectiveLimit);
 }
 
 export async function blastRadiusVault(rootDir: string, target: string, options?: { maxDepth?: number }): Promise<BlastRadiusResult> {

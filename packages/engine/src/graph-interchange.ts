@@ -72,7 +72,8 @@ export function normalizeSwarmNodeProps(node: GraphNode, page?: GraphPage): Reco
     ...(node.confidence !== undefined ? { confidence: node.confidence } : {}),
     ...(node.degree !== undefined ? { degree: node.degree } : {}),
     ...(node.bridgeScore !== undefined ? { bridgeScore: node.bridgeScore } : {}),
-    ...(node.isGodNode !== undefined ? { isGodNode: node.isGodNode } : {})
+    ...(node.isGodNode !== undefined ? { isGodNode: node.isGodNode } : {}),
+    ...(node.surpriseReason ? { surpriseReason: node.surpriseReason } : {})
   };
 }
 

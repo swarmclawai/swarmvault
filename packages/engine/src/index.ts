@@ -33,6 +33,8 @@ export {
   syncTrackedRepos,
   syncTrackedReposForWatch
 } from "./ingest.js";
+export type { ResolvedLargeRepoDefaults } from "./large-repo-defaults.js";
+export { LARGE_REPO_NODE_THRESHOLD, resolveLargeRepoDefaults } from "./large-repo-defaults.js";
 export { createMcpServer, startMcpServer } from "./mcp.js";
 export { assertProviderCapability, createProvider, getProviderForTask } from "./providers/registry.js";
 export { buildConfiguredRedactor, buildRedactor, DEFAULT_REDACTION_PATTERNS, resolveRedactionPatterns } from "./redaction.js";

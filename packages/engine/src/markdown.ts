@@ -3,6 +3,7 @@ import { modulePageTitle } from "./code-analysis.js";
 import { filterGraphBySourceClass, sourceClassBreakdown } from "./embeddings.js";
 import { describeSimilarityReasons } from "./graph-enrichment.js";
 import { shortestGraphPath } from "./graph-tools.js";
+import { resolveLargeRepoDefaults } from "./large-repo-defaults.js";
 import type {
   BenchmarkArtifact,
   Freshness,
@@ -21,7 +22,8 @@ import type {
   PageStatus,
   SourceAnalysis,
   SourceClass,
-  SourceManifest
+  SourceManifest,
+  VaultConfig
 } from "./types.js";
 import { normalizeWhitespace, slugify, uniqueBy } from "./utils.js";
 
@@ -977,13 +979,14 @@ function topGroupPatterns(graph: GraphArtifact): GraphHyperedge[] {
 
 function fragmentedCommunityPresentation(
   graph: GraphArtifact,
-  communityPages: Pick<GraphPage, "id" | "path" | "title">[]
+  communityPages: Pick<GraphPage, "id" | "path" | "title">[],
+  foldBelow = 3
 ): {
   thinCommunities: GraphReportArtifact["thinCommunities"];
   fragmentedCommunityRollup?: NonNullable<GraphReportArtifact["fragmentedCommunityRollup"]>;
 } {
   const thinCommunities = (graph.communities ?? [])
-    .filter((community) => community.nodeIds.length <= 2)
+    .filter((community) => community.nodeIds.length < foldBelow)
     .sort((left, right) => right.nodeIds.length - left.nodeIds.length || left.label.localeCompare(right.label));
   const visibleCommunities = thinCommunities.slice(0, 6).map((community) => {
     const page = communityPages.find((candidate) => candidate.id === `graph:${community.id}`);
@@ -1131,19 +1134,25 @@ export function buildGraphReportArtifact(input: {
     claimB: { text: string; confidence: number };
     similarity: number;
   }>;
+  config?: VaultConfig | null;
 }): GraphReportArtifact {
   const firstPartyGraph = filterGraphBySourceClass(input.graph, "first_party");
   const reportGraph = firstPartyGraph.nodes.length ? firstPartyGraph : input.graph;
   const pagesById = new Map(reportGraph.pages.map((page) => [page.id, page]));
+  const repoDefaults = resolveLargeRepoDefaults({
+    nodeCount: input.graph.nodes.length,
+    totalCommunities: input.graph.communities?.length ?? 0,
+    config: input.config
+  });
   const godNodes = reportGraph.nodes
     .filter((node) => node.isGodNode)
     .sort((left, right) => (right.degree ?? 0) - (left.degree ?? 0))
-    .slice(0, 8);
+    .slice(0, repoDefaults.godNodeLimit);
   const bridgeNodes = reportGraph.nodes
     .filter((node) => (node.bridgeScore ?? 0) > 0)
     .sort((left, right) => (right.bridgeScore ?? 0) - (left.bridgeScore ?? 0))
     .slice(0, 8);
-  const communityPresentation = fragmentedCommunityPresentation(reportGraph, input.communityPages);
+  const communityPresentation = fragmentedCommunityPresentation(reportGraph, input.communityPages, repoDefaults.foldCommunitiesBelow);
   const surprisingConnections = topSurprisingConnections(reportGraph, pagesById);
   const groupPatterns = topGroupPatterns(reportGraph);
   const breakdown = sourceClassBreakdown(input.graph);
@@ -1193,7 +1202,8 @@ export function buildGraphReportArtifact(input: {
       label: node.label,
       pageId: node.pageId,
       degree: node.degree,
-      bridgeScore: node.bridgeScore
+      bridgeScore: node.bridgeScore,
+      ...(node.surpriseReason ? { surpriseReason: node.surpriseReason } : {})
     })),
     bridgeNodes: bridgeNodes.map((node) => ({
       nodeId: node.id,

@@ -313,6 +313,29 @@ export interface VaultConfig {
   };
   graph?: {
     communityResolution?: number;
+    /**
+     * Minimum IDF weight a similarity feature must carry to contribute to an
+     * inferred `semantically_similar_to` edge. Features below the floor are
+     * dropped entirely. Defaults to 0.5.
+     */
+    similarityIdfFloor?: number;
+    /**
+     * Hard cap on the number of inferred similarity edges emitted. Defaults
+     * to `min(5 * nodeCount, 20000)` so very large repos do not produce
+     * O(n²) similarity fan-out.
+     */
+    similarityEdgeCap?: number;
+    /**
+     * Upper bound on god-node entries surfaced in the graph report and
+     * tooling. Defaults to 20 for small repos and 10 for large ones.
+     */
+    godNodeLimit?: number;
+    /**
+     * Report rollup threshold: communities with fewer members than this are
+     * folded into the fragmented-community rollup instead of listed
+     * individually. Defaults to `max(3, ceil(totalCommunities / 50))`.
+     */
+    foldCommunitiesBelow?: number;
   };
   webSearch?: {
     providers: Record<string, WebSearchProviderConfig>;
@@ -811,6 +834,11 @@ export interface GraphNode {
   degree?: number;
   bridgeScore?: number;
   isGodNode?: boolean;
+  /**
+   * Human-readable explanation of why this node was flagged as a god-node
+   * (high-degree hub). Populated for god nodes only. Deterministic.
+   */
+  surpriseReason?: string;
   tags?: string[];
 }
 
@@ -1644,6 +1672,12 @@ export interface GraphReportArtifact {
     pageId?: string;
     degree?: number;
     bridgeScore?: number;
+    /**
+     * Deterministic one-line explanation of why the node is surfaced as a
+     * god-node — e.g. "degree 42 across 7 communities" or
+     * "degree 38 (2.1σ above mean)". Omitted when no degree signal exists.
+     */
+    surpriseReason?: string;
   }>;
   bridgeNodes: Array<{
     nodeId: string;
