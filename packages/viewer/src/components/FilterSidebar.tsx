@@ -19,6 +19,9 @@ type FilterSidebarProps = {
   communityFilter: string;
   onCommunityChange: (value: string) => void;
   communityOptions: string[];
+  tagFilter: string;
+  onTagChange: (value: string) => void;
+  tagOptions: { tag: string; count: number }[];
   query: string;
   onQueryChange: (value: string) => void;
 };
@@ -42,10 +45,13 @@ export function FilterSidebar({
   communityFilter,
   onCommunityChange,
   communityOptions,
+  tagFilter,
+  onTagChange,
+  tagOptions,
   query,
   onQueryChange
 }: FilterSidebarProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["graph"]));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["graph", "tags"]));
 
   const toggle = (section: string) => {
     setExpanded((prev) => {
@@ -58,9 +64,10 @@ export function FilterSidebar({
 
   const graphActiveCount = [edgeStatusFilter, communityFilter, sourceClassFilter].filter((v) => v !== "all").length;
   const pagesActiveCount = [kindFilter, pageStatusFilter, projectFilter, sourceTypeFilter].filter((v) => v !== "all").length;
+  const tagsActiveCount = tagFilter !== "all" ? 1 : 0;
 
   return (
-    <div className="sidebar">
+    <div className="sidebar" data-drawer="sidebar">
       <div className="sidebar-section">
         <label className="filter-group">
           <span className="filter-label">Search</span>
@@ -69,7 +76,7 @@ export function FilterSidebar({
             className="input"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="Pages, outputs, candidates\u2026"
+            placeholder="Pages, outputs, candidates…"
             aria-label="Search pages"
           />
         </label>
@@ -116,6 +123,42 @@ export function FilterSidebar({
               ))}
             </select>
           </label>
+        </div>
+      </div>
+
+      <div className="sidebar-section">
+        <button
+          type="button"
+          className={`sidebar-section-toggle ${expanded.has("tags") ? "is-expanded" : ""}`}
+          onClick={() => toggle("tags")}
+        >
+          Tags{tagsActiveCount > 0 ? <span className="filter-badge">{tagsActiveCount}</span> : null}
+        </button>
+        <div className={`sidebar-section-body ${expanded.has("tags") ? "is-expanded" : ""}`}>
+          {tagOptions.length === 0 ? (
+            <p className="text-muted text-sm">No tags in this vault yet.</p>
+          ) : (
+            <div className="chip-row">
+              <button
+                type="button"
+                className={`chip chip-tag${tagFilter === "all" ? " is-active" : ""}`}
+                onClick={() => onTagChange("all")}
+              >
+                all
+              </button>
+              {tagOptions.slice(0, 40).map(({ tag, count }) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className={`chip chip-tag${tagFilter === tag ? " is-active" : ""}`}
+                  onClick={() => onTagChange(tag === tagFilter ? "all" : tag)}
+                  title={`${count} pages`}
+                >
+                  #{tag} <span className="text-muted text-xs">{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

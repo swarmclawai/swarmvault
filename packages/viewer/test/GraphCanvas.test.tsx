@@ -12,7 +12,10 @@ const { mockState, cytoscapeMock, resetMockState } = vi.hoisted(() => {
     addClassById: new Map<string, ReturnType<typeof vi.fn>>(),
     removeClass: vi.fn(),
     resize: vi.fn(),
-    destroy: vi.fn()
+    destroy: vi.fn(),
+    fit: vi.fn(),
+    reset: vi.fn(),
+    off: vi.fn()
   };
 
   const reset = () => {
@@ -21,28 +24,47 @@ const { mockState, cytoscapeMock, resetMockState } = vi.hoisted(() => {
     state.removeClass = vi.fn();
     state.resize = vi.fn();
     state.destroy = vi.fn();
+    state.fit = vi.fn();
+    state.reset = vi.fn();
+    state.off = vi.fn();
   };
 
+  const noopNodes = () => ({
+    map: () => [] as string[],
+    empty: () => true,
+    forEach: () => undefined,
+    boundingBox: () => ({ x1: 0, y1: 0, x2: 0, y2: 0, w: 0, h: 0 })
+  });
+  const noopEdges = () => Object.assign([], { empty: () => true });
+
   const cytoscape = vi.fn(() => ({
-    on(eventName: string, selector: string, handler: CytoscapeHandler) {
-      const key = `${eventName}:${selector}`;
+    on(eventName: string, selectorOrHandler: string | CytoscapeHandler, handler?: CytoscapeHandler) {
+      const finalSelector = typeof selectorOrHandler === "string" ? selectorOrHandler : "*";
+      const finalHandler = typeof selectorOrHandler === "string" ? handler : selectorOrHandler;
+      if (!finalHandler) return;
+      const key = `${eventName}:${finalSelector}`;
       const handlers = state.handlers.get(key) ?? [];
-      handlers.push(handler);
+      handlers.push(finalHandler);
       state.handlers.set(key, handlers);
     },
+    off: state.off,
     getElementById(id: string) {
       let addClass = state.addClassById.get(id);
       if (!addClass) {
         addClass = vi.fn();
         state.addClassById.set(id, addClass);
       }
-      return { addClass };
+      return { addClass, empty: () => false, renderedPosition: () => ({ x: 0, y: 0 }), hasClass: () => false };
     },
     elements() {
-      return {
-        removeClass: state.removeClass
-      };
+      return { removeClass: state.removeClass };
     },
+    nodes: noopNodes,
+    edges: noopEdges,
+    extent: () => ({ x1: 0, y1: 0, x2: 0, y2: 0 }),
+    fit: state.fit,
+    reset: state.reset,
+    center: vi.fn(),
     resize: state.resize,
     destroy: state.destroy
   }));
@@ -139,7 +161,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  document.body.innerHTML = "";
+  document.body.replaceChildren();
 });
 
 describe("GraphCanvas", () => {

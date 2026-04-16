@@ -18,7 +18,7 @@ class FakeChild extends EventEmitter {
   killed = false;
   exitCode: number | null = null;
 
-  constructor(private readonly opts: FakeChildOptions) {
+  constructor(readonly opts: FakeChildOptions) {
     super();
     this.stdout = Readable.from(chunks(opts.stdout ?? ""));
     this.stderr = Readable.from(chunks(opts.stderr ?? ""));

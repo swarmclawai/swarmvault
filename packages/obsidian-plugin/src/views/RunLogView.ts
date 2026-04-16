@@ -1,4 +1,4 @@
-import { ItemView, type WorkspaceLeaf } from "obsidian";
+import { ItemView } from "obsidian";
 import { VIEW_TYPE_RUN_LOG } from "../constants";
 
 export interface RunLogEntry {
@@ -17,10 +17,6 @@ export interface RunLogEntry {
 export class RunLogView extends ItemView {
   private readonly entries: RunLogEntry[] = [];
   private readonly nodes = new Map<string, HTMLElement>();
-
-  constructor(leaf: WorkspaceLeaf) {
-    super(leaf);
-  }
 
   getViewType(): string {
     return VIEW_TYPE_RUN_LOG;

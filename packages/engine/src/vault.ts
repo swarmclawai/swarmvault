@@ -4155,22 +4155,59 @@ export async function rejectApproval(rootDir: string, approvalId: string, target
 
 export async function listCandidates(rootDir: string): Promise<CandidateRecord[]> {
   const pages = await listPages(rootDir);
-  return pages
-    .filter(
-      (page): page is GraphPage & { kind: "concept" | "entity" } =>
-        page.status === "candidate" && (page.kind === "concept" || page.kind === "entity")
-    )
-    .map((page) => ({
-      pageId: page.id,
-      title: page.title,
-      kind: page.kind,
-      path: page.path,
-      activePath: candidateActivePath(page),
-      sourceIds: page.sourceIds,
-      createdAt: page.createdAt,
-      updatedAt: page.updatedAt
-    }))
-    .sort((left, right) => left.title.localeCompare(right.title));
+  const candidates = pages.filter(
+    (page): page is GraphPage & { kind: "concept" | "entity" } =>
+      page.status === "candidate" && (page.kind === "concept" || page.kind === "entity")
+  );
+
+  // Best-effort scoring using the auto-promotion gates. If config/graph/state
+  // can't be loaded, fall back to records without scores rather than failing.
+  let scoreLookup: Map<string, { score: number; breakdown: Record<string, number> }> | null = null;
+  try {
+    const { config, paths } = await loadVaultConfig(rootDir);
+    const promotionConfig = resolvePromotionConfig(config);
+    const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+    if (graph) {
+      const compileState = (await readJsonFile<CompileState>(paths.compileStatePath)) ?? emptyCompileState();
+      const now = Date.now();
+      const decisions = candidates.map((page) =>
+        evaluateCandidateForPromotion(page, graph, compileState.candidateHistory, promotionConfig, now)
+      );
+      scoreLookup = new Map(
+        decisions.map((decision) => [
+          decision.pageId,
+          {
+            score: decision.score,
+            breakdown: Object.fromEntries(decision.gates.map((gate) => [gate.gate, gate.value]))
+          }
+        ])
+      );
+    }
+  } catch {
+    scoreLookup = null;
+  }
+
+  return candidates
+    .map((page) => {
+      const scored = scoreLookup?.get(page.id);
+      return {
+        pageId: page.id,
+        title: page.title,
+        kind: page.kind,
+        path: page.path,
+        activePath: candidateActivePath(page),
+        sourceIds: page.sourceIds,
+        createdAt: page.createdAt,
+        updatedAt: page.updatedAt,
+        ...(scored ? { score: scored.score, scoreBreakdown: scored.breakdown } : {})
+      };
+    })
+    .sort((left, right) => {
+      const ls = left.score ?? -1;
+      const rs = right.score ?? -1;
+      if (ls !== rs) return rs - ls;
+      return left.title.localeCompare(right.title);
+    });
 }
 
 function resolveCandidateTarget(pages: GraphPage[], target: string): GraphPage {

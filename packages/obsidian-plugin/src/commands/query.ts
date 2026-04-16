@@ -149,5 +149,5 @@ function getSelectionText(plugin: SwarmVaultPlugin): string | null {
   const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
   if (!view) return null;
   const sel = view.editor.getSelection();
-  return sel && sel.trim() ? sel.trim() : null;
+  return sel?.trim() ? sel.trim() : null;
 }

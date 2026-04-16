@@ -4,7 +4,6 @@
 export class Plugin {
   app: App = new App();
   manifest: PluginManifest = { version: "0.0.0" };
-  constructor(..._args: unknown[]) {}
   loadData = async (): Promise<unknown> => null;
   saveData = async (_data: unknown): Promise<void> => undefined;
   addStatusBarItem = (): HTMLElement => createMockEl();
@@ -81,7 +80,6 @@ export class ItemView {
 }
 
 export class Notice {
-  constructor(_message: string, _timeout?: number) {}
   hide(): void {}
 }
 

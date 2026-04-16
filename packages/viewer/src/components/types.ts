@@ -10,10 +10,12 @@ import type {
   ViewerGraphPathResult,
   ViewerGraphQueryResult,
   ViewerGraphReport,
+  ViewerLintFinding,
   ViewerOutputAsset,
   ViewerPagePayload,
   ViewerSearchResult,
-  ViewerWatchStatus
+  ViewerWatchStatus,
+  ViewerWorkspaceBundle
 } from "../lib";
 
 export type {
@@ -28,10 +30,12 @@ export type {
   ViewerGraphPathResult,
   ViewerGraphQueryResult,
   ViewerGraphReport,
+  ViewerLintFinding,
   ViewerOutputAsset,
   ViewerPagePayload,
   ViewerSearchResult,
-  ViewerWatchStatus
+  ViewerWatchStatus,
+  ViewerWorkspaceBundle
 };
 
 export type OpenPageFn = (pagePath: string, pageId?: string) => Promise<void>;

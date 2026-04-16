@@ -6,7 +6,7 @@ import { CliNotFoundError } from "../types";
 export class SwarmVaultSettingsTab extends PluginSettingTab {
   constructor(
     app: App,
-    private readonly plugin: SwarmVaultPlugin
+    readonly plugin: SwarmVaultPlugin
   ) {
     super(app, plugin);
   }

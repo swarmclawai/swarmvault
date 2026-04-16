@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ViewerApprovalFrontmatterChange, ViewerApprovalStructuredDiff } from "../lib";
 
 function renderValue(value: unknown): string {
@@ -47,6 +47,35 @@ type DiffViewProps = {
 export function DiffView({ diff, warnings }: DiffViewProps) {
   const [mode, setMode] = useState<"unified" | "split">("unified");
   const protectedChanges = diff.frontmatterChanges.filter((change) => change.protected);
+  const beforeRef = useRef<HTMLPreElement | null>(null);
+  const afterRef = useRef<HTMLPreElement | null>(null);
+
+  // Split-view scroll sync — keep both columns aligned.
+  useEffect(() => {
+    if (mode !== "split") return;
+    const before = beforeRef.current;
+    const after = afterRef.current;
+    if (!before || !after) return;
+
+    let lock = false;
+    const sync = (source: HTMLPreElement, target: HTMLPreElement) => {
+      if (lock) return;
+      lock = true;
+      target.scrollTop = source.scrollTop;
+      target.scrollLeft = source.scrollLeft;
+      requestAnimationFrame(() => {
+        lock = false;
+      });
+    };
+    const onBefore = () => sync(before, after);
+    const onAfter = () => sync(after, before);
+    before.addEventListener("scroll", onBefore);
+    after.addEventListener("scroll", onAfter);
+    return () => {
+      before.removeEventListener("scroll", onBefore);
+      after.removeEventListener("scroll", onAfter);
+    };
+  }, [mode]);
 
   return (
     <div className="diff-view">
@@ -80,7 +109,7 @@ export function DiffView({ diff, warnings }: DiffViewProps) {
           {mode === "unified" ? (
             <pre className="diff-unified">
               {hunk.lines.map((line, index) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are rendered in fixed order per render; index is stable within the hunk
+                // biome-ignore lint/suspicious/noArrayIndexKey: diff lines render in fixed order per render
                 <div key={`u-${index}`} className={`diff-line diff-${line.type}`}>
                   <span className="diff-marker">{line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}</span>
                   <span className="diff-text">{line.value}</span>
@@ -89,7 +118,7 @@ export function DiffView({ diff, warnings }: DiffViewProps) {
             </pre>
           ) : (
             <div className="diff-split">
-              <pre className="diff-column diff-column-before">
+              <pre ref={beforeRef} className="diff-column diff-column-before">
                 {hunk.lines
                   .filter((line) => line.type !== "add")
                   .map((line, index) => (
@@ -99,7 +128,7 @@ export function DiffView({ diff, warnings }: DiffViewProps) {
                     </div>
                   ))}
               </pre>
-              <pre className="diff-column diff-column-after">
+              <pre ref={afterRef} className="diff-column diff-column-after">
                 {hunk.lines
                   .filter((line) => line.type !== "remove")
                   .map((line, index) => (

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0
+
+- Overhauled the graph viewer to close the gap between the rich CLI surface and the previously-thin React workspace: added markdown rendering with syntax highlighting and clickable provenance to the page preview, a graph canvas legend, layout switcher (cose/concentric/circle/breadthfirst/grid), zoom/fit controls, label-mode toggle, an interactive minimap, tag-first filter pills, bulk approve/reject and bulk promote/archive flows with per-list filters, candidate score columns and sorting, diff split-view scroll sync, an undo toast for review actions, a command palette (`⌘K`), keyboard shortcuts (`/`, `f`, `q`, `p`, `r`, `?`, `[`, `]`), a help modal, hash-based deep links (`#page?path=…`, `#node?id=…`, `#tag?tag=…`, `#approval?id=…`), responsive drawer layouts for the filter sidebar and detail rail, a light/dark/system theme selector with `prefers-color-scheme` detection plus localStorage persistence, a live activity feed wired to a new SSE channel, a lint findings panel, a UI export menu (canvas as PNG/SVG, subgraph JSON, copy page as markdown), and refactored the App.tsx state into a `useReducer`-backed workspace store with consolidated workspace fetching
+- Added three new graph-server endpoints: `GET /api/lint` returns viewer-formatted lint findings, `GET /api/workspace` returns a single rolled-up bundle (graph + reviews + candidates + watch + report + lint), and `GET /api/events` is an SSE channel backed by a new exported `viewerEventBus` event emitter that other engine modules can publish to
+- Surfaced candidate promotion scores in `listCandidates` (best-effort using existing auto-promotion gates) so the viewer can show a `score` chip and sort candidates by promotion likelihood without re-running the auto-promoter
+- Added five new viewer component test suites (PagePreview, CommandPalette, CandidateList, hooks, and an extended GraphCanvas mock) and shipped React Testing Library + jsdom support so future viewer changes can be unit-verified before release
+
 ## 0.7.31
 
 - Made the full viewer HTML export (`graph export --html`) interactive offline: graph query joins the already-embedded path and explain helpers so users can traverse the vault from a single shared file with no server, and the export now defaults to the full graph (pass `--overview` for sampled output)

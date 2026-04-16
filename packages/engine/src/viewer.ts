@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
@@ -10,12 +12,13 @@ import { buildViewerGraphArtifact } from "./graph-presentation.js";
 import { ingestInput } from "./ingest.js";
 import { normalizeOutputAssets } from "./pages.js";
 import { searchPages } from "./search.js";
-import type { GraphArtifact, GraphReportArtifact } from "./types.js";
+import type { GraphArtifact, GraphReportArtifact, LintFinding } from "./types.js";
 import { fileExists, isPathWithin, readJsonFile } from "./utils.js";
 import {
   acceptApproval,
   archiveCandidate,
   explainGraphVault,
+  lintVault,
   listApprovals,
   listCandidates,
   pathGraphVault,
@@ -25,6 +28,58 @@ import {
   rejectApproval
 } from "./vault.js";
 import { getWatchStatus } from "./watch.js";
+
+/**
+ * Module-level event bus that other engine modules (watch, ingest, compile)
+ * can call to push activity events to all connected viewers.
+ */
+export type ViewerEvent = {
+  id: string;
+  type: string;
+  level: "info" | "success" | "warning" | "error";
+  message: string;
+  timestamp: string;
+  meta?: Record<string, unknown>;
+};
+
+class ViewerEventBus extends EventEmitter {
+  publish(event: Omit<ViewerEvent, "id" | "timestamp"> & { id?: string; timestamp?: string }): ViewerEvent {
+    const enriched: ViewerEvent = {
+      id: event.id ?? randomUUID(),
+      timestamp: event.timestamp ?? new Date().toISOString(),
+      type: event.type,
+      level: event.level,
+      message: event.message,
+      meta: event.meta
+    };
+    this.emit("event", enriched);
+    return enriched;
+  }
+}
+
+export const viewerEventBus = new ViewerEventBus();
+viewerEventBus.setMaxListeners(64);
+
+function toViewerLintFindings(findings: LintFinding[]): Array<{
+  id: string;
+  severity: LintFinding["severity"];
+  category: string;
+  message: string;
+  pageId?: string;
+  pagePath?: string;
+  nodeId?: string;
+  detectedAt?: string;
+}> {
+  const detectedAt = new Date().toISOString();
+  return findings.map((finding, index) => ({
+    id: `${finding.code}:${index}`,
+    severity: finding.severity,
+    category: finding.code,
+    message: finding.message,
+    pagePath: finding.pagePath,
+    detectedAt
+  }));
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -308,6 +363,74 @@ export async function startGraphServer(
         const result = action === "promote" ? await promoteCandidate(rootDir, target) : await archiveCandidate(rootDir, target);
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(result));
+        return;
+      }
+
+      if (url.pathname === "/api/lint") {
+        try {
+          const findings = await lintVault(rootDir);
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify(toViewerLintFindings(findings)));
+        } catch (error) {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify([]));
+          console.warn(`[viewer] /api/lint failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return;
+      }
+
+      if (url.pathname === "/api/workspace") {
+        const reportPath = path.join(paths.wikiDir, "graph", "report.json");
+        const [graphRaw, reportRaw, approvalsRaw, candidatesRaw, watchStatusRaw, lintRaw] = await Promise.all([
+          readJsonFile<GraphArtifact>(paths.graphPath).catch(() => null),
+          readJsonFile<GraphReportArtifact>(reportPath).catch(() => null),
+          listApprovals(rootDir).catch(() => []),
+          listCandidates(rootDir).catch(() => []),
+          getWatchStatus(rootDir).catch(() => ({ generatedAt: "", watchedRepoRoots: [], pendingSemanticRefresh: [] })),
+          lintVault(rootDir).catch(() => [] as LintFinding[])
+        ]);
+        const viewerGraph = graphRaw ? buildViewerGraphArtifact(graphRaw, { report: reportRaw, full: options.full ?? false }) : null;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            graph: viewerGraph,
+            graphReport: reportRaw ?? null,
+            approvals: approvalsRaw,
+            candidates: candidatesRaw,
+            watchStatus: watchStatusRaw,
+            lintFindings: toViewerLintFindings(lintRaw)
+          })
+        );
+        return;
+      }
+
+      if (url.pathname === "/api/events") {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+          "x-accel-buffering": "no"
+        });
+        const send = (event: ViewerEvent) => {
+          response.write(`id: ${event.id}\n`);
+          response.write(`data: ${JSON.stringify(event)}\n\n`);
+        };
+        send({
+          id: randomUUID(),
+          type: "connected",
+          level: "info",
+          message: "Activity stream connected.",
+          timestamp: new Date().toISOString()
+        });
+        const listener = (event: ViewerEvent) => send(event);
+        viewerEventBus.on("event", listener);
+        const heartbeat = setInterval(() => {
+          response.write(`: keepalive ${new Date().toISOString()}\n\n`);
+        }, 25_000);
+        request.on("close", () => {
+          clearInterval(heartbeat);
+          viewerEventBus.off("event", listener);
+        });
         return;
       }
 

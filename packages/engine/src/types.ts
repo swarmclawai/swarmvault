@@ -903,6 +903,8 @@ export interface CandidateRecord {
   sourceIds: string[];
   createdAt: string;
   updatedAt: string;
+  score?: number;
+  scoreBreakdown?: Record<string, number>;
 }
 
 export interface BlastRadiusResult {

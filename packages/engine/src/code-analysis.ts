@@ -2144,7 +2144,7 @@ function tsconfigPathAliasesForFile(repoRelativePath: string, config: TsconfigPa
         );
         const patternBase = pattern.replace("*", "");
         for (const candidate of [stripped, indexStripped]) {
-          if (candidate && candidate.startsWith(targetPrefix)) {
+          if (candidate?.startsWith(targetPrefix)) {
             aliases.push(patternBase + candidate.slice(targetPrefix.length));
           }
         }
@@ -2158,11 +2158,11 @@ function tsconfigPathAliasesForFile(repoRelativePath: string, config: TsconfigPa
   }
 
   if (config.baseUrl !== ".") {
-    const basePrefix = normalizeAlias(config.baseUrl) + "/";
+    const basePrefix = `${normalizeAlias(config.baseUrl)}/`;
     if (stripped.startsWith(basePrefix)) {
       aliases.push(stripped.slice(basePrefix.length));
     }
-    if (indexStripped && indexStripped.startsWith(basePrefix)) {
+    if (indexStripped?.startsWith(basePrefix)) {
       aliases.push(indexStripped.slice(basePrefix.length));
     }
   }

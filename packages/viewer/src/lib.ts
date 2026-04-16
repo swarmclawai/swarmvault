@@ -244,6 +244,28 @@ export type ViewerCandidateRecord = {
   sourceIds: string[];
   createdAt: string;
   updatedAt: string;
+  score?: number;
+  scoreBreakdown?: Record<string, number>;
+};
+
+export type ViewerLintFinding = {
+  id: string;
+  severity: "error" | "warning" | "info";
+  category: string;
+  message: string;
+  pageId?: string;
+  pagePath?: string;
+  nodeId?: string;
+  detectedAt?: string;
+};
+
+export type ViewerWorkspaceBundle = {
+  graph: ViewerGraphArtifact;
+  approvals: ViewerApprovalSummary[];
+  candidates: ViewerCandidateRecord[];
+  watchStatus: ViewerWatchStatus;
+  graphReport: ViewerGraphReport | null;
+  lintFindings: ViewerLintFinding[];
 };
 
 export type ViewerWatchStatus = {
@@ -997,4 +1019,66 @@ export async function fetchWatchStatus(): Promise<ViewerWatchStatus> {
     throw new Error(`Failed to load watch status: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<ViewerWatchStatus>;
+}
+
+export async function fetchLintFindings(): Promise<ViewerLintFinding[]> {
+  if (embeddedData()) {
+    return [];
+  }
+  const response = await fetch("/api/lint");
+  if (response.status === 404) {
+    return [];
+  }
+  if (!response.ok) {
+    throw new Error(`Failed to load lint findings: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<ViewerLintFinding[]>;
+}
+
+export async function fetchWorkspaceBundle(): Promise<ViewerWorkspaceBundle | null> {
+  if (embeddedData()) {
+    return null;
+  }
+  const response = await fetch("/api/workspace");
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Failed to load workspace bundle: ${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<ViewerWorkspaceBundle>;
+}
+
+export type SubgraphExportPayload = {
+  generatedAt: string;
+  rootNodeId?: string;
+  nodes: ViewerGraphNode[];
+  edges: ViewerGraphEdge[];
+};
+
+export function buildSubgraphExport(graph: ViewerGraphArtifact, nodeIds: string[]): SubgraphExportPayload {
+  const nodeSet = new Set(nodeIds);
+  const nodes = graph.nodes.filter((node) => nodeSet.has(node.id));
+  const edges = graph.edges.filter((edge) => nodeSet.has(edge.source) && nodeSet.has(edge.target));
+  return {
+    generatedAt: new Date().toISOString(),
+    rootNodeId: nodeIds[0],
+    nodes,
+    edges
+  };
+}
+
+export function downloadDataUrl(filename: string, dataUrl: string): void {
+  if (typeof document === "undefined") return;
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+export function downloadText(filename: string, text: string, mime = "text/plain"): void {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  downloadDataUrl(filename, url);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
