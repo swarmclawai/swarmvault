@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0
+
+- Wired the existing web search adapter into `query` and `explore` for opt-in gap-fill — the new `--gap-fill` flag pulls external results when the local wiki is missing context, surfaces URLs as standard provenance citations, and fails fast with a helpful error when `webSearch.tasks.queryProvider` or `webSearch.tasks.exploreProvider` are not configured in `swarmvault.config.json`
+- Added config-driven PII and secret redaction at ingest, on by default with built-in patterns for AWS access keys, Stripe live keys, GitHub PATs, OpenAI keys, JWTs, `Authorization: Bearer` tokens, and PEM private key headers — matches are replaced with a configurable placeholder, audited via `wiki/log.md`, and surfaced on every ingest result so users can see what was scrubbed; opt out per-run with `--no-redact` or globally with `redaction: { enabled: false }`
+- Added time-based decay scoring and `superseded_by` edges — every page now carries `decayScore` (0..1) and `lastConfirmedAt` that fade on configurable per-source-class half-lives (first_party 365d, third_party 90d, generated 30d, resource 730d), `swarmvault graph supersession <old> <new>` records human-curated replacements, `swarmvault lint --decay` flags decayed pages and broken supersession links, and compile resets decay on confirmed pages so re-ingest restores freshness
+- Added a four-tier memory consolidation pass (working / episodic / semantic / procedural) — heuristic Jaccard grouping rolls up time-windowed working insights into episodic digests, recurring entities into semantic pages, and ordered workflow sequences into procedural pages; available as `swarmvault consolidate [--dry-run]`, scheduled via the new `consolidate` job kind, exposed as the `consolidate` MCP tool, surfaced by `swarmvault lint --tiers`, and runs as a post-compile pass on every vault by default
+
 ## 0.9.0
 
 - Added four new agent integrations — `swarmvault install --agent kiro` writes `.kiro/skills/swarmvault/SKILL.md` plus an always-on `.kiro/steering/swarmvault.md`; `swarmvault install --agent hermes` writes the user-scope skill to `~/.hermes/skills/swarmvault/SKILL.md` plus a repo `AGENTS.md` managed block; `swarmvault install --agent antigravity` writes `.agent/rules/swarmvault.md` (always-on) and `.agent/workflows/swarmvault.md` (`/swarmvault` slash command); `swarmvault install --agent vscode` writes `.github/chatmodes/swarmvault.chatmode.md` for VS Code Copilot Chat

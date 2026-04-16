@@ -1,7 +1,7 @@
 {
   "id": "swarmvault",
   "name": "SwarmVault",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "minAppVersion": "1.5.0",
   "description": "Runs SwarmVault ingest, compile, query, and review commands from the command palette and surfaces compile freshness in your status bar.",
   "author": "SwarmVault",
