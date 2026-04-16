@@ -30,7 +30,9 @@ export async function createWebSearchAdapter(id: string, config: WebSearchProvid
   }
 }
 
-export async function getWebSearchAdapterForTask(rootDir: string, task: "deepLintProvider"): Promise<WebSearchAdapter> {
+export type WebSearchTaskId = "deepLintProvider" | "queryProvider" | "exploreProvider";
+
+export async function getWebSearchAdapterForTask(rootDir: string, task: WebSearchTaskId): Promise<WebSearchAdapter> {
   const { config } = await loadVaultConfig(rootDir);
   const webSearchConfig = config.webSearch;
   if (!webSearchConfig) {
@@ -38,6 +40,9 @@ export async function getWebSearchAdapterForTask(rootDir: string, task: "deepLin
   }
 
   const providerId = webSearchConfig.tasks[task];
+  if (!providerId) {
+    throw new Error(`No web search provider is configured for task "${task}". Add webSearch.tasks.${task} to swarmvault.config.json.`);
+  }
   const providerConfig = webSearchConfig.providers[providerId];
   if (!providerConfig) {
     throw new Error(`No web search provider configured with id "${providerId}" for task "${task}".`);

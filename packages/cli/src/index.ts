@@ -760,18 +760,20 @@ program
   .argument("<question>", "Question to ask SwarmVault")
   .option("--no-save", "Do not persist the answer to wiki/outputs")
   .option("--commit", "Auto-commit wiki changes after query")
+  .option("--gap-fill", "Pull external web-search evidence when the local wiki has gaps (requires webSearch.tasks.queryProvider).")
   .addOption(
     new Option("--format <format>", "Output format").choices(["markdown", "report", "slides", "chart", "image"]).default("markdown")
   )
   .action(
     async (
       question: string,
-      options: { save?: boolean; commit?: boolean; format?: "markdown" | "report" | "slides" | "chart" | "image" }
+      options: { save?: boolean; commit?: boolean; gapFill?: boolean; format?: "markdown" | "report" | "slides" | "chart" | "image" }
     ) => {
       const result = await queryVault(process.cwd(), {
         question,
         save: options.save ?? true,
-        format: options.format
+        format: options.format,
+        gapFill: options.gapFill ?? false
       });
       if (isJson()) {
         emitJson(result);
@@ -794,26 +796,33 @@ program
   .description("Run a save-first multi-step exploration loop against the vault.")
   .argument("<question>", "Root question to explore")
   .option("--steps <n>", "Maximum number of exploration steps", "3")
+  .option("--gap-fill", "Pull external web-search evidence when the local wiki has gaps (requires webSearch.tasks.exploreProvider).")
   .addOption(
     new Option("--format <format>", "Output format for step pages")
       .choices(["markdown", "report", "slides", "chart", "image"])
       .default("markdown")
   )
-  .action(async (question: string, options: { steps?: string; format?: "markdown" | "report" | "slides" | "chart" | "image" }) => {
-    const stepCount = parsePositiveInt(options.steps, 3);
-    const result = await exploreVault(process.cwd(), {
-      question,
-      steps: stepCount,
-      format: options.format
-    });
-    if (isJson()) {
-      emitJson(result);
-    } else {
-      log(`Exploration hub saved to ${result.hubPath}`);
-      log(`Completed ${result.stepCount} step(s).`);
+  .action(
+    async (
+      question: string,
+      options: { steps?: string; gapFill?: boolean; format?: "markdown" | "report" | "slides" | "chart" | "image" }
+    ) => {
+      const stepCount = parsePositiveInt(options.steps, 3);
+      const result = await exploreVault(process.cwd(), {
+        question,
+        steps: stepCount,
+        format: options.format,
+        gapFill: options.gapFill ?? false
+      });
+      if (isJson()) {
+        emitJson(result);
+      } else {
+        log(`Exploration hub saved to ${result.hubPath}`);
+        log(`Completed ${result.stepCount} step(s).`);
+      }
+      await maybeEmitHeuristicNotice(["explore"]);
     }
-    await maybeEmitHeuristicNotice(["explore"]);
-  });
+  );
 
 program
   .command("benchmark")

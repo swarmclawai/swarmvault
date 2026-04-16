@@ -143,6 +143,7 @@ import {
   writeFileIfChanged,
   writeJsonFile
 } from "./utils.js";
+import { getWebSearchAdapterForTask } from "./web-search/registry.js";
 
 type QueryExecutionResult = {
   answer: string;
@@ -3626,12 +3627,32 @@ export async function stageGeneratedOutputPages(
   return await stageOutputApprovalBundle(rootDir, stagedPages, options);
 }
 
-async function executeQuery(rootDir: string, question: string, format: OutputFormat): Promise<QueryExecutionResult> {
+async function executeQuery(
+  rootDir: string,
+  question: string,
+  format: OutputFormat,
+  options: { gapFill?: boolean; gapFillTask?: "queryProvider" | "exploreProvider" } = {}
+): Promise<QueryExecutionResult> {
   const { paths } = await loadVaultConfig(rootDir);
   const schemas = await loadVaultSchemas(rootDir);
   const provider = await getProviderForTask(rootDir, "queryProvider");
   if (!(await fileExists(paths.searchDbPath)) || !(await fileExists(paths.graphPath))) {
     await compileVault(rootDir, {});
+  }
+
+  const gapFillTask = options.gapFillTask ?? "queryProvider";
+  const webResults: { title: string; url: string; snippet: string }[] = [];
+  if (options.gapFill) {
+    try {
+      const webSearch = await getWebSearchAdapterForTask(rootDir, gapFillTask);
+      const results = await webSearch.search(question, 5);
+      webResults.push(...results);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `gap-fill requested but no usable "${gapFillTask}" web search provider is configured. ${message} Add webSearch.providers and webSearch.tasks.${gapFillTask} to swarmvault.config.json.`
+      );
+    }
   }
 
   const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
@@ -3689,12 +3710,17 @@ async function executeQuery(rootDir: string, question: string, format: OutputFor
     }
   }
 
+  const webExcerpts = webResults.map(
+    (result) => `# ${result.title} [${result.url}]\n${truncate(normalizeWhitespace(result.snippet), 600)}`
+  );
+
   let answer: string;
   let usage: QueryExecutionResult["usage"];
   if (provider.type === "heuristic") {
     answer = formatHeuristicAnswer(question, excerpts, rawExcerpts, searchResults, format);
   } else {
     const context = [
+      ...(webExcerpts.length ? ["Web search evidence:", webExcerpts.join("\n\n---\n\n"), ""] : []),
       "Wiki context:",
       excerpts.join("\n\n---\n\n"),
       ...(rawExcerpts.length ? ["", "Raw source material:", rawExcerpts.join("\n\n---\n\n")] : [])
@@ -3703,7 +3729,7 @@ async function executeQuery(rootDir: string, question: string, format: OutputFor
       system: buildSchemaPrompt(
         querySchema,
         [
-          "Answer using the provided context. Prefer raw source material over wiki summaries when they differ. Cite source IDs.",
+          "Answer using the provided context. Prefer raw source material over wiki summaries when they differ. Cite source IDs and web URLs when they appear in the evidence.",
           outputFormatInstruction(format)
         ].join(" ")
       ),
@@ -3713,9 +3739,15 @@ async function executeQuery(rootDir: string, question: string, format: OutputFor
     usage = response.usage;
   }
 
+  const webCitations = uniqueBy(
+    webResults.map((result) => result.url).filter((url): url is string => Boolean(url)),
+    (item) => item
+  );
+  const citations = uniqueBy([...relatedSourceIds, ...webCitations], (item) => item);
+
   return {
     answer,
-    citations: relatedSourceIds,
+    citations,
     relatedPageIds,
     relatedNodeIds,
     relatedSourceIds,
@@ -5163,7 +5195,10 @@ export async function queryVault(rootDir: string, options: QueryOptions): Promis
   const review = options.review ?? false;
   const outputFormat = normalizeOutputFormat(options.format);
   const schemas = await loadVaultSchemas(rootDir);
-  const query = await executeQuery(rootDir, options.question, outputFormat);
+  const query = await executeQuery(rootDir, options.question, outputFormat, {
+    gapFill: options.gapFill,
+    gapFillTask: "queryProvider"
+  });
   let savedPath: string | undefined;
   let stagedPath: string | undefined;
   let savedPageId: string | undefined;
@@ -5294,7 +5329,10 @@ export async function exploreVault(rootDir: string, options: ExploreOptions): Pr
     }
 
     visited.add(normalizedQuestion);
-    const query = await executeQuery(rootDir, currentQuestion, outputFormat);
+    const query = await executeQuery(rootDir, currentQuestion, outputFormat, {
+      gapFill: options.gapFill,
+      gapFillTask: "exploreProvider"
+    });
     query.relatedPageIds.forEach((pageId) => {
       relatedPageIds.add(pageId);
     });

@@ -216,7 +216,9 @@ const vaultConfigSchema = z.object({
     .object({
       providers: z.record(z.string(), webSearchProviderConfigSchema),
       tasks: z.object({
-        deepLintProvider: z.string().min(1)
+        deepLintProvider: z.string().min(1),
+        queryProvider: z.string().min(1).optional(),
+        exploreProvider: z.string().min(1).optional()
       })
     })
     .optional(),

@@ -307,6 +307,8 @@ export interface VaultConfig {
     providers: Record<string, WebSearchProviderConfig>;
     tasks: {
       deepLintProvider: string;
+      queryProvider?: string;
+      exploreProvider?: string;
     };
   };
   search?: {
@@ -985,6 +987,7 @@ export interface QueryOptions {
   save?: boolean;
   format?: OutputFormat;
   review?: boolean;
+  gapFill?: boolean;
 }
 
 export interface QueryResult {
@@ -1235,6 +1238,7 @@ export interface ExploreOptions {
   steps?: number;
   format?: OutputFormat;
   review?: boolean;
+  gapFill?: boolean;
 }
 
 export interface ExploreStepResult {
