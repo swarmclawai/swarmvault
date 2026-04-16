@@ -266,7 +266,7 @@ export async function startGraphServer(
           response.end(JSON.stringify({ error: "Missing approval id." }));
           return;
         }
-        const approval = await readApproval(rootDir, approvalId);
+        const approval = await readApproval(rootDir, approvalId, { diff: true });
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(approval));
         return;

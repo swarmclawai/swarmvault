@@ -1,6 +1,7 @@
 import type { Core } from "cytoscape";
 import type {
   ViewerApprovalDetail,
+  ViewerApprovalStructuredDiff,
   ViewerApprovalSummary,
   ViewerCandidateRecord,
   ViewerGraphArtifact,
@@ -18,6 +19,7 @@ import type {
 export type {
   Core,
   ViewerApprovalDetail,
+  ViewerApprovalStructuredDiff,
   ViewerApprovalSummary,
   ViewerCandidateRecord,
   ViewerGraphArtifact,

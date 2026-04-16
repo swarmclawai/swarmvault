@@ -48,6 +48,7 @@ import { readManagedSourcesIfPresent } from "./source-registry.js";
 import type {
   AddOptions,
   AddResult,
+  DirectoryIngestFailure,
   DirectoryIngestResult,
   InboxImportResult,
   IngestOptions,
@@ -95,6 +96,58 @@ const MARKDOWN_SEMANTIC_FRONTMATTER_KEYS = [
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+type IngestRunStateFailure = {
+  absolutePath: string;
+  path: string;
+  error: string;
+  stage: "prepare" | "persist";
+};
+
+type IngestRunState = {
+  runId: string;
+  inputDir: string;
+  repoRoot: string;
+  createdAt: string;
+  failed: IngestRunStateFailure[];
+};
+
+function ingestRunStatePath(stateDir: string, runId: string): string {
+  return path.join(stateDir, "ingest-runs", `${runId}.json`);
+}
+
+function buildIngestRunId(): string {
+  return `ingest-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function loadIngestRunState(stateDir: string, runId: string | undefined): Promise<IngestRunState | null> {
+  if (!runId) return null;
+  const absolute = ingestRunStatePath(stateDir, runId);
+  if (!(await fileExists(absolute))) {
+    throw new Error(`Ingest run state not found: ${runId}`);
+  }
+  const loaded = await readJsonFile<IngestRunState>(absolute);
+  if (!loaded) {
+    throw new Error(`Ingest run state is empty or unreadable: ${runId}`);
+  }
+  return loaded;
+}
+
+async function saveIngestRunState(stateDir: string, state: IngestRunState): Promise<string> {
+  const absolute = ingestRunStatePath(stateDir, state.runId);
+  await ensureDir(path.dirname(absolute));
+  await writeJsonFile(absolute, state);
+  return absolute;
+}
+
+async function clearIngestRunState(stateDir: string, runId: string): Promise<void> {
+  const absolute = ingestRunStatePath(stateDir, runId);
+  try {
+    await fs.rm(absolute, { force: true });
+  } catch {
+    // Best effort cleanup.
+  }
 }
 
 type PreparedAttachment = {
@@ -153,6 +206,7 @@ type NormalizedIngestOptions = {
   maxFiles: number;
   gitignore: boolean;
   extractClasses: SourceClass[];
+  resume?: string;
   repoAnalysis?: VaultConfig["repoAnalysis"];
 };
 
@@ -776,7 +830,8 @@ function normalizeIngestOptions(options?: IngestOptions): NormalizedIngestOption
     exclude: (options?.exclude ?? []).map((pattern) => pattern.trim()).filter(Boolean),
     maxFiles: Math.max(1, Math.floor(options?.maxFiles ?? DEFAULT_MAX_DIRECTORY_FILES)),
     gitignore: options?.gitignore ?? true,
-    extractClasses: options?.extractClasses ?? ["first_party"]
+    extractClasses: options?.extractClasses ?? ["first_party"],
+    resume: options?.resume
   };
 }
 
@@ -3197,39 +3252,78 @@ export async function ingestDirectory(rootDir: string, inputDir: string, options
     };
   }
 
-  const { files, skipped } = await collectDirectoryFiles(rootDir, absoluteInputDir, repoRoot, normalizedOptions);
+  const collected = await collectDirectoryFiles(rootDir, absoluteInputDir, repoRoot, normalizedOptions);
+  const skipped = collected.skipped;
+  let files = collected.files;
+  const resumeState = await loadIngestRunState(paths.stateDir, normalizedOptions.resume);
+  if (resumeState) {
+    const failedSet = new Set(resumeState.failed.map((entry) => entry.absolutePath));
+    files = files.filter((absolutePath) => failedSet.has(absolutePath));
+  }
+
+  const runId = resumeState?.runId ?? buildIngestRunId();
   const imported: SourceManifest[] = [];
   const updated: SourceManifest[] = [];
+  const failed: DirectoryIngestFailure[] = [];
+  const failedRecords: IngestRunStateFailure[] = [];
   const progress = createProgressReporter("ingest", files.length);
 
   for (const absolutePath of files) {
+    const relativeForLog = toPosix(path.relative(rootDir, absolutePath));
     const relativePath = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(repoRoot, absolutePath));
-    const preparedInputs = await prepareFileInputs(
-      rootDir,
-      absolutePath,
-      repoRoot,
-      sourceClassForRelativePath(relativePath, normalizedOptions)
-    );
-    const result = await persistPreparedInputs(rootDir, absolutePath, preparedInputs, paths);
-    if (result.created.length) {
-      imported.push(...result.created);
+    let preparedInputs: Awaited<ReturnType<typeof prepareFileInputs>>;
+    try {
+      preparedInputs = await prepareFileInputs(
+        rootDir,
+        absolutePath,
+        repoRoot,
+        sourceClassForRelativePath(relativePath, normalizedOptions)
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failed.push({ path: relativeForLog, error: message, stage: "prepare" });
+      failedRecords.push({ absolutePath, path: relativeForLog, error: message, stage: "prepare" });
+      progress.tick();
+      continue;
     }
-    if (result.updated.length) {
-      updated.push(...result.updated);
-    }
-    if (!result.created.length && !result.updated.length && !result.removed.length) {
-      skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "duplicate_content" });
+
+    try {
+      const result = await persistPreparedInputs(rootDir, absolutePath, preparedInputs, paths);
+      if (result.created.length) imported.push(...result.created);
+      if (result.updated.length) updated.push(...result.updated);
+      if (!result.created.length && !result.updated.length && !result.removed.length) {
+        skipped.push({ path: relativeForLog, reason: "duplicate_content" });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failed.push({ path: relativeForLog, error: message, stage: "persist" });
+      failedRecords.push({ absolutePath, path: relativeForLog, error: message, stage: "persist" });
     }
     progress.tick();
   }
-  progress.finish(`imported=${imported.length}, updated=${updated.length}, skipped=${skipped.length}`);
+  progress.finish(`imported=${imported.length}, updated=${updated.length}, skipped=${skipped.length}, failed=${failed.length}`);
+
+  let statePath: string | undefined;
+  if (failed.length) {
+    statePath = await saveIngestRunState(paths.stateDir, {
+      runId,
+      inputDir: absoluteInputDir,
+      repoRoot,
+      createdAt: new Date().toISOString(),
+      failed: failedRecords
+    });
+  } else if (resumeState) {
+    await clearIngestRunState(paths.stateDir, resumeState.runId);
+  }
 
   await appendLogEntry(rootDir, "ingest_directory", toPosix(path.relative(rootDir, absoluteInputDir)) || ".", [
     `repo_root=${toPosix(path.relative(rootDir, repoRoot)) || "."}`,
+    `run_id=${runId}`,
     `scanned=${files.length}`,
     `imported=${imported.length}`,
     `updated=${updated.length}`,
-    `skipped=${skipped.length}`
+    `skipped=${skipped.length}`,
+    `failed=${failed.length}`
   ]);
 
   return {
@@ -3238,7 +3332,10 @@ export async function ingestDirectory(rootDir: string, inputDir: string, options
     scannedCount: files.length,
     imported,
     updated,
-    skipped
+    skipped,
+    failed,
+    runId,
+    statePath
   };
 }
 

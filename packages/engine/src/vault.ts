@@ -13,6 +13,12 @@ import {
   estimateCorpusWords,
   graphHash
 } from "./benchmark.js";
+import {
+  DEFAULT_PROMOTION_CONFIG,
+  evaluateCandidateForPromotion,
+  renderPromotionSessionMarkdown,
+  sortDecisionsForPromotion
+} from "./candidate-promotion.js";
 import { buildCodeIndex, enrichResolvedCodeImports, modulePageTitle } from "./code-analysis.js";
 import { conflictConfidence, edgeConfidence, nodeConfidence } from "./confidence.js";
 import { initWorkspace, loadVaultConfig } from "./config.js";
@@ -66,14 +72,19 @@ import type {
   ApprovalBundleType,
   ApprovalChangeType,
   ApprovalDetail,
+  ApprovalDiffHunk,
+  ApprovalDiffLine,
   ApprovalEntry,
   ApprovalEntryDetail,
   ApprovalEntryLabel,
+  ApprovalFrontmatterChange,
   ApprovalManifest,
+  ApprovalStructuredDiff,
   ApprovalSummary,
   BenchmarkArtifact,
   BenchmarkOptions,
   BlastRadiusResult,
+  CandidatePromotionConfig,
   CandidateRecord,
   CodeIndexArtifact,
   CompileOptions,
@@ -98,6 +109,8 @@ import type {
   OutputFormat,
   PageManager,
   PageStatus,
+  PromotionDecision,
+  PromotionSession,
   QueryOptions,
   QueryResult,
   ReviewActionResult,
@@ -3788,11 +3801,9 @@ function sortGraphPages(pages: GraphPage[]): GraphPage[] {
   return [...pages].sort((left, right) => left.path.localeCompare(right.path) || left.title.localeCompare(right.title));
 }
 
-function computeUnifiedDiff(current: string, staged: string, label: string): string {
+function diffLines(current: string, staged: string): ApprovalDiffLine[] {
   const currentLines = current.split("\n");
   const stagedLines = staged.split("\n");
-  const output: string[] = [`--- a/${label}`, `+++ b/${label}`];
-
   const n = currentLines.length;
   const m = stagedLines.length;
   const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
@@ -3802,23 +3813,120 @@ function computeUnifiedDiff(current: string, staged: string, label: string): str
     }
   }
 
+  const lines: ApprovalDiffLine[] = [];
   let i = 0;
   let j = 0;
   while (i < n || j < m) {
     if (i < n && j < m && currentLines[i] === stagedLines[j]) {
-      output.push(` ${currentLines[i]}`);
+      lines.push({ type: "context", value: currentLines[i] });
       i++;
       j++;
     } else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) {
-      output.push(`+${stagedLines[j]}`);
+      lines.push({ type: "add", value: stagedLines[j] });
       j++;
     } else {
-      output.push(`-${currentLines[i]}`);
+      lines.push({ type: "remove", value: currentLines[i] });
       i++;
     }
   }
+  return lines;
+}
 
+function computeUnifiedDiff(current: string, staged: string, label: string): string {
+  const output: string[] = [`--- a/${label}`, `+++ b/${label}`];
+  for (const line of diffLines(current, staged)) {
+    const prefix = line.type === "add" ? "+" : line.type === "remove" ? "-" : " ";
+    output.push(`${prefix}${line.value}`);
+  }
   return output.join("\n");
+}
+
+const PROTECTED_FRONTMATTER_FIELDS = new Set([
+  "page_id",
+  "source_ids",
+  "node_ids",
+  "freshness",
+  "source_hashes",
+  "source_semantic_hashes",
+  "schema_hash"
+]);
+
+function stableSerialize(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`).join(",")}}`;
+}
+
+function compareFrontmatter(currentData: Record<string, unknown>, stagedData: Record<string, unknown>): ApprovalFrontmatterChange[] {
+  const keys = new Set<string>([...Object.keys(currentData), ...Object.keys(stagedData)]);
+  const changes: ApprovalFrontmatterChange[] = [];
+  for (const key of keys) {
+    const before = currentData[key];
+    const after = stagedData[key];
+    if (stableSerialize(before) === stableSerialize(after)) continue;
+    changes.push({
+      key,
+      before,
+      after,
+      protected: PROTECTED_FRONTMATTER_FIELDS.has(key)
+    });
+  }
+  return changes.sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function computeStructuredDiff(
+  current: string | undefined,
+  staged: string | undefined,
+  isBinaryAsset: boolean
+): ApprovalStructuredDiff | undefined {
+  if (isBinaryAsset) {
+    return {
+      hunks: [],
+      addedLines: 0,
+      removedLines: 0,
+      frontmatterChanges: []
+    };
+  }
+  if (!current && !staged) return undefined;
+
+  let currentData: Record<string, unknown> = {};
+  let stagedData: Record<string, unknown> = {};
+  let currentBody = current ?? "";
+  let stagedBody = staged ?? "";
+  if (current) {
+    const parsed = matter(current);
+    currentData = parsed.data ?? {};
+    currentBody = parsed.content;
+  }
+  if (staged) {
+    const parsed = matter(staged);
+    stagedData = parsed.data ?? {};
+    stagedBody = parsed.content;
+  }
+
+  const lines = diffLines(currentBody, stagedBody);
+  const addedLines = lines.filter((line) => line.type === "add").length;
+  const removedLines = lines.filter((line) => line.type === "remove").length;
+  const hunks: ApprovalDiffHunk[] = lines.length
+    ? [
+        {
+          oldStart: 1,
+          oldLines: currentBody.split("\n").length,
+          newStart: 1,
+          newLines: stagedBody.split("\n").length,
+          lines
+        }
+      ]
+    : [];
+
+  return {
+    hunks,
+    addedLines,
+    removedLines,
+    frontmatterChanges: compareFrontmatter(currentData, stagedData)
+  };
 }
 
 function computeChangeSummary(current: string | undefined, staged: string | undefined, changeType: ApprovalChangeType): string {
@@ -3888,7 +3996,17 @@ export async function readApproval(rootDir: string, approvalId: string, options?
         stagedContent
       };
       detail.changeSummary = computeChangeSummary(detail.currentContent, detail.stagedContent, detail.changeType);
-      if (options?.diff && detail.currentContent && detail.stagedContent) {
+
+      const isBinaryAsset = detail.kind === "output";
+      const structured = computeStructuredDiff(detail.currentContent, detail.stagedContent, isBinaryAsset);
+      if (structured) {
+        detail.structuredDiff = structured;
+        const protectedChanges = structured.frontmatterChanges.filter((change) => change.protected);
+        if (protectedChanges.length) {
+          detail.warnings = ["protected_frontmatter_changed"];
+        }
+      }
+      if (options?.diff && detail.currentContent && detail.stagedContent && !isBinaryAsset) {
         detail.diff = computeUnifiedDiff(detail.currentContent, detail.stagedContent, detail.nextPath ?? detail.pageId);
       }
       return detail;
@@ -4125,6 +4243,104 @@ export async function promoteCandidate(rootDir: string, target: string): Promise
     createdAt: nextPage.createdAt,
     updatedAt: nextPage.updatedAt
   };
+}
+
+function resolvePromotionConfig(config: VaultConfig): CandidatePromotionConfig {
+  const overrides = config.candidate?.autoPromote ?? {};
+  return { ...DEFAULT_PROMOTION_CONFIG, ...overrides };
+}
+
+function promotionSessionTitle(promotionConfig: CandidatePromotionConfig): string {
+  return promotionConfig.dryRun ? "auto-promote-dry-run" : "auto-promote";
+}
+
+export async function runAutoPromotion(rootDir: string, options: { dryRun?: boolean } = {}): Promise<PromotionSession> {
+  const startedAt = new Date().toISOString();
+  const { config, paths } = await loadVaultConfig(rootDir);
+  const base = resolvePromotionConfig(config);
+  const promotionConfig: CandidatePromotionConfig = { ...base, dryRun: options.dryRun ?? base.dryRun };
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const compileState = (await readJsonFile<CompileState>(paths.compileStatePath)) ?? emptyCompileState();
+
+  const candidates = (graph?.pages ?? []).filter(
+    (page): page is GraphPage & { kind: "concept" | "entity" } =>
+      page.status === "candidate" && (page.kind === "concept" || page.kind === "entity")
+  );
+
+  const now = Date.now();
+  const decisions: PromotionDecision[] = candidates.map((page) =>
+    evaluateCandidateForPromotion(page, graph as GraphArtifact, compileState.candidateHistory, promotionConfig, now)
+  );
+
+  const sorted = sortDecisionsForPromotion(decisions);
+  const acceptedIds = sorted
+    .filter((decision) => decision.promote)
+    .slice(0, promotionConfig.maxPerRun)
+    .map((d) => d.pageId);
+  const skippedIds = sorted.filter((decision) => !acceptedIds.includes(decision.pageId)).map((d) => d.pageId);
+
+  const promotedPageIds: string[] = [];
+  if (!promotionConfig.dryRun) {
+    for (const pageId of acceptedIds) {
+      try {
+        await promoteCandidate(rootDir, pageId);
+        promotedPageIds.push(pageId);
+      } catch {
+        // Candidate may have been archived or promoted by another process between
+        // the evaluation snapshot and this apply step; record it as skipped.
+      }
+    }
+  }
+
+  const finishedAt = new Date().toISOString();
+  const sessionBody = renderPromotionSessionMarkdown(decisions, promotedPageIds, {
+    dryRun: promotionConfig.dryRun,
+    startedAt,
+    finishedAt
+  });
+
+  const { sessionPath } = await recordSession(rootDir, {
+    operation: "candidate",
+    title: promotionSessionTitle(promotionConfig),
+    startedAt,
+    finishedAt,
+    success: true,
+    relatedPageIds: decisions.map((decision) => decision.pageId),
+    changedPages: promotedPageIds,
+    lines: [
+      `mode=${promotionConfig.dryRun ? "dry-run" : "applied"}`,
+      `evaluated=${decisions.length}`,
+      `promoted=${promotedPageIds.length}`,
+      ...sessionBody.split("\n")
+    ]
+  });
+
+  return {
+    startedAt,
+    finishedAt,
+    dryRun: promotionConfig.dryRun,
+    promotedPageIds,
+    skippedPageIds: skippedIds,
+    decisions: sorted,
+    sessionPath
+  };
+}
+
+export async function previewCandidatePromotions(rootDir: string): Promise<PromotionDecision[]> {
+  const { config, paths } = await loadVaultConfig(rootDir);
+  const promotionConfig = resolvePromotionConfig(config);
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const compileState = (await readJsonFile<CompileState>(paths.compileStatePath)) ?? emptyCompileState();
+  const candidates = (graph?.pages ?? []).filter(
+    (page): page is GraphPage & { kind: "concept" | "entity" } =>
+      page.status === "candidate" && (page.kind === "concept" || page.kind === "entity")
+  );
+  const now = Date.now();
+  return sortDecisionsForPromotion(
+    candidates.map((page) =>
+      evaluateCandidateForPromotion(page, graph as GraphArtifact, compileState.candidateHistory, promotionConfig, now)
+    )
+  );
 }
 
 export async function archiveCandidate(rootDir: string, target: string): Promise<CandidateRecord> {
@@ -4735,6 +4951,20 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     };
   }
 
+  let autoPromotionSummary: CompileResult["autoPromotion"];
+  const promotionConfig = resolvePromotionConfig(config);
+  const promotedFromAuto: string[] = [];
+  if (promotionConfig.enabled && !options.approve) {
+    const autoRun = await runAutoPromotion(rootDir, { dryRun: promotionConfig.dryRun });
+    autoPromotionSummary = {
+      evaluated: autoRun.decisions.length,
+      promoted: autoRun.promotedPageIds.length,
+      dryRun: autoRun.dryRun,
+      sessionPath: autoRun.sessionPath
+    };
+    promotedFromAuto.push(...autoRun.promotedPageIds);
+  }
+
   return {
     graphPath: paths.graphPath,
     pageCount: sync.allPages.length,
@@ -4745,8 +4975,9 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     approvalDir: sync.approvalDir,
     postPassApprovalId,
     postPassApprovalDir,
-    promotedPageIds: sync.promotedPageIds,
+    promotedPageIds: [...sync.promotedPageIds, ...promotedFromAuto],
     candidatePageCount: sync.candidatePageCount,
+    autoPromotion: autoPromotionSummary,
     tokenStats
   };
 }

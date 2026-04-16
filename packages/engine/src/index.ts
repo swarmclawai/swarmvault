@@ -2,6 +2,7 @@
 
 export { installAgent, installConfiguredAgents } from "./agents.js";
 export { autoCommitWikiChanges } from "./auto-commit.js";
+export { DEFAULT_PROMOTION_CONFIG, evaluateCandidateForPromotion } from "./candidate-promotion.js";
 export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
 export { exportGraphFormat, exportGraphReportHtml, exportObsidianCanvas, exportObsidianVault } from "./graph-export.js";
 export { pushGraphNeo4j } from "./graph-push.js";
@@ -54,6 +55,7 @@ export {
   listGraphHyperedges,
   listPages,
   pathGraphVault,
+  previewCandidatePromotions,
   promoteCandidate,
   queryGraphVault,
   queryVault,
@@ -61,6 +63,7 @@ export {
   readGraphReport,
   readPage,
   rejectApproval,
+  runAutoPromotion,
   searchVault,
   stageGeneratedOutputPages
 } from "./vault.js";

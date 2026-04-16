@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.31
+
+- Made the full viewer HTML export (`graph export --html`) interactive offline: graph query joins the already-embedded path and explain helpers so users can traverse the vault from a single shared file with no server, and the export now defaults to the full graph (pass `--overview` for sampled output)
+- Added configurable candidate auto-promotion: new `candidate.autoPromote.*` config block, `candidate auto-promote` and `candidate preview-scores` CLI subcommands, and a post-compile pass that evaluates staged candidates against source, confidence, agreement, degree, and age gates and emits an auditable promotion session artifact
+- Upgraded approval bundle review with structured diffs: `readApproval` now returns per-hunk change data and a frontmatter-change table alongside the textual diff, and the viewer ApprovalQueue renders a collapsible unified/split diff with a protected-frontmatter warning banner (`page_id`, `source_ids`, `node_ids`, `freshness`, `source_hashes`, `schema_hash`)
+- Hardened bulk directory ingest: per-file failures no longer abort the run, every run now emits a `runId` plus `IngestRunFailure[]` summary, failed files are persisted to `state/ingest-runs/<id>.json`, and `swarmvault ingest <dir> --resume <run-id>` retries only the failed entries
+- Filled MCP gaps for the review loop: added `list_approvals`, `read_approval`, `promote_candidate`, `archive_candidate`, `preview_candidate_scores`, `auto_promote_candidates`, `review_decision`, and `watch_status` so agents can drive the full compile → review → promote workflow without shelling out
+
 ## 0.7.30
 
 - Prepared the Obsidian plugin for the community marketplace submission: rewrote the manifest description so it no longer references the host app, removed the disallowed `swarmvaultCliMinVersion` and `fundingUrl` fields, and relocated the CLI compatibility pin to `packages/obsidian-plugin/cli-compat.json` (bundled into the plugin at build time)

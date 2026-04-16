@@ -303,6 +303,49 @@ export interface VaultConfig {
     rerank?: boolean;
   };
   autoCommit?: boolean;
+  candidate?: {
+    autoPromote?: CandidatePromotionConfig;
+  };
+}
+
+export interface CandidatePromotionConfig {
+  enabled: boolean;
+  minSources: number;
+  minConfidence: number;
+  minAgreement: number;
+  minDegree: number;
+  minAgeHours: number;
+  maxPerRun: number;
+  dryRun: boolean;
+}
+
+export type PromotionGateKind = "sources" | "confidence" | "agreement" | "degree" | "age";
+
+export interface PromotionGateResult {
+  gate: PromotionGateKind;
+  value: number;
+  threshold: number;
+  passed: boolean;
+}
+
+export interface PromotionDecision {
+  pageId: string;
+  title: string;
+  kind: "concept" | "entity";
+  promote: boolean;
+  score: number;
+  gates: PromotionGateResult[];
+  reasons: string[];
+}
+
+export interface PromotionSession {
+  startedAt: string;
+  finishedAt: string;
+  dryRun: boolean;
+  promotedPageIds: string[];
+  skippedPageIds: string[];
+  decisions: PromotionDecision[];
+  sessionPath?: string;
 }
 
 export interface ResolvedPaths {
@@ -418,11 +461,18 @@ export interface IngestOptions {
   maxFiles?: number;
   gitignore?: boolean;
   extractClasses?: SourceClass[];
+  resume?: string;
 }
 
 export interface DirectoryIngestSkip {
   path: string;
   reason: string;
+}
+
+export interface DirectoryIngestFailure {
+  path: string;
+  error: string;
+  stage: "prepare" | "persist";
 }
 
 export interface DirectoryIngestResult {
@@ -432,6 +482,9 @@ export interface DirectoryIngestResult {
   imported: SourceManifest[];
   updated: SourceManifest[];
   skipped: DirectoryIngestSkip[];
+  failed?: DirectoryIngestFailure[];
+  runId?: string;
+  statePath?: string;
 }
 
 export interface InputIngestResult {
@@ -797,11 +850,40 @@ export interface ApprovalSummary {
   rejectedCount: number;
 }
 
+export type ApprovalDiffLine = {
+  type: "add" | "remove" | "context";
+  value: string;
+};
+
+export type ApprovalDiffHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: ApprovalDiffLine[];
+};
+
+export type ApprovalFrontmatterChange = {
+  key: string;
+  before?: unknown;
+  after?: unknown;
+  protected: boolean;
+};
+
+export type ApprovalStructuredDiff = {
+  hunks: ApprovalDiffHunk[];
+  addedLines: number;
+  removedLines: number;
+  frontmatterChanges: ApprovalFrontmatterChange[];
+};
+
 export interface ApprovalEntryDetail extends ApprovalEntry {
   currentContent?: string;
   stagedContent?: string;
   changeSummary?: string;
   diff?: string;
+  structuredDiff?: ApprovalStructuredDiff;
+  warnings?: string[];
 }
 
 export interface ApprovalDetail extends ApprovalSummary {
@@ -855,6 +937,12 @@ export interface CompileResult {
   postPassApprovalDir?: string;
   promotedPageIds: string[];
   candidatePageCount: number;
+  autoPromotion?: {
+    evaluated: number;
+    promoted: number;
+    dryRun: boolean;
+    sessionPath?: string;
+  };
   tokenStats?: {
     estimatedTokens: number;
     maxTokens: number;

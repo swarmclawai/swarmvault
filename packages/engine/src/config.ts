@@ -226,7 +226,23 @@ const vaultConfigSchema = z.object({
       rerank: z.boolean().optional()
     })
     .optional(),
-  autoCommit: z.boolean().optional()
+  autoCommit: z.boolean().optional(),
+  candidate: z
+    .object({
+      autoPromote: z
+        .object({
+          enabled: z.boolean().default(false),
+          minSources: z.number().int().min(1).default(3),
+          minConfidence: z.number().min(0).max(1).default(0.8),
+          minAgreement: z.number().min(0).max(1).default(0.7),
+          minDegree: z.number().int().min(0).default(2),
+          minAgeHours: z.number().int().min(0).default(24),
+          maxPerRun: z.number().int().positive().default(25),
+          dryRun: z.boolean().default(false)
+        })
+        .optional()
+    })
+    .optional()
 });
 
 function normalizeProfilePresets(presets: VaultProfilePreset[]): VaultProfilePreset[] {

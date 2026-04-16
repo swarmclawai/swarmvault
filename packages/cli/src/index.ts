@@ -41,6 +41,7 @@ import {
   listSchedules,
   loadVaultConfig,
   pathGraphVault,
+  previewCandidatePromotions,
   promoteCandidate,
   pushGraphNeo4j,
   queryGraphVault,
@@ -51,6 +52,7 @@ import {
   resumeSourceSession,
   reviewManagedSource,
   reviewSourceScope,
+  runAutoPromotion,
   runSchedule,
   runWatchCycle,
   serveSchedules,
@@ -76,9 +78,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.30";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "0.7.31";
   } catch {
-    return "0.7.30";
+    return "0.7.31";
   }
 }
 
@@ -290,6 +292,7 @@ program
   .option("--include-resources", "Also ingest repo files classified as resources", false)
   .option("--include-generated", "Also ingest repo files classified as generated output", false)
   .option("--no-gitignore", "Ignore .gitignore rules when ingesting a directory")
+  .option("--resume <run-id>", "Re-run only the failed files from a prior ingest run id")
   .option("--commit", "Auto-commit wiki and state changes after ingest")
   .action(
     async (
@@ -305,6 +308,7 @@ program
         includeResources?: boolean;
         includeGenerated?: boolean;
         gitignore?: boolean;
+        resume?: string;
         review?: boolean;
         guide?: boolean;
         answersFile?: string;
@@ -334,7 +338,8 @@ program
         exclude: options.exclude,
         maxFiles,
         gitignore: options.gitignore,
-        extractClasses
+        extractClasses,
+        resume: options.resume
       };
       const directoryResult = !/^https?:\/\//i.test(input)
         ? await import("node:fs/promises").then((fs) =>
@@ -394,9 +399,18 @@ program
                 : directoryResult
           );
         } else {
+          const failedCount = directoryResult.failed?.length ?? 0;
           log(
-            `Imported ${directoryResult.imported.length} file(s), updated ${directoryResult.updated.length}, skipped ${directoryResult.skipped.length}.`
+            `Imported ${directoryResult.imported.length} file(s), updated ${directoryResult.updated.length}, skipped ${directoryResult.skipped.length}, failed ${failedCount}.`
           );
+          if (failedCount && directoryResult.runId) {
+            log(`Run id: ${directoryResult.runId}`);
+            log(`Retry with: swarmvault ingest ${input} --resume ${directoryResult.runId}`);
+            for (const failure of (directoryResult.failed ?? []).slice(0, 5)) {
+              log(`  failed ${failure.stage}: ${failure.path}: ${failure.error}`);
+            }
+            if (failedCount > 5) log(`  ... ${failedCount - 5} more`);
+          }
           if (review) {
             log(`Staged source review at ${review.reviewPath}.`);
           }
@@ -943,7 +957,8 @@ graph
   .option("--json <output>", "Output JSON file path")
   .option("--obsidian <output>", "Output Obsidian vault directory path")
   .option("--canvas <output>", "Output Obsidian canvas file path")
-  .option("--full", "Disable overview sampling for HTML export", false)
+  .option("--full", "Include the full graph in HTML export (default; queries traverse complete graph)", true)
+  .option("--overview", "Use overview sampling for HTML export (smaller file, queries limited to sampled nodes)", false)
   .action(
     async (options: {
       html?: string;
@@ -956,7 +971,9 @@ graph
       obsidian?: string;
       canvas?: string;
       full?: boolean;
+      overview?: boolean;
     }) => {
+      const useFullGraph = options.overview ? false : (options.full ?? true);
       const targets = [
         options.html ? ({ format: "html", outputPath: options.html } as const) : null,
         options.htmlStandalone ? ({ format: "html-standalone", outputPath: options.htmlStandalone } as const) : null,
@@ -978,7 +995,7 @@ graph
       const results: Array<{ format: string; outputPath: string; fileCount?: number }> = [];
       for (const target of targets) {
         if (target.format === "html") {
-          const outputPath = await exportGraphHtml(process.cwd(), target.outputPath, { full: options.full ?? false });
+          const outputPath = await exportGraphHtml(process.cwd(), target.outputPath, { full: useFullGraph });
           results.push({ format: target.format, outputPath });
         } else if (target.format === "report") {
           const result = await exportGraphReportHtml(process.cwd(), target.outputPath);
@@ -1204,6 +1221,44 @@ candidate
       emitJson(result);
     } else {
       log(`Archived ${result.pageId}`);
+    }
+  });
+
+candidate
+  .command("auto-promote")
+  .description("Apply configured auto-promotion rules to staged candidates. Requires candidate.autoPromote.enabled in config.")
+  .option("--dry-run", "Score candidates without moving files", false)
+  .action(async (options: { dryRun?: boolean }) => {
+    const result = await runAutoPromotion(process.cwd(), { dryRun: options.dryRun ?? false });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(
+      `${result.dryRun ? "Dry-run" : "Promoted"} ${result.promotedPageIds.length} of ${result.decisions.length} candidates. Session: ${result.sessionPath ?? "none"}`
+    );
+    for (const decision of result.decisions) {
+      const mark = decision.promote ? (result.promotedPageIds.includes(decision.pageId) ? "+" : "~") : "-";
+      log(`  ${mark} ${decision.pageId} score=${decision.score.toFixed(2)} ${decision.reasons.join("; ")}`);
+    }
+  });
+
+candidate
+  .command("preview-scores")
+  .description("Show promotion scores for staged candidates without promoting.")
+  .action(async () => {
+    const decisions = await previewCandidatePromotions(process.cwd());
+    if (isJson()) {
+      emitJson(decisions);
+      return;
+    }
+    if (!decisions.length) {
+      log("No candidates to score.");
+      return;
+    }
+    for (const decision of decisions) {
+      const verdict = decision.promote ? "promote" : "skip";
+      log(`${verdict} ${decision.pageId} score=${decision.score.toFixed(2)} ${decision.reasons.join("; ")}`);
     }
   });
 

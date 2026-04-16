@@ -184,6 +184,33 @@ export type ViewerApprovalSummary = {
   rejectedCount: number;
 };
 
+export type ViewerApprovalDiffLine = {
+  type: "add" | "remove" | "context";
+  value: string;
+};
+
+export type ViewerApprovalDiffHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: ViewerApprovalDiffLine[];
+};
+
+export type ViewerApprovalFrontmatterChange = {
+  key: string;
+  before?: unknown;
+  after?: unknown;
+  protected: boolean;
+};
+
+export type ViewerApprovalStructuredDiff = {
+  hunks: ViewerApprovalDiffHunk[];
+  addedLines: number;
+  removedLines: number;
+  frontmatterChanges: ViewerApprovalFrontmatterChange[];
+};
+
 export type ViewerApprovalEntry = {
   pageId: string;
   title: string;
@@ -195,6 +222,9 @@ export type ViewerApprovalEntry = {
   previousPath?: string;
   currentContent?: string;
   stagedContent?: string;
+  diff?: string;
+  structuredDiff?: ViewerApprovalStructuredDiff;
+  warnings?: string[];
 };
 
 export type ViewerApprovalDetail = ViewerApprovalSummary & {
@@ -519,6 +549,182 @@ function explainEmbeddedGraphTarget(graph: ViewerGraphArtifact, target: string):
   };
 }
 
+type GraphQueryMatch = ViewerGraphQueryResult["matches"][number];
+
+const _NODE_TYPE_PRIORITY: Record<string, number> = {
+  concept: 6,
+  entity: 5,
+  source: 4,
+  module: 3,
+  symbol: 2,
+  rationale: 1
+};
+
+function uniqueByKey<T>(items: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const item of items) {
+    const k = key(item);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    result.push(item);
+  }
+  return result;
+}
+
+function embeddedScoreMatch(query: string, candidate: string): number {
+  const q = query.trim().toLowerCase();
+  const c = candidate.trim().toLowerCase();
+  if (!q || !c) return 0;
+  if (c === q) return 100;
+  if (c.startsWith(q)) return 80;
+  if (c.includes(q)) return 60;
+  const qTokens = q.split(/\s+/).filter(Boolean);
+  const cTokens = new Set(c.split(/\s+/).filter(Boolean));
+  const overlap = qTokens.filter((token) => cTokens.has(token)).length;
+  return overlap ? overlap * 10 : 0;
+}
+
+function embeddedGraphQuery(
+  graph: ViewerGraphArtifact,
+  question: string,
+  searchResults: ViewerSearchResult[],
+  options?: { traversal?: "bfs" | "dfs"; budget?: number }
+): ViewerGraphQueryResult {
+  const traversal = options?.traversal ?? "bfs";
+  const budget = Math.max(3, Math.min(options?.budget ?? 12, 50));
+  const pagesById = new Map((graph.pages ?? []).map((page) => [page.id, page]));
+
+  const pageMatchesRaw = searchResults.map((result) => {
+    const page = pagesById.get(result.pageId);
+    const score = Math.max(embeddedScoreMatch(question, result.title), embeddedScoreMatch(question, result.path));
+    if (!page || score <= 0) return null;
+    return { type: "page" as const, id: page.id, label: page.title, score };
+  });
+  const pageMatches: GraphQueryMatch[] = pageMatchesRaw.filter(
+    (match): match is { type: "page"; id: string; label: string; score: number } => match !== null
+  );
+
+  const nodeMatches: GraphQueryMatch[] = graph.nodes
+    .map((node) => ({
+      type: "node" as const,
+      id: node.id,
+      label: node.label,
+      score: Math.max(embeddedScoreMatch(question, node.label), embeddedScoreMatch(question, node.id))
+    }))
+    .filter((match) => match.score > 0);
+
+  const hyperedgeMatches: GraphQueryMatch[] = (graph.hyperedges ?? [])
+    .map((hyperedge) => ({
+      type: "hyperedge" as const,
+      id: hyperedge.id,
+      label: hyperedge.label,
+      score: Math.max(
+        embeddedScoreMatch(question, hyperedge.label),
+        embeddedScoreMatch(question, hyperedge.why),
+        embeddedScoreMatch(question, hyperedge.relation)
+      )
+    }))
+    .filter((match) => match.score > 0);
+
+  const matches = uniqueByKey([...pageMatches, ...nodeMatches, ...hyperedgeMatches], (match) => `${match.type}:${match.id}`)
+    .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
+    .slice(0, 12);
+
+  const seeds = uniqueByKey(
+    [
+      ...searchResults.flatMap((result) => pagesById.get(result.pageId)?.nodeIds ?? []),
+      ...matches.filter((match) => match.type === "page").flatMap((match) => pagesById.get(match.id)?.nodeIds ?? []),
+      ...matches.filter((match) => match.type === "node").map((match) => match.id),
+      ...matches
+        .filter((match) => match.type === "hyperedge")
+        .flatMap((match) => (graph.hyperedges ?? []).find((hyperedge) => hyperedge.id === match.id)?.nodeIds ?? [])
+    ],
+    (item) => item
+  ).filter(Boolean);
+
+  type EdgeNeighbor = { edge: ViewerGraphEdge; nodeId: string; direction: "incoming" | "outgoing" };
+  const adjacency = new Map<string, EdgeNeighbor[]>();
+  const pushNeighbor = (nodeId: string, neighbor: EdgeNeighbor) => {
+    if (!adjacency.has(nodeId)) adjacency.set(nodeId, []);
+    adjacency.get(nodeId)?.push(neighbor);
+  };
+  for (const edge of graph.edges) {
+    pushNeighbor(edge.source, { edge, nodeId: edge.target, direction: "outgoing" });
+    pushNeighbor(edge.target, { edge, nodeId: edge.source, direction: "incoming" });
+  }
+  for (const [nodeId, items] of adjacency.entries()) {
+    items.sort(
+      (left, right) => (right.edge.confidence ?? 0) - (left.edge.confidence ?? 0) || left.edge.relation.localeCompare(right.edge.relation)
+    );
+    adjacency.set(nodeId, items);
+  }
+
+  const visitedNodeIds: string[] = [];
+  const visitedEdgeIds = new Set<string>();
+  const seen = new Set<string>();
+  const frontier = [...seeds];
+
+  while (frontier.length && visitedNodeIds.length < budget) {
+    const current = traversal === "dfs" ? frontier.pop() : frontier.shift();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+    visitedNodeIds.push(current);
+    for (const neighbor of adjacency.get(current) ?? []) {
+      visitedEdgeIds.add(neighbor.edge.id);
+      if (!seen.has(neighbor.nodeId)) frontier.push(neighbor.nodeId);
+      if (visitedNodeIds.length + frontier.length >= budget * 2) break;
+    }
+  }
+
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const pageIds = uniqueByKey(
+    [
+      ...searchResults.map((result) => result.pageId),
+      ...matches.filter((match) => match.type === "page").map((match) => match.id),
+      ...visitedNodeIds.flatMap((nodeId) => {
+        const node = nodesById.get(nodeId);
+        return node?.pageId ? [node.pageId] : [];
+      })
+    ],
+    (item) => item
+  );
+  const communities = uniqueByKey(
+    visitedNodeIds.map((nodeId) => nodesById.get(nodeId)?.communityId).filter((communityId): communityId is string => Boolean(communityId)),
+    (item) => item
+  );
+  const hyperedgeIds = uniqueByKey(
+    (graph.hyperedges ?? [])
+      .filter((hyperedge) => hyperedge.nodeIds.some((nodeId) => visitedNodeIds.includes(nodeId)))
+      .map((hyperedge) => hyperedge.id),
+    (item) => item
+  );
+
+  return {
+    question,
+    traversal,
+    seedNodeIds: seeds,
+    seedPageIds: uniqueByKey(
+      [...searchResults.map((result) => result.pageId), ...matches.filter((match) => match.type === "page").map((match) => match.id)],
+      (item) => item
+    ),
+    visitedNodeIds,
+    visitedEdgeIds: [...visitedEdgeIds],
+    hyperedgeIds,
+    pageIds,
+    communities,
+    matches,
+    summary: [
+      `Seeds: ${seeds.join(", ") || "none"}`,
+      `Visited nodes: ${visitedNodeIds.length}`,
+      `Visited edges: ${visitedEdgeIds.size}`,
+      `Touched group patterns: ${hyperedgeIds.length}`,
+      `Communities: ${communities.join(", ") || "none"}`,
+      `Pages: ${pageIds.join(", ") || "none"}`
+    ].join("\n")
+  };
+}
+
 function normalizeSnippet(content: string, query: string): string {
   const normalized = content.replace(/\s+/g, " ").trim();
   if (!query) {
@@ -651,6 +857,11 @@ export async function fetchGraphQuery(
     budget?: number;
   } = {}
 ): Promise<ViewerGraphQueryResult> {
+  const embedded = embeddedData();
+  if (embedded) {
+    const searchResults = await searchViewerPages(question, { limit: 10 });
+    return embeddedGraphQuery(embedded.graph, question, searchResults, options);
+  }
   const params = new URLSearchParams({
     q: question,
     traversal: options.traversal ?? "bfs",

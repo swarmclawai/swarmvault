@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { DiffView } from "./DiffView";
 import type { OpenPageFn, ViewerApprovalDetail, ViewerApprovalSummary } from "./types";
 
 function snippetFromContent(content: string): string {
@@ -54,49 +56,81 @@ export function ApprovalQueue({
       {approvalDetail?.entries.length ? (
         <div className="card-list" style={{ marginTop: 8 }}>
           {approvalDetail.entries.map((entry) => (
-            <article key={`${entry.pageId}:${entry.nextPath ?? entry.previousPath ?? entry.changeType}`} className="card">
-              <span className="label">
-                {entry.status} / {entry.changeType}
-              </span>
-              <strong className="card-title">{entry.title}</strong>
-              <p className="text-mono text-sm">{entry.nextPath ?? entry.previousPath}</p>
-              {entry.stagedContent ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => void onOpenPage(entry.nextPath ?? entry.previousPath ?? "", entry.pageId)}
-                >
-                  Open page
-                </button>
-              ) : null}
-              {entry.status === "pending" ? (
-                <div className="action-row">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={busyAction === `accept:${entry.pageId}`}
-                    onClick={() => onReviewAction(entry.pageId, "accept")}
-                  >
-                    Accept
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    disabled={busyAction === `reject:${entry.pageId}`}
-                    onClick={() => onReviewAction(entry.pageId, "reject")}
-                  >
-                    Reject
-                  </button>
-                </div>
-              ) : (
-                <p className="text-secondary text-sm">
-                  {entry.currentContent ? snippetFromContent(entry.currentContent) : "No current content on disk."}
-                </p>
-              )}
-            </article>
+            <ApprovalEntryCard
+              key={`${entry.pageId}:${entry.nextPath ?? entry.previousPath ?? entry.changeType}`}
+              entry={entry}
+              busyAction={busyAction}
+              onReviewAction={onReviewAction}
+              onOpenPage={onOpenPage}
+            />
           ))}
         </div>
       ) : null}
     </div>
+  );
+}
+
+type ApprovalEntryCardProps = {
+  entry: ViewerApprovalDetail["entries"][number];
+  busyAction: string;
+  onReviewAction: (pageId: string, action: "accept" | "reject") => void;
+  onOpenPage: OpenPageFn;
+};
+
+function ApprovalEntryCard({ entry, busyAction, onReviewAction, onOpenPage }: ApprovalEntryCardProps) {
+  const [showDiff, setShowDiff] = useState(false);
+  const hasDiff = Boolean(entry.structuredDiff?.hunks.length);
+  const hasProtectedWarning = entry.warnings?.includes("protected_frontmatter_changed") ?? false;
+
+  return (
+    <article className="card">
+      <span className="label">
+        {entry.status} / {entry.changeType}
+      </span>
+      <strong className="card-title">{entry.title}</strong>
+      <p className="text-mono text-sm">{entry.nextPath ?? entry.previousPath}</p>
+      {hasProtectedWarning ? <p className="text-error text-sm">Warning: protected frontmatter fields changed.</p> : null}
+      <div className="action-row">
+        {entry.stagedContent ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => void onOpenPage(entry.nextPath ?? entry.previousPath ?? "", entry.pageId)}
+          >
+            Open page
+          </button>
+        ) : null}
+        {hasDiff ? (
+          <button type="button" className="btn btn-ghost" onClick={() => setShowDiff((prev) => !prev)}>
+            {showDiff ? "Hide diff" : "View diff"}
+          </button>
+        ) : null}
+      </div>
+      {showDiff && entry.structuredDiff ? <DiffView diff={entry.structuredDiff} warnings={entry.warnings} /> : null}
+      {entry.status === "pending" ? (
+        <div className="action-row">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busyAction === `accept:${entry.pageId}`}
+            onClick={() => onReviewAction(entry.pageId, "accept")}
+          >
+            Accept
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={busyAction === `reject:${entry.pageId}`}
+            onClick={() => onReviewAction(entry.pageId, "reject")}
+          >
+            Reject
+          </button>
+        </div>
+      ) : (
+        <p className="text-secondary text-sm">
+          {entry.currentContent ? snippetFromContent(entry.currentContent) : "No current content on disk."}
+        </p>
+      )}
+    </article>
   );
 }

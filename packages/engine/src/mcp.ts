@@ -10,23 +10,32 @@ import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact } from "./types.js";
 import { fileExists, isPathWithin, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
 import {
+  acceptApproval,
+  archiveCandidate,
   blastRadiusVault,
   compileVault,
   explainGraphVault,
   getWorkspaceInfo,
   lintVault,
+  listApprovals,
   listGodNodes,
   listGraphHyperedges,
   listPages,
   pathGraphVault,
+  previewCandidatePromotions,
+  promoteCandidate,
   queryGraphVault,
   queryVault,
+  readApproval,
   readGraphReport,
   readPage,
+  rejectApproval,
+  runAutoPromotion,
   searchVault
 } from "./vault.js";
+import { getWatchStatus } from "./watch.js";
 
-const SERVER_VERSION = "0.7.30";
+const SERVER_VERSION = "0.7.31";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -261,6 +270,114 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     safeHandler(async () => {
       const findings = await lintVault(rootDir);
       return asToolText(findings);
+    })
+  );
+
+  server.registerTool(
+    "list_approvals",
+    {
+      description: "List staged approval bundles awaiting review."
+    },
+    safeHandler(async () => {
+      const approvals = await listApprovals(rootDir);
+      return asToolText(approvals);
+    })
+  );
+
+  server.registerTool(
+    "read_approval",
+    {
+      description: "Read the details and structured diffs for an approval bundle.",
+      inputSchema: {
+        approvalId: z.string().min(1).describe("Approval bundle id"),
+        diff: z.boolean().optional().describe("Include the textual unified diff alongside the structured diff")
+      }
+    },
+    safeHandler(async ({ approvalId, diff }) => {
+      const result = await readApproval(rootDir, approvalId, { diff: diff ?? true });
+      return asToolText(result);
+    })
+  );
+
+  server.registerTool(
+    "promote_candidate",
+    {
+      description: "Promote a staged candidate into its active concept or entity page.",
+      inputSchema: {
+        target: z.string().min(1).describe("Candidate page id or wiki/candidates path")
+      }
+    },
+    safeHandler(async ({ target }) => {
+      const result = await promoteCandidate(rootDir, target);
+      return asToolText(result);
+    })
+  );
+
+  server.registerTool(
+    "archive_candidate",
+    {
+      description: "Archive a staged candidate without promoting it.",
+      inputSchema: {
+        target: z.string().min(1).describe("Candidate page id or wiki/candidates path")
+      }
+    },
+    safeHandler(async ({ target }) => {
+      const result = await archiveCandidate(rootDir, target);
+      return asToolText(result);
+    })
+  );
+
+  server.registerTool(
+    "preview_candidate_scores",
+    {
+      description: "Score staged candidates against the configured auto-promotion rules without promoting."
+    },
+    safeHandler(async () => {
+      const decisions = await previewCandidatePromotions(rootDir);
+      return asToolText(decisions);
+    })
+  );
+
+  server.registerTool(
+    "auto_promote_candidates",
+    {
+      description: "Apply configured auto-promotion rules to staged candidates. Requires candidate.autoPromote.enabled in config.",
+      inputSchema: {
+        dryRun: z.boolean().optional().describe("Score candidates without moving files")
+      }
+    },
+    safeHandler(async ({ dryRun }) => {
+      const result = await runAutoPromotion(rootDir, { dryRun: dryRun ?? false });
+      return asToolText(result);
+    })
+  );
+
+  server.registerTool(
+    "review_decision",
+    {
+      description: "Accept or reject approval bundle entries from a staged compile.",
+      inputSchema: {
+        approvalId: z.string().min(1).describe("Approval bundle id as reported by list_approvals or read_approval"),
+        decision: z.enum(["accept", "reject"]).describe("Action to apply to the selected entries"),
+        targets: z.array(z.string()).optional().describe("Specific entry page ids to act on (defaults to all pending)"),
+        notes: z.string().optional().describe("Free-form reviewer notes, surfaced in the session log")
+      }
+    },
+    safeHandler(async ({ approvalId, decision, targets, notes }) => {
+      const apply = decision === "accept" ? acceptApproval : rejectApproval;
+      const result = await apply(rootDir, approvalId, targets ?? []);
+      return asToolText({ ...result, notes });
+    })
+  );
+
+  server.registerTool(
+    "watch_status",
+    {
+      description: "Return the current watch-mode status: watched repos, last run summary, and pending semantic refreshes."
+    },
+    safeHandler(async () => {
+      const status = await getWatchStatus(rootDir);
+      return asToolText(status);
     })
   );
 
