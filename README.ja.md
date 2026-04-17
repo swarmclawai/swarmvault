@@ -490,6 +490,8 @@ PR のガイドラインは [CONTRIBUTING.md](CONTRIBUTING.md)、公開パッケ
 
 公開 API コントラクト、semver の約束、廃止ポリシーは [STABILITY.md](STABILITY.md) を参照してください。1.0.0 リリース後、Stable な面はセマンティックバージョニングに従い、Experimental な面はマイナーリリースで変更される可能性があります。
 
+テスト済みの動作規模、各階層のパフォーマンス境界、調整可能なノブは [SCALE.md](SCALE.md) を参照してください。1.0 の PDF 抽出戦略と既知の制限は [docs/pdf-extraction.md](docs/pdf-extraction.md) を参照してください。
+
 <!-- readme-section:links -->
 ## リンク
 

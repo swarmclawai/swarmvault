@@ -488,6 +488,8 @@ PR 指南见 [CONTRIBUTING.md](CONTRIBUTING.md)，已发布包验证流程见 [d
 
 公开 API 契约、语义化版本承诺与弃用政策见 [STABILITY.md](STABILITY.md)。1.0.0 发布后，Stable 表面遵循语义化版本；Experimental 表面可能在任意次版本中变更。
 
+已测试的运行规模区间、各层性能边界与可调旋钮见 [SCALE.md](SCALE.md)。1.0 版本 PDF 提取策略与已知限制见 [docs/pdf-extraction.md](docs/pdf-extraction.md)。
+
 <!-- readme-section:links -->
 ## 链接
 

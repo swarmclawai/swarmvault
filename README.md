@@ -490,6 +490,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for PR guidelines, and [docs/live-testing
 
 See [STABILITY.md](STABILITY.md) for the public-API contract, semver promise, and deprecation policy. Stable surfaces follow semantic versioning once 1.0.0 is cut; experimental surfaces may change in any minor release.
 
+See [SCALE.md](SCALE.md) for tested operating envelopes across small, medium, and large vaults plus knobs to tune when the defaults aren't enough. See [docs/pdf-extraction.md](docs/pdf-extraction.md) for the 1.0 PDF extractor choice and known limitations.
+
 <!-- readme-section:links -->
 ## Links
 
