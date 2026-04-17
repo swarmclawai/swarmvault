@@ -19,6 +19,19 @@ jobs:
       - run: pnpm check
       - run: pnpm test
 
+  perf-budget:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm check:perf
+
   packaged-smoke:
     runs-on: ubuntu-latest
     needs: check
