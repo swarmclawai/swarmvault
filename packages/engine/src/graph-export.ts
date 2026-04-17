@@ -549,7 +549,7 @@ function renderJson(graph: GraphArtifact): string {
   return JSON.stringify(payload, null, 2);
 }
 
-function renderHtmlStandalone(graph: GraphArtifact): string {
+export function renderHtmlStandalone(graph: GraphArtifact): string {
   const communities = sortedCommunities(graph);
 
   // Cap at 5000 nodes by degree descending
@@ -584,7 +584,8 @@ function renderHtmlStandalone(graph: GraphArtifact): string {
     bridgeScore: node.bridgeScore ?? null,
     confidence: node.confidence ?? null,
     sourceClass: node.sourceClass ?? null,
-    tags: node.tags ?? []
+    tags: node.tags ?? [],
+    pageId: node.pageId ?? null
   }));
 
   const edgesData = cappedEdges.map((edge) => ({
@@ -600,6 +601,43 @@ function renderHtmlStandalone(graph: GraphArtifact): string {
     id: c.id,
     label: c.label,
     nodeIds: c.nodeIds
+  }));
+
+  // The interactive query/path/explain panels operate on the real graph (not
+  // the viewer-only hub scaffolding), so we ship a parallel "core" payload
+  // with just the nodes/edges the embedded JS runtime walks. Everything here
+  // is trimmed to the fields the shared `graph-query-core` helpers actually
+  // read so the standalone HTML stays small and offline-only.
+  const corePagesData = graph.pages
+    .filter((page) => page.nodeIds.some((nodeId) => cappedNodeIds.has(nodeId)))
+    .map((page) => ({ id: page.id, path: page.path, title: page.title }));
+  const coreHyperedgesData = (graph.hyperedges ?? [])
+    .filter((hyperedge) => hyperedge.nodeIds.some((nodeId) => cappedNodeIds.has(nodeId)))
+    .map((hyperedge) => ({
+      id: hyperedge.id,
+      label: hyperedge.label,
+      relation: hyperedge.relation,
+      nodeIds: hyperedge.nodeIds,
+      confidence: hyperedge.confidence,
+      evidenceClass: hyperedge.evidenceClass,
+      why: hyperedge.why
+    }));
+  const coreNodesData = cappedNodes.map((node) => ({
+    id: node.id,
+    label: node.label,
+    type: node.type,
+    pageId: node.pageId ?? null,
+    communityId: node.communityId ?? null,
+    degree: node.degree ?? 0,
+    confidence: node.confidence ?? null
+  }));
+  const coreEdgesData = cappedEdges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    relation: edge.relation,
+    evidenceClass: edge.evidenceClass,
+    confidence: edge.confidence
   }));
 
   // Synthesize viewer-only hub nodes + pairwise edges for every group-pattern
@@ -632,7 +670,16 @@ function renderHtmlStandalone(graph: GraphArtifact): string {
   const graphJson = JSON.stringify({
     nodes: [...nodesData, ...hubNodesData],
     edges: [...edgesData, ...hubEdgesData],
-    communities: communitiesData
+    communities: communitiesData,
+    // Core payload for the inline query/path/explain runtime. Kept separate
+    // from the vis.js payload so hub scaffolding never leaks into traversal.
+    core: {
+      nodes: coreNodesData,
+      edges: coreEdgesData,
+      pages: corePagesData,
+      hyperedges: coreHyperedgesData,
+      communities: communitiesData
+    }
   });
 
   // The inline JS uses DOM-based escaping (createElement + textContent + reading back
@@ -662,6 +709,21 @@ function renderHtmlStandalone(graph: GraphArtifact): string {
     #legend .item { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 3px 0; }
     #legend .dot { width: 10px; height: 10px; border-radius: 50%; }
     #stats { position: absolute; top: 12px; right: 340px; z-index: 10; background: #1e293b; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #94a3b8; border: 1px solid #334155; }
+    #tools { position: absolute; top: 52px; left: 12px; z-index: 10; width: 300px; background: #1e293b; padding: 12px; border-radius: 8px; border: 1px solid #334155; max-height: calc(100vh - 80px); overflow-y: auto; }
+    #tools h3 { font-size: 13px; color: #f8fafc; margin-bottom: 6px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+    #tools .panel { border-top: 1px solid #334155; padding-top: 10px; margin-top: 10px; }
+    #tools .panel:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+    #tools .row { display: flex; gap: 6px; margin-bottom: 6px; }
+    #tools .row.radio { gap: 12px; font-size: 12px; color: #cbd5e1; }
+    #tools input[type=text] { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: #e2e8f0; font-size: 12px; }
+    #tools button { padding: 6px 10px; border-radius: 4px; border: 1px solid #475569; background: #334155; color: #e2e8f0; font-size: 12px; cursor: pointer; }
+    #tools button:hover { background: #475569; }
+    #tools .result { font-size: 12px; color: #cbd5e1; margin-top: 6px; line-height: 1.4; white-space: pre-wrap; }
+    #tools .result .hdr { color: #f8fafc; font-weight: 600; margin-top: 6px; }
+    #tools .result ol, #tools .result ul { padding-left: 18px; margin: 4px 0; }
+    #tools .result .item { color: #38bdf8; cursor: pointer; text-decoration: underline; }
+    #tools .result .relation { color: #94a3b8; font-size: 11px; }
+    #tools .result .error { color: #f87171; }
   </style>
 </head>
 <body>
@@ -672,6 +734,41 @@ function renderHtmlStandalone(graph: GraphArtifact): string {
     <h2 id="sidebarTitle"></h2>
     <div id="sidebarFields"></div>
     <div class="neighbors" id="sidebarNeighbors"></div>
+  </div>
+  <div id="tools" data-testid="graph-tools">
+    <section class="panel" data-testid="graph-query-panel">
+      <h3>Query</h3>
+      <div class="row">
+        <input type="text" id="queryInput" data-testid="graph-query-input" placeholder="Ask a question about the graph..." />
+        <button type="button" id="queryRun" data-testid="graph-query-run">Run</button>
+      </div>
+      <div class="row radio">
+        <label><input type="radio" name="queryTraversal" value="bfs" checked /> BFS</label>
+        <label><input type="radio" name="queryTraversal" value="dfs" /> DFS</label>
+      </div>
+      <div class="result" id="queryResult" data-testid="graph-query-result"></div>
+    </section>
+    <section class="panel" data-testid="graph-path-panel">
+      <h3>Path</h3>
+      <div class="row">
+        <input type="text" id="pathFrom" data-testid="graph-path-from" placeholder="From node id or label..." />
+      </div>
+      <div class="row">
+        <input type="text" id="pathTo" data-testid="graph-path-to" placeholder="To node id or label..." />
+      </div>
+      <div class="row">
+        <button type="button" id="pathFind" data-testid="graph-path-find">Find</button>
+      </div>
+      <div class="result" id="pathResult" data-testid="graph-path-result"></div>
+    </section>
+    <section class="panel" data-testid="graph-explain-panel">
+      <h3>Explain</h3>
+      <div class="row">
+        <input type="text" id="explainInput" data-testid="graph-explain-input" placeholder="Node id or label..." />
+        <button type="button" id="explainRun" data-testid="graph-explain-run">Explain</button>
+      </div>
+      <div class="result" id="explainResult" data-testid="graph-explain-result"></div>
+    </section>
   </div>
   <div id="legend"></div>
   <script>
@@ -879,6 +976,517 @@ function renderHtmlStandalone(graph: GraphArtifact): string {
         });
       });
     });
+
+    // ---------------------------------------------------------------------
+    // Embedded graph query/path/explain runtime.
+    //
+    // Dependency-free port of the graph-query-core helpers that the live
+    // graph serve / MCP surface uses. Operates only on the GRAPH_DATA.core
+    // payload (real nodes/edges/pages/hyperedges/communities) so viewer-only
+    // hub scaffolding never leaks into traversal. No network calls; no
+    // provider-backed features.
+    // ---------------------------------------------------------------------
+    var CORE = GRAPH_DATA.core;
+    var CORE_NODE_TYPE_PRIORITY = { concept: 6, entity: 5, source: 4, module: 3, symbol: 2, rationale: 1 };
+
+    function coreNormalize(value) {
+      if (value == null) return "";
+      return String(value).replace(/\\s+/g, " ").trim().normalize("NFKD").replace(/[\\u0300-\\u036f]+/g, "").toLowerCase();
+    }
+
+    function coreScore(query, candidate) {
+      var q = coreNormalize(query);
+      var c = coreNormalize(candidate);
+      if (!q || !c) return 0;
+      if (c === q) return 100;
+      if (c.indexOf(q) === 0) return 80;
+      if (c.indexOf(q) !== -1) return 60;
+      var qTokens = q.split(/\\s+/).filter(Boolean);
+      var cTokens = {};
+      c.split(/\\s+/).filter(Boolean).forEach(function(tok) { cTokens[tok] = true; });
+      var overlap = 0;
+      qTokens.forEach(function(tok) { if (cTokens[tok]) overlap++; });
+      return overlap ? overlap * 10 : 0;
+    }
+
+    function coreUnique(values) {
+      var seen = {};
+      var out = [];
+      for (var i = 0; i < values.length; i++) {
+        var v = values[i];
+        if (!v) continue;
+        if (seen[v]) continue;
+        seen[v] = true;
+        out.push(v);
+      }
+      return out;
+    }
+
+    function coreBuildAdjacency() {
+      var adj = {};
+      function push(id, item) {
+        if (!adj[id]) adj[id] = [];
+        adj[id].push(item);
+      }
+      for (var i = 0; i < CORE.edges.length; i++) {
+        var edge = CORE.edges[i];
+        push(edge.source, { edge: edge, nodeId: edge.target, direction: "outgoing" });
+        push(edge.target, { edge: edge, nodeId: edge.source, direction: "incoming" });
+      }
+      Object.keys(adj).forEach(function(nid) {
+        adj[nid].sort(function(a, b) {
+          return (b.edge.confidence - a.edge.confidence) || a.edge.relation.localeCompare(b.edge.relation);
+        });
+      });
+      return adj;
+    }
+
+    var CORE_ADJ = coreBuildAdjacency();
+    var CORE_NODE_BY_ID = {};
+    CORE.nodes.forEach(function(n) { CORE_NODE_BY_ID[n.id] = n; });
+    var CORE_PAGE_BY_ID = {};
+    (CORE.pages || []).forEach(function(p) { CORE_PAGE_BY_ID[p.id] = p; });
+    var CORE_COMM_BY_ID = {};
+    (CORE.communities || []).forEach(function(c) { CORE_COMM_BY_ID[c.id] = c; });
+
+    function coreCompareLabel(a, b) {
+      var pa = CORE_NODE_TYPE_PRIORITY[a.type] || 0;
+      var pb = CORE_NODE_TYPE_PRIORITY[b.type] || 0;
+      if (pb !== pa) return pb - pa;
+      var da = a.degree || 0;
+      var db = b.degree || 0;
+      if (db !== da) return db - da;
+      return a.id.localeCompare(b.id);
+    }
+
+    function coreResolveNode(target) {
+      if (CORE_NODE_BY_ID[target]) return CORE_NODE_BY_ID[target];
+      var normalized = coreNormalize(target);
+      var labelMatches = CORE.nodes.filter(function(n) {
+        return coreNormalize(n.label) === normalized || coreNormalize(n.id) === normalized;
+      });
+      if (labelMatches.length) {
+        return labelMatches.slice().sort(coreCompareLabel)[0];
+      }
+      var pageHit = (CORE.pages || [])
+        .map(function(p) {
+          return { page: p, score: Math.max(coreScore(target, p.title), coreScore(target, p.path)) };
+        })
+        .filter(function(item) { return item.score > 0; })
+        .sort(function(left, right) {
+          return (right.score - left.score) || left.page.title.localeCompare(right.page.title);
+        })[0];
+      if (pageHit) {
+        var primary = CORE.nodes.filter(function(n) { return n.pageId === pageHit.page.id; })[0];
+        if (primary) return primary;
+      }
+      var fuzzy = CORE.nodes
+        .map(function(n) { return { node: n, score: Math.max(coreScore(target, n.label), coreScore(target, n.id)) }; })
+        .filter(function(item) { return item.score > 0; })
+        .sort(function(left, right) {
+          return (right.score - left.score) || coreCompareLabel(left.node, right.node);
+        })[0];
+      return fuzzy ? fuzzy.node : undefined;
+    }
+
+    function coreUniqueMatches(matches) {
+      var seen = {};
+      var out = [];
+      for (var i = 0; i < matches.length; i++) {
+        var m = matches[i];
+        var key = m.type + ":" + m.id;
+        if (seen[key]) continue;
+        seen[key] = true;
+        out.push(m);
+      }
+      return out;
+    }
+
+    function runGraphQuery(question, traversalOpt, budgetOpt) {
+      var traversal = traversalOpt === "dfs" ? "dfs" : "bfs";
+      var budget = Math.max(3, Math.min((budgetOpt != null ? budgetOpt : 12), 50));
+      var pageMatches = (CORE.pages || [])
+        .map(function(p) { return { type: "page", id: p.id, label: p.title, score: Math.max(coreScore(question, p.title), coreScore(question, p.path)) }; })
+        .filter(function(m) { return m.score > 0; });
+      var nodeMatches = CORE.nodes
+        .map(function(n) { return { type: "node", id: n.id, label: n.label, score: Math.max(coreScore(question, n.label), coreScore(question, n.id)) }; })
+        .filter(function(m) { return m.score > 0; });
+      var hyperMatches = (CORE.hyperedges || [])
+        .map(function(h) { return { type: "hyperedge", id: h.id, label: h.label, score: Math.max(coreScore(question, h.label), coreScore(question, h.why || ""), coreScore(question, h.relation)) }; })
+        .filter(function(m) { return m.score > 0; });
+      var matches = coreUniqueMatches(pageMatches.concat(nodeMatches).concat(hyperMatches))
+        .sort(function(a, b) { return (b.score - a.score) || a.label.localeCompare(b.label); })
+        .slice(0, 12);
+
+      var nodesByPageId = {};
+      CORE.nodes.forEach(function(n) {
+        if (!n.pageId) return;
+        if (!nodesByPageId[n.pageId]) nodesByPageId[n.pageId] = [];
+        nodesByPageId[n.pageId].push(n.id);
+      });
+
+      var seedList = [];
+      matches.forEach(function(m) {
+        if (m.type === "page") {
+          (nodesByPageId[m.id] || []).forEach(function(id) { seedList.push(id); });
+        } else if (m.type === "node") {
+          seedList.push(m.id);
+        } else if (m.type === "hyperedge") {
+          var hy = (CORE.hyperedges || []).filter(function(h) { return h.id === m.id; })[0];
+          if (hy) hy.nodeIds.forEach(function(id) { seedList.push(id); });
+        }
+      });
+      var seeds = coreUnique(seedList);
+
+      var visitedNodeIds = [];
+      var visitedEdgeIds = {};
+      var seen = {};
+      var frontier = seeds.slice();
+      while (frontier.length && visitedNodeIds.length < budget) {
+        var current = traversal === "dfs" ? frontier.pop() : frontier.shift();
+        if (!current || seen[current]) continue;
+        seen[current] = true;
+        visitedNodeIds.push(current);
+        var adj = CORE_ADJ[current] || [];
+        for (var i = 0; i < adj.length; i++) {
+          var nb = adj[i];
+          visitedEdgeIds[nb.edge.id] = true;
+          if (!seen[nb.nodeId]) frontier.push(nb.nodeId);
+          if (visitedNodeIds.length + frontier.length >= budget * 2) break;
+        }
+      }
+
+      var pageIdsList = [];
+      matches.forEach(function(m) { if (m.type === "page") pageIdsList.push(m.id); });
+      visitedNodeIds.forEach(function(nid) {
+        var n = CORE_NODE_BY_ID[nid];
+        if (n && n.pageId) pageIdsList.push(n.pageId);
+      });
+      var pageIds = coreUnique(pageIdsList);
+      var communities = coreUnique(
+        visitedNodeIds.map(function(nid) { return CORE_NODE_BY_ID[nid] && CORE_NODE_BY_ID[nid].communityId; }).filter(Boolean)
+      );
+      var hyperedgeIds = coreUnique(
+        (CORE.hyperedges || [])
+          .filter(function(h) { return h.nodeIds.some(function(nid) { return visitedNodeIds.indexOf(nid) !== -1; }); })
+          .map(function(h) { return h.id; })
+      );
+      var seedPageIds = coreUnique(matches.filter(function(m) { return m.type === "page"; }).map(function(m) { return m.id; }));
+      var visitedEdgeIdList = Object.keys(visitedEdgeIds);
+
+      var summary = [
+        "Seeds: " + (seeds.join(", ") || "none"),
+        "Visited nodes: " + visitedNodeIds.length,
+        "Visited edges: " + visitedEdgeIdList.length,
+        "Touched group patterns: " + hyperedgeIds.length,
+        "Communities: " + (communities.join(", ") || "none"),
+        "Pages: " + (pageIds.join(", ") || "none")
+      ].join("\\n");
+
+      return {
+        question: question,
+        traversal: traversal,
+        seedNodeIds: seeds,
+        seedPageIds: seedPageIds,
+        visitedNodeIds: visitedNodeIds,
+        visitedEdgeIds: visitedEdgeIdList,
+        hyperedgeIds: hyperedgeIds,
+        pageIds: pageIds,
+        communities: communities,
+        matches: matches,
+        summary: summary
+      };
+    }
+
+    function runGraphPath(from, to) {
+      var start = coreResolveNode(from);
+      var end = coreResolveNode(to);
+      if (!start || !end) {
+        return {
+          from: from,
+          to: to,
+          resolvedFromNodeId: start ? start.id : undefined,
+          resolvedToNodeId: end ? end.id : undefined,
+          found: false,
+          nodeIds: [],
+          edgeIds: [],
+          pageIds: [],
+          summary: "Could not resolve one or both graph targets."
+        };
+      }
+      var queue = [start.id];
+      var visited = {}; visited[start.id] = true;
+      var previous = {};
+      while (queue.length) {
+        var current = queue.shift();
+        if (current === end.id) break;
+        var adj = CORE_ADJ[current] || [];
+        for (var i = 0; i < adj.length; i++) {
+          var nb = adj[i];
+          if (visited[nb.nodeId]) continue;
+          visited[nb.nodeId] = true;
+          previous[nb.nodeId] = { nodeId: current, edgeId: nb.edge.id };
+          queue.push(nb.nodeId);
+        }
+      }
+      if (!visited[end.id]) {
+        return {
+          from: from,
+          to: to,
+          resolvedFromNodeId: start.id,
+          resolvedToNodeId: end.id,
+          found: false,
+          nodeIds: [],
+          edgeIds: [],
+          pageIds: [],
+          summary: "No path found between " + start.label + " and " + end.label + "."
+        };
+      }
+      var nodeIds = [];
+      var edgeIds = [];
+      var cursor = end.id;
+      while (cursor !== start.id) {
+        nodeIds.push(cursor);
+        var prev = previous[cursor];
+        if (!prev) break;
+        edgeIds.push(prev.edgeId);
+        cursor = prev.nodeId;
+      }
+      nodeIds.push(start.id);
+      nodeIds.reverse();
+      edgeIds.reverse();
+      var pageIds = coreUnique(nodeIds.map(function(nid) { return CORE_NODE_BY_ID[nid] && CORE_NODE_BY_ID[nid].pageId; }).filter(Boolean));
+      var summary = nodeIds.map(function(nid) { return (CORE_NODE_BY_ID[nid] && CORE_NODE_BY_ID[nid].label) || nid; }).join(" -> ");
+      return {
+        from: from,
+        to: to,
+        resolvedFromNodeId: start.id,
+        resolvedToNodeId: end.id,
+        found: true,
+        nodeIds: nodeIds,
+        edgeIds: edgeIds,
+        pageIds: pageIds,
+        summary: summary
+      };
+    }
+
+    function runGraphExplain(target) {
+      var node = coreResolveNode(target);
+      if (!node) return undefined;
+      var neighbors = [];
+      var adj = CORE_ADJ[node.id] || [];
+      for (var i = 0; i < adj.length; i++) {
+        var nb = adj[i];
+        var t = CORE_NODE_BY_ID[nb.nodeId];
+        if (!t) continue;
+        neighbors.push({
+          nodeId: t.id,
+          label: t.label,
+          type: t.type,
+          pageId: t.pageId || undefined,
+          relation: nb.edge.relation,
+          direction: nb.direction,
+          confidence: nb.edge.confidence,
+          evidenceClass: nb.edge.evidenceClass
+        });
+      }
+      neighbors.sort(function(a, b) { return (b.confidence - a.confidence) || a.label.localeCompare(b.label); });
+      var page = node.pageId ? CORE_PAGE_BY_ID[node.pageId] : undefined;
+      var community = node.communityId ? CORE_COMM_BY_ID[node.communityId] : undefined;
+      var hyperedges = (CORE.hyperedges || [])
+        .filter(function(h) { return h.nodeIds.indexOf(node.id) !== -1; })
+        .slice()
+        .sort(function(a, b) { return (b.confidence - a.confidence) || a.label.localeCompare(b.label); });
+      var summary = [
+        "Node: " + node.label,
+        "Type: " + node.type,
+        "Community: " + (node.communityId || "none"),
+        "Neighbors: " + neighbors.length,
+        "Group patterns: " + hyperedges.length,
+        "Page: " + (page ? page.path : "none")
+      ].join("\\n");
+      return {
+        target: target,
+        node: node,
+        page: page,
+        community: community ? { id: community.id, label: community.label } : undefined,
+        neighbors: neighbors,
+        hyperedges: hyperedges,
+        summary: summary
+      };
+    }
+
+    // Expose helpers for test harnesses and browser console introspection.
+    window.runGraphQuery = runGraphQuery;
+    window.runGraphPath = runGraphPath;
+    window.runGraphExplain = runGraphExplain;
+
+    function focusNode(nodeId) {
+      try {
+        network.selectNodes([nodeId]);
+        network.focus(nodeId, { scale: 1.2, animation: { duration: 300 } });
+        network.body.emitter.emit("click", { nodes: [nodeId] });
+      } catch (err) {
+        // ignore — focus is best effort in static exports
+      }
+    }
+
+    function renderList(parent, items, onClick) {
+      items.forEach(function(entry) {
+        var line = document.createElement("div");
+        line.className = "item";
+        line.textContent = entry.text;
+        line.addEventListener("click", function() { if (onClick) onClick(entry.id); });
+        parent.appendChild(line);
+      });
+    }
+
+    function renderQueryPanel(result) {
+      var host = document.getElementById("queryResult");
+      host.textContent = "";
+      if (!result) return;
+      var summaryEl = document.createElement("div");
+      summaryEl.textContent = result.summary;
+      host.appendChild(summaryEl);
+      if (result.visitedNodeIds.length) {
+        var hdr = document.createElement("div");
+        hdr.className = "hdr";
+        hdr.textContent = "Visited (" + result.traversal.toUpperCase() + ")";
+        host.appendChild(hdr);
+        renderList(host, result.visitedNodeIds.map(function(nid, idx) {
+          var n = CORE_NODE_BY_ID[nid];
+          return { id: nid, text: (idx + 1) + ". " + ((n && n.label) || nid) };
+        }), focusNode);
+      }
+    }
+
+    function renderPathPanel(result) {
+      var host = document.getElementById("pathResult");
+      host.textContent = "";
+      if (!result) return;
+      var summaryEl = document.createElement("div");
+      summaryEl.textContent = result.summary;
+      host.appendChild(summaryEl);
+      if (result.found && result.nodeIds.length) {
+        var edgeById = {};
+        CORE.edges.forEach(function(e) { edgeById[e.id] = e; });
+        var ol = document.createElement("ol");
+        for (var i = 0; i < result.nodeIds.length; i++) {
+          var nid = result.nodeIds[i];
+          var n = CORE_NODE_BY_ID[nid];
+          var li = document.createElement("li");
+          var btn = document.createElement("span");
+          btn.className = "item";
+          btn.textContent = (n && n.label) || nid;
+          (function(targetId) { btn.addEventListener("click", function() { focusNode(targetId); }); })(nid);
+          li.appendChild(btn);
+          if (i < result.edgeIds.length) {
+            var edge = edgeById[result.edgeIds[i]];
+            if (edge) {
+              var rel = document.createElement("span");
+              rel.className = "relation";
+              rel.textContent = "  -[" + edge.relation + "]-> ";
+              li.appendChild(rel);
+            }
+          }
+          ol.appendChild(li);
+        }
+        host.appendChild(ol);
+      }
+    }
+
+    function renderExplainPanel(result, target) {
+      var host = document.getElementById("explainResult");
+      host.textContent = "";
+      if (!result) {
+        var err = document.createElement("div");
+        err.className = "error";
+        err.textContent = "Could not resolve graph target: " + target;
+        host.appendChild(err);
+        return;
+      }
+      var summaryEl = document.createElement("div");
+      summaryEl.textContent = result.summary;
+      host.appendChild(summaryEl);
+      if (result.neighbors.length) {
+        var byRel = {};
+        result.neighbors.forEach(function(nb) {
+          if (!byRel[nb.relation]) byRel[nb.relation] = [];
+          byRel[nb.relation].push(nb);
+        });
+        Object.keys(byRel).sort().forEach(function(rel) {
+          var hdr = document.createElement("div");
+          hdr.className = "hdr";
+          hdr.textContent = rel + " (" + byRel[rel].length + ")";
+          host.appendChild(hdr);
+          renderList(host, byRel[rel].map(function(nb) {
+            var arrow = nb.direction === "incoming" ? "<- " : "-> ";
+            return { id: nb.nodeId, text: arrow + nb.label + "  [" + nb.evidenceClass + ", " + nb.confidence.toFixed(2) + "]" };
+          }), focusNode);
+        });
+      }
+      if (result.community) {
+        var ch = document.createElement("div");
+        ch.className = "hdr";
+        ch.textContent = "Community";
+        host.appendChild(ch);
+        var cb = document.createElement("div");
+        cb.textContent = result.community.label;
+        host.appendChild(cb);
+      }
+      if (result.hyperedges && result.hyperedges.length) {
+        var hh = document.createElement("div");
+        hh.className = "hdr";
+        hh.textContent = "Group Patterns (" + result.hyperedges.length + ")";
+        host.appendChild(hh);
+        result.hyperedges.forEach(function(h) {
+          var line = document.createElement("div");
+          line.textContent = h.label + " [" + h.relation + ", " + h.confidence.toFixed(2) + "]";
+          host.appendChild(line);
+        });
+      }
+    }
+
+    function runPanelQuery() {
+      var question = document.getElementById("queryInput").value.trim();
+      if (!question) {
+        renderQueryPanel(null);
+        return;
+      }
+      var radios = document.getElementsByName("queryTraversal");
+      var traversal = "bfs";
+      for (var i = 0; i < radios.length; i++) {
+        if (radios[i].checked) { traversal = radios[i].value; break; }
+      }
+      renderQueryPanel(runGraphQuery(question, traversal));
+    }
+
+    function runPanelPath() {
+      var from = document.getElementById("pathFrom").value.trim();
+      var to = document.getElementById("pathTo").value.trim();
+      if (!from || !to) {
+        renderPathPanel(null);
+        return;
+      }
+      renderPathPanel(runGraphPath(from, to));
+    }
+
+    function runPanelExplain() {
+      var target = document.getElementById("explainInput").value.trim();
+      if (!target) {
+        renderExplainPanel(null, "");
+        return;
+      }
+      renderExplainPanel(runGraphExplain(target), target);
+    }
+
+    document.getElementById("queryRun").addEventListener("click", runPanelQuery);
+    document.getElementById("queryInput").addEventListener("keydown", function(e) { if (e.key === "Enter") runPanelQuery(); });
+    document.getElementById("pathFind").addEventListener("click", runPanelPath);
+    document.getElementById("pathFrom").addEventListener("keydown", function(e) { if (e.key === "Enter") runPanelPath(); });
+    document.getElementById("pathTo").addEventListener("keydown", function(e) { if (e.key === "Enter") runPanelPath(); });
+    document.getElementById("explainRun").addEventListener("click", runPanelExplain);
+    document.getElementById("explainInput").addEventListener("keydown", function(e) { if (e.key === "Enter") runPanelExplain(); });
   </script>
 </body>
 </html>`;

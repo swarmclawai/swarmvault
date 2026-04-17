@@ -1,3 +1,4 @@
+import { runCoreGraphExplain, runCoreGraphPath } from "./graph-query-core.js";
 import type {
   BlastRadiusResult,
   EvidenceClass,
@@ -197,14 +198,6 @@ function resolveNode(graph: GraphArtifact, target: string): GraphNode | undefine
     .sort((left, right) => right.score - left.score || compareLabelCandidates(left.node, right.node))[0]?.node;
 }
 
-function communityLabel(graph: GraphArtifact, communityId: string | undefined): { id: string; label: string } | undefined {
-  if (!communityId) {
-    return undefined;
-  }
-  const community = graph.communities?.find((item) => item.id === communityId);
-  return community ? { id: community.id, label: community.label } : undefined;
-}
-
 export function evidenceClassForStatus(status: GraphEdge["status"]): EvidenceClass {
   if (status === "conflicted") {
     return "ambiguous";
@@ -324,138 +317,41 @@ export function queryGraph(
 }
 
 export function shortestGraphPath(graph: GraphArtifact, from: string, to: string): GraphPathResult {
-  const start = resolveNode(graph, from);
-  const end = resolveNode(graph, to);
-  if (!start || !end) {
-    return {
-      from,
-      to,
-      resolvedFromNodeId: start?.id,
-      resolvedToNodeId: end?.id,
-      found: false,
-      nodeIds: [],
-      edgeIds: [],
-      pageIds: [],
-      summary: "Could not resolve one or both graph targets."
-    };
-  }
-
-  const adjacency = graphAdjacency(graph);
-  const queue = [start.id];
-  const visited = new Set<string>([start.id]);
-  const previous = new Map<string, { nodeId: string; edgeId: string }>();
-
-  while (queue.length) {
-    const current = queue.shift() as string;
-    if (current === end.id) {
-      break;
-    }
-    for (const neighbor of adjacency.get(current) ?? []) {
-      if (visited.has(neighbor.nodeId)) {
-        continue;
-      }
-      visited.add(neighbor.nodeId);
-      previous.set(neighbor.nodeId, { nodeId: current, edgeId: neighbor.edge.id });
-      queue.push(neighbor.nodeId);
-    }
-  }
-
-  if (!visited.has(end.id)) {
-    return {
-      from,
-      to,
-      resolvedFromNodeId: start.id,
-      resolvedToNodeId: end.id,
-      found: false,
-      nodeIds: [],
-      edgeIds: [],
-      pageIds: [],
-      summary: `No path found between ${start.label} and ${end.label}.`
-    };
-  }
-
-  const nodeIds: string[] = [];
-  const edgeIds: string[] = [];
-  let current = end.id;
-  while (current !== start.id) {
-    nodeIds.push(current);
-    const prev = previous.get(current);
-    if (!prev) {
-      break;
-    }
-    edgeIds.push(prev.edgeId);
-    current = prev.nodeId;
-  }
-  nodeIds.push(start.id);
-  nodeIds.reverse();
-  edgeIds.reverse();
-
-  const nodes = nodeById(graph);
-  const pageIds = uniqueBy(
-    nodeIds.flatMap((nodeId) => {
-      const node = nodes.get(nodeId);
-      return node?.pageId ? [node.pageId] : [];
-    }),
-    (item) => item
-  );
-
-  return {
-    from,
-    to,
-    resolvedFromNodeId: start.id,
-    resolvedToNodeId: end.id,
-    found: true,
-    nodeIds,
-    edgeIds,
-    pageIds,
-    summary: nodeIds.map((nodeId) => nodes.get(nodeId)?.label ?? nodeId).join(" -> ")
-  };
+  // The path walker is pure adjacency BFS, so we delegate to the shared core
+  // module. The standalone exported HTML embeds an equivalent JS copy of
+  // `runCoreGraphPath` so offline users see the same traversal.
+  return runCoreGraphPath(graph, from, to);
 }
 
 export function explainGraphTarget(graph: GraphArtifact, target: string): GraphExplainResult {
-  const node = resolveNode(graph, target);
-  if (!node) {
+  // The explain walker is pure adjacency traversal plus community/hyperedge
+  // lookups, so we delegate to the shared core module. The standalone export
+  // embeds an equivalent JS copy of `runCoreGraphExplain`.
+  const result = runCoreGraphExplain(graph, target);
+  if (!result) {
     throw new Error(`Could not resolve graph target: ${target}`);
   }
-
-  const pages = pageById(graph);
-  const page = node.pageId ? pages.get(node.pageId) : undefined;
-  const neighbors: GraphExplainNeighbor[] = [];
+  // The core helper returns a minimal shape typed against `CoreGraph`. Up at
+  // the server/MCP surface we hand back the richer `GraphExplainResult` which
+  // re-uses the full `GraphNode`/`GraphPage` values already present in the
+  // vault graph — the core result is structurally compatible because the
+  // core types are subsets of the public graph types.
   const nodes = nodeById(graph);
-  for (const neighbor of graphAdjacency(graph).get(node.id) ?? []) {
-    const targetNode = nodes.get(neighbor.nodeId);
-    if (!targetNode) {
-      continue;
-    }
-    neighbors.push({
-      nodeId: targetNode.id,
-      label: targetNode.label,
-      type: targetNode.type,
-      pageId: targetNode.pageId,
-      relation: neighbor.edge.relation,
-      direction: neighbor.direction,
-      confidence: neighbor.edge.confidence,
-      evidenceClass: neighbor.edge.evidenceClass
-    });
-  }
-
-  neighbors.sort((left, right) => right.confidence - left.confidence || left.label.localeCompare(right.label));
-
+  const node = nodes.get(result.node.id) ?? (result.node as GraphNode);
+  const page = node.pageId ? pageById(graph).get(node.pageId) : undefined;
+  const neighbors: GraphExplainNeighbor[] = result.neighbors.map((neighbor) => ({
+    ...neighbor,
+    type: (nodes.get(neighbor.nodeId)?.type ?? neighbor.type) as GraphNode["type"],
+    evidenceClass: neighbor.evidenceClass as EvidenceClass
+  }));
   return {
     target,
     node,
     page,
-    community: communityLabel(graph, node.communityId),
+    community: result.community,
     neighbors,
     hyperedges: hyperedgesForNode(graph, node.id),
-    summary: [
-      `Node: ${node.label}`,
-      `Type: ${node.type}`,
-      `Community: ${node.communityId ?? "none"}`,
-      `Neighbors: ${neighbors.length}`,
-      `Group patterns: ${hyperedgesForNode(graph, node.id).length}`,
-      `Page: ${page?.path ?? "none"}`
-    ].join("\n")
+    summary: result.summary
   };
 }
 
