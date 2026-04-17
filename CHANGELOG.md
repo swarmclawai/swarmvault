@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Replaced the environment-sensitive perf baselines in `pnpm check:perf` with absolute budgets in `scripts/perf-budgets.json`. Each metric carries a rationale inline so future bumps document intent, and the lane no longer fails on CI hardware that is 3x-4x slower than a development laptop. No runtime or published package behavior changes — this is a CI infrastructure fix plus a matching paragraph in `SCALE.md`.
+
 ## 1.0.0
 
 **Stability lock.**
