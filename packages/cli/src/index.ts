@@ -58,6 +58,7 @@ import {
   reviewManagedSource,
   reviewSourceScope,
   runAutoPromotion,
+  runMigration,
   runSchedule,
   runWatchCycle,
   serveSchedules,
@@ -1562,6 +1563,30 @@ schedule
       } catch {}
       process.exit(0);
     });
+  });
+
+program
+  .command("migrate")
+  .description("Detect vault version and plan or apply schema/config/graph migrations.")
+  .option("--target <version>", "Limit migrations to those at or below this target version")
+  .option("--apply", "Write migration changes to disk (default is dry-run)", false)
+  .option("--dry-run", "Report planned changes without writing (overrides --apply)", false)
+  .action(async (options: { target?: string; apply?: boolean; dryRun?: boolean }) => {
+    const dryRun = options.dryRun === true ? true : options.apply !== true;
+    const result = await runMigration(process.cwd(), { targetVersion: options.target, dryRun });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(
+      `Vault version: ${result.fromVersion ?? "unknown"} → ${result.toVersion} (${result.planned} step${result.planned === 1 ? "" : "s"} planned, ${result.applied.length} applied, ${result.skipped.length} skipped${dryRun ? "; dry-run" : ""})`
+    );
+    for (const entry of result.applied) {
+      log(`applied ${entry.id}: ${entry.changed.length} change${entry.changed.length === 1 ? "" : "s"}`);
+    }
+    for (const entry of result.skipped) {
+      log(`skip    ${entry.id}: ${entry.reason}`);
+    }
   });
 
 program

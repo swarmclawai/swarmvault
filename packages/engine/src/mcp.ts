@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
 import { ingestInputDetailed, listManifests } from "./ingest.js";
+import { runMigration } from "./migrate.js";
 import { loadVaultSchema } from "./schema.js";
 import type { GraphArtifact } from "./types.js";
 import { fileExists, isPathWithin, listFilesRecursive, readJsonFile, toPosix } from "./utils.js";
@@ -394,6 +395,20 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     safeHandler(async ({ dryRun }) => {
       const result = await consolidateVault(rootDir, { dryRun: dryRun ?? false });
       return asToolText(result);
+    })
+  );
+
+  server.registerTool(
+    "migrate",
+    {
+      description: "Detect the vault's version and preview the migration plan to the current SwarmVault version.",
+      inputSchema: {
+        target: z.string().optional().describe("Optional target version cap (migrations with toVersion above this are skipped)")
+      }
+    },
+    safeHandler(async ({ target }) => {
+      const plan = await runMigration(rootDir, { targetVersion: target, dryRun: true });
+      return asToolText(plan);
     })
   );
 
