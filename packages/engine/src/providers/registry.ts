@@ -6,6 +6,7 @@ import type { ProviderAdapter, ProviderCapability, ProviderConfig, ResolvedPaths
 import { AnthropicProviderAdapter } from "./anthropic.js";
 import { GeminiProviderAdapter } from "./gemini.js";
 import { HeuristicProviderAdapter } from "./heuristic.js";
+import { LocalWhisperProviderAdapter } from "./local-whisper.js";
 import { OpenAiCompatibleProviderAdapter } from "./openai-compatible.js";
 
 const customModuleSchema = z.object({
@@ -136,6 +137,13 @@ export async function createProvider(id: string, config: ProviderConfig, rootDir
       return new GeminiProviderAdapter(id, config.model, {
         apiKey: envOrUndefined(config.apiKeyEnv),
         baseUrl: config.baseUrl
+      });
+    case "local-whisper":
+      return new LocalWhisperProviderAdapter(id, config.model, {
+        binaryPath: config.binaryPath,
+        modelPath: config.modelPath,
+        extraArgs: config.extraArgs,
+        threads: config.threads
       });
     case "custom": {
       if (!config.module) {

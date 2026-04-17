@@ -3196,7 +3196,8 @@ function isSupportedInboxKind(sourceKind: SourceManifest["sourceKind"]): boolean
     "chat_export",
     "email",
     "calendar",
-    "image"
+    "image",
+    "audio"
   ].includes(sourceKind);
 }
 

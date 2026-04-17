@@ -45,6 +45,23 @@ export { LARGE_REPO_NODE_THRESHOLD, resolveLargeRepoDefaults } from "./large-rep
 export { createMcpServer, startMcpServer } from "./mcp.js";
 export type { MigrationPlan, MigrationResult, MigrationStep, VaultVersionRecord } from "./migrate.js";
 export { ALL_MIGRATIONS, detectVaultVersion, planMigration, runMigration } from "./migrate.js";
+export type { LocalWhisperAdapterOptions, WhisperRunner, WhisperRunResult } from "./providers/local-whisper.js";
+export { LocalWhisperProviderAdapter } from "./providers/local-whisper.js";
+export type {
+  LocalWhisperBinaryDiscovery,
+  LocalWhisperSetupStatus,
+  ProviderRegistrationOptions,
+  ProviderRegistrationResult
+} from "./providers/local-whisper-setup.js";
+export {
+  discoverLocalWhisperBinary,
+  downloadWhisperModel,
+  expectedModelPath,
+  LOCAL_WHISPER_MODEL_SIZES,
+  modelDownloadUrl,
+  registerLocalWhisperProvider,
+  summarizeLocalWhisperSetup
+} from "./providers/local-whisper-setup.js";
 export type { DegradationOutcome, OpenAiCompatiblePresetId, ProviderPresetCapability } from "./providers/openai-compatible-capabilities.js";
 export {
   lookupPresetCapabilities,

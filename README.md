@@ -245,7 +245,22 @@ For cloud-hosted models, add a provider block with your API key:
 
 See the [provider docs](https://www.swarmvault.ai/docs/providers) for optional backends, task routing, and capability-specific configuration examples.
 
-For audio files, point `tasks.audioProvider` at a provider with `audio` capability. YouTube transcript ingest does not require a model provider.
+### Voice-first capture (local Whisper)
+
+For audio files (voice memos, meeting recordings, interviews), install whisper.cpp and let SwarmVault drive it locally — no API keys, no network traffic:
+
+```bash
+# macOS
+brew install whisper-cpp
+# Debian / Ubuntu
+sudo apt install whisper.cpp
+
+swarmvault provider setup --local-whisper --apply
+```
+
+That command verifies the binary, downloads the `base.en` ggml model (~147 MB) into `~/.swarmvault/models/`, and registers the provider in `swarmvault.config.json` under `providers.local-whisper` with `tasks.audioProvider` pointed at it. From then on, `swarmvault add voice-memo.m4a` (or dropping audio into `raw/inbox/`) transcribes end-to-end offline; the existing ingest-time redactor scrubs secrets spoken aloud before they reach `raw/` or `wiki/`. Tune accuracy with `--model {tiny.en,small.en,medium.en,large-v3}`, threads with `localWhisper.threads`, and override binary/model discovery via `localWhisper.binaryPath` / `localWhisper.modelPath` / `SWARMVAULT_WHISPER_BINARY`. The `local-whisper` provider type is documented as **experimental** in `STABILITY.md` for 1.1.0.
+
+Prefer a hosted transcription provider instead? Point `tasks.audioProvider` at any provider with `audio` capability (OpenAI, Groq, etc.). YouTube transcript ingest does not require a model provider.
 
 ## Point It At Recurring Sources
 
@@ -317,7 +332,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Chat exports | Slack export `.zip`, extracted Slack export directories | Local channel/day conversation extraction |
 | Email | `.eml .mbox` | Local message extraction and mailbox expansion |
 | Calendar | `.ics` | Local VEVENT expansion |
-| Audio | `.mp3 .wav .m4a .aac .ogg .webm` and other `audio/*` files | Provider-backed transcription via `tasks.audioProvider` when configured |
+| Audio | `.mp3 .wav .m4a .aac .ogg .webm` and other `audio/*` files | Local Whisper (`swarmvault provider setup --local-whisper`) or provider-backed transcription via `tasks.audioProvider` |
 | HTML | `.html`, URLs | Readability + Turndown to markdown (URL ingest) |
 | YouTube URLs | `youtube.com/watch`, `youtu.be`, `youtube.com/embed`, `youtube.com/shorts` | Direct transcript capture with extracted title and video metadata |
 | Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider (when configured) |

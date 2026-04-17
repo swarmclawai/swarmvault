@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createProvider } from "../src/index.js";
+import { LocalWhisperProviderAdapter } from "../src/providers/local-whisper.js";
 import type { ProviderConfig } from "../src/types.js";
 
 const originalEnv = {
@@ -60,5 +61,29 @@ describe("provider registry", () => {
       expect((provider as { apiKey?: string }).apiKey).toBe(testCase.expectedKey);
       expect((provider as { apiStyle?: string }).apiStyle).toBe("chat");
     }
+  });
+
+  it("creates a LocalWhisperProviderAdapter for type local-whisper with audio-only capabilities", async () => {
+    const rootDir = path.join(os.tmpdir(), "swarmvault-provider-registry-whisper");
+    const provider = await createProvider(
+      "local-whisper",
+      {
+        type: "local-whisper",
+        model: "base.en",
+        binaryPath: "/usr/local/bin/whisper-cli",
+        modelPath: "/tmp/ggml-base.en.bin",
+        threads: 8,
+        extraArgs: ["--no-fallback"]
+      },
+      rootDir
+    );
+    expect(provider).toBeInstanceOf(LocalWhisperProviderAdapter);
+    expect(provider.type).toBe("local-whisper");
+    expect(provider.model).toBe("base.en");
+    expect(provider.capabilities.has("audio")).toBe(true);
+    expect(provider.capabilities.has("local")).toBe(true);
+    expect(provider.capabilities.has("chat")).toBe(false);
+    expect(provider.capabilities.has("structured")).toBe(false);
+    expect(provider.capabilities.has("embeddings")).toBe(false);
   });
 });

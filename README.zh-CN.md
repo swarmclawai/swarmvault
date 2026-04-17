@@ -245,7 +245,22 @@ ollama pull gemma4
 
 其他可选后端、任务路由方式与能力配置请参阅 [provider docs](https://www.swarmvault.ai/docs/providers)。
 
-如果要导入音频文件，请把 `tasks.audioProvider` 指向具备 `audio` 能力的 provider。YouTube 转录导入则不需要模型 provider。
+### 语音优先采集（本地 Whisper）
+
+处理语音备忘、会议录音、访谈等音频时，可以安装 whisper.cpp 并让 SwarmVault 在本地驱动，无需 API Key、无需联网：
+
+```bash
+# macOS
+brew install whisper-cpp
+# Debian / Ubuntu
+sudo apt install whisper.cpp
+
+swarmvault provider setup --local-whisper --apply
+```
+
+该命令会检测二进制、把默认的 `base.en` ggml 模型（约 147 MB）下载到 `~/.swarmvault/models/`，并在 `swarmvault.config.json` 的 `providers.local-whisper` 注册该 provider，同时把 `tasks.audioProvider` 指向它。之后 `swarmvault add voice-memo.m4a`（或把音频放入 `raw/inbox/`）即可完全离线完成端到端转录；现有的摄取期密钥清洗器会在转录文本进入 `raw/` 或 `wiki/` 之前移除其中的敏感信息。用 `--model {tiny.en,small.en,medium.en,large-v3}` 切换精度档位，用 `localWhisper.threads` 调整线程数，并可通过 `localWhisper.binaryPath` / `localWhisper.modelPath` / `SWARMVAULT_WHISPER_BINARY` 覆盖二进制与模型路径。`local-whisper` provider 类型在 `STABILITY.md` 中标注为 1.1.0 **experimental**。
+
+如果更希望使用托管转录 provider，把 `tasks.audioProvider` 指向任意具备 `audio` 能力的 provider（OpenAI、Groq 等）即可。YouTube transcript 取入不需要模型 provider。
 
 ## 直接指向可重复使用的来源
 
@@ -319,7 +334,7 @@ clawhub install swarmvault
 | 聊天导出 | Slack 导出 `.zip`、解压后的 Slack 导出目录 | 本地提取按频道/日期分组的对话 |
 | 邮件 | `.eml .mbox` | 本地提取单封邮件并展开邮箱文件 |
 | 日历 | `.ics` | 本地展开 `VEVENT` 事件 |
-| 音频 | `.mp3 .wav .m4a .aac .ogg .webm` 及其他 `audio/*` 文件 | 在已配置 `tasks.audioProvider` 时进行 provider 驱动的转录 |
+| 音频 | `.mp3 .wav .m4a .aac .ogg .webm` 及其他 `audio/*` 文件 | 本地 Whisper（`swarmvault provider setup --local-whisper`），或通过 `tasks.audioProvider` 使用 provider 驱动的转录 |
 | HTML | `.html`、URL | Readability + Turndown 转 Markdown（URL 抓取） |
 | YouTube URL | `youtube.com/watch`、`youtu.be`、`youtube.com/embed`、`youtube.com/shorts` | 直接抓取转录文本，并提取标题与视频元数据 |
 | Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider（已配置时） |

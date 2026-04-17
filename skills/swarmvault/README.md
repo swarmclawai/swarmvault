@@ -82,7 +82,7 @@ For local semantic graph query without API keys, point `tasks.embeddingProvider`
 
 With an embedding-capable provider available, SwarmVault can also merge semantic page matches into local search by default. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `search.rerank: true` when you want the configured `queryProvider` to rerank the merged top hits before answering.
 
-Audio file ingest uses `tasks.audioProvider` when you configure a provider with `audio` capability. YouTube transcript ingest works without a model provider. If you want to pin graph clustering instead of using the adaptive default, set `graph.communityResolution` in `swarmvault.config.json`.
+Audio file ingest uses `tasks.audioProvider` when you configure a provider with `audio` capability. The fully-local option is `swarmvault provider setup --local-whisper --apply`, which installs a `local-whisper` provider, downloads a whisper.cpp ggml model into `~/.swarmvault/models/`, and assigns `tasks.audioProvider` so voice memos, meetings, and interviews transcribe with no API keys and no network calls. YouTube transcript ingest works without a model provider. If you want to pin graph clustering instead of using the adaptive default, set `graph.communityResolution` in `swarmvault.config.json`.
 
 `swarmvault lint --deep --web` augments deep-lint findings with external evidence from a configured `webSearch` adapter. Web search is currently scoped to deep lint; compile, query, and explore stay on local vault state plus your configured LLM providers.
 

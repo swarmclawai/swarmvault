@@ -27,6 +27,7 @@ export const providerTypeSchema = z.enum([
   "together",
   "xai",
   "cerebras",
+  "local-whisper",
   "custom"
 ]);
 
@@ -227,6 +228,14 @@ export interface ProviderConfig {
   module?: string;
   capabilities?: ProviderCapability[];
   apiStyle?: "responses" | "chat";
+  /** local-whisper: override the binary discovery search. */
+  binaryPath?: string;
+  /** local-whisper: explicit path to the ggml model file. */
+  modelPath?: string;
+  /** local-whisper: extra CLI flags forwarded to whisper.cpp. */
+  extraArgs?: string[];
+  /** local-whisper: thread count passed as `-t`. */
+  threads?: number;
 }
 
 export interface WebSearchProviderConfig {

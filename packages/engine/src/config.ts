@@ -27,7 +27,11 @@ const providerConfigSchema = z.object({
   headers: z.record(z.string(), z.string()).optional(),
   module: z.string().min(1).optional(),
   capabilities: z.array(providerCapabilitySchema).optional(),
-  apiStyle: z.enum(["responses", "chat"]).optional()
+  apiStyle: z.enum(["responses", "chat"]).optional(),
+  binaryPath: z.string().min(1).optional(),
+  modelPath: z.string().min(1).optional(),
+  extraArgs: z.array(z.string()).optional(),
+  threads: z.number().int().positive().optional()
 });
 
 const sourceClassSchema = z.enum(["first_party", "third_party", "resource", "generated"]);

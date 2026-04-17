@@ -17,6 +17,7 @@ import {
   consolidateVault,
   createSupersessionEdge,
   deleteManagedSource,
+  downloadWhisperModel,
   explainGraphVault,
   exploreVault,
   exportGraphFormat,
@@ -51,6 +52,7 @@ import {
   queryGraphVault,
   queryVault,
   readApproval,
+  registerLocalWhisperProvider,
   rejectApproval,
   reloadManagedSources,
   removeWatchedRoot,
@@ -64,6 +66,7 @@ import {
   serveSchedules,
   startGraphServer,
   startMcpServer,
+  summarizeLocalWhisperSetup,
   uninstallGitHooks,
   watchVault
 } from "@swarmvaultai/engine";
@@ -84,9 +87,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "1.0.1";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "1.1.0";
   } catch {
-    return "1.0.1";
+    return "1.1.0";
   }
 }
 
@@ -1354,6 +1357,91 @@ candidate
       log(`${verdict} ${decision.pageId} score=${decision.score.toFixed(2)} ${decision.reasons.join("; ")}`);
     }
   });
+
+const provider = program.command("provider").description("Configure provider adapters.");
+provider
+  .command("setup")
+  .description("Interactive setup for a provider (currently: local-whisper). Checks for required binaries and downloads models.")
+  .option("--local-whisper", "Set up the local Whisper (whisper.cpp) provider", false)
+  .option("--model <model>", "Whisper model to install (e.g. tiny.en, base.en, small.en)", "base.en")
+  .option("--apply", "Skip confirmation prompts and download/install automatically", false)
+  .option("--set-audio-provider", "Force tasks.audioProvider to local-whisper even if another provider is already configured", false)
+  .action(async (options: { localWhisper?: boolean; model?: string; apply?: boolean; setAudioProvider?: boolean }) => {
+    if (!options.localWhisper) {
+      throw new Error("Specify a provider to set up (currently: --local-whisper).");
+    }
+    const modelName = (options.model ?? "base.en").trim();
+    if (!modelName) {
+      throw new Error("Model name cannot be empty.");
+    }
+    const status = await summarizeLocalWhisperSetup({ modelName });
+
+    if (isJson()) {
+      emitJson({ ...status, apply: Boolean(options.apply), configWrite: null });
+      return;
+    }
+
+    log(`whisper.cpp binary: ${status.binary.found ? status.binary.path : "NOT FOUND"}`);
+    if (!status.binary.found) {
+      log(status.binary.installHint);
+      log("Re-run once whisper.cpp is on $PATH.");
+      process.exitCode = 1;
+      return;
+    }
+
+    log(`Model "${modelName}": ${status.model.exists ? status.model.expectedPath : "missing"}`);
+
+    if (!status.model.exists) {
+      const sizeHint = status.model.approximateSize ? ` (~${status.model.approximateSize})` : "";
+      log(`Download plan: ${status.model.downloadUrl}${sizeHint} -> ${status.model.expectedPath}`);
+      const proceed = options.apply === true || (await confirmInteractive(`Download ggml-${modelName}.bin now?`));
+      if (!proceed) {
+        log("Skipped download. Run with --apply (or confirm y) to download.");
+        process.exitCode = 1;
+        return;
+      }
+      const downloaded = await downloadWhisperModel({
+        modelName,
+        onProgress: (progress) => {
+          if (progress.totalBytes) {
+            const percent = Math.floor((progress.downloadedBytes / progress.totalBytes) * 100);
+            process.stderr.write(`\r[swarmvault] downloading ggml-${modelName}.bin: ${percent}%`);
+          }
+        }
+      });
+      process.stderr.write("\n");
+      log(`Downloaded ${downloaded.bytes} bytes to ${downloaded.path}.`);
+    }
+
+    const registration = await registerLocalWhisperProvider({
+      rootDir: process.cwd(),
+      model: modelName,
+      setAsAudioProvider: options.setAudioProvider ? true : undefined
+    });
+    if (registration.providerWasAdded) {
+      log(`Registered provider "local-whisper" in ${registration.configPath}.`);
+    } else if (registration.providerWasUpdated) {
+      log(`Updated existing "local-whisper" provider entry in ${registration.configPath}.`);
+    } else {
+      log(`Provider "local-whisper" already configured in ${registration.configPath}.`);
+    }
+    if (registration.audioProviderSet) {
+      log(`Set tasks.audioProvider = "local-whisper".`);
+    } else if (registration.previousAudioProvider && registration.previousAudioProvider !== "local-whisper") {
+      log(`Left tasks.audioProvider = "${registration.previousAudioProvider}" untouched (use --set-audio-provider to override).`);
+    }
+  });
+
+async function confirmInteractive(message: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = (await rl.question(`${message} [y/N] `)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
 
 const watch = program
   .command("watch")

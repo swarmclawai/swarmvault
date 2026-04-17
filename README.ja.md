@@ -247,7 +247,22 @@ embedding 対応 provider が利用できる場合、SwarmVault は既定で sem
 
 他の任意バックエンド、タスクの振り分け、能力ごとの設定例は [provider docs](https://www.swarmvault.ai/docs/providers) を参照してください。
 
-音声ファイルを取り込む場合は、`tasks.audioProvider` を `audio` capability を持つ provider に向けてください。YouTube transcript 取り込みにはモデル provider は不要です。
+### 音声ファースト取り込み（ローカル Whisper）
+
+ボイスメモ、会議録音、インタビューなどの音声は、whisper.cpp をインストールすれば SwarmVault がローカルで駆動します。API キー不要、ネットワーク通信もありません:
+
+```bash
+# macOS
+brew install whisper-cpp
+# Debian / Ubuntu
+sudo apt install whisper.cpp
+
+swarmvault provider setup --local-whisper --apply
+```
+
+このコマンドはバイナリを検出し、既定の `base.en` ggml モデル（約 147 MB）を `~/.swarmvault/models/` にダウンロードしたうえで、`swarmvault.config.json` の `providers.local-whisper` に provider を登録し、`tasks.audioProvider` をそこへ向けます。以降は `swarmvault add voice-memo.m4a`（または `raw/inbox/` に音声を置く）で完全オフラインのエンドツーエンド書き起こしが走り、既存の取り込み時 secret 除去は音声由来のテキストにも同じく適用されるため、会議中に口頭で出た鍵やトークンは `raw/` や `wiki/` に届く前にマスクされます。精度は `--model {tiny.en,small.en,medium.en,large-v3}`、スレッド数は `localWhisper.threads` で調整でき、バイナリ／モデルの探索は `localWhisper.binaryPath` / `localWhisper.modelPath` / `SWARMVAULT_WHISPER_BINARY` で上書きできます。`local-whisper` provider タイプは 1.1.0 では `STABILITY.md` 上 **experimental** 扱いです。
+
+ホスト型の書き起こし provider を使いたい場合は、`tasks.audioProvider` を `audio` capability を持つ provider（OpenAI、Groq など）に向けてください。YouTube transcript 取り込みにはモデル provider は不要です。
 
 ## 継続的なソースをそのまま追加
 
@@ -321,7 +336,7 @@ clawhub install swarmvault
 | チャット書き出し | Slack export `.zip`、展開済み Slack export ディレクトリ | チャンネル/日付単位の会話をローカル抽出 |
 | メール | `.eml .mbox` | 単一メール抽出と mailbox 展開 |
 | カレンダー | `.ics` | `VEVENT` のローカル展開 |
-| 音声 | `.mp3 .wav .m4a .aac .ogg .webm` とその他の `audio/*` ファイル | `tasks.audioProvider` 設定時に provider ベースで書き起こし |
+| 音声 | `.mp3 .wav .m4a .aac .ogg .webm` とその他の `audio/*` ファイル | ローカル Whisper（`swarmvault provider setup --local-whisper`）、または `tasks.audioProvider` 経由の provider ベース書き起こし |
 | HTML | `.html`, URLs | Readability + Turndown による Markdown 化（URL 取り込み） |
 | YouTube URL | `youtube.com/watch`、`youtu.be`、`youtube.com/embed`、`youtube.com/shorts` | transcript を直接取得し、タイトルと動画メタデータも抽出 |
 | Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider（設定されている場合） |
