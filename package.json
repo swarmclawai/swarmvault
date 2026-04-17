@@ -16,6 +16,8 @@
     "check:published-manifests": "node ./scripts/check-published-manifests.mjs",
     "check:readme-parity": "node ./scripts/check-readme-parity.mjs",
     "check:clawhub-skill": "node ./scripts/check-clawhub-skill.mjs",
+    "check:perf": "node ./scripts/check-perf-budget.mjs",
+    "check:perf:record": "node ./scripts/check-perf-budget.mjs --record",
     "docs:screenshots": "node ./scripts/sync-docs-screenshots.mjs",
     "live:smoke:heuristic": "node ./scripts/live-smoke.mjs --lane heuristic",
     "live:smoke:heuristic:browser": "node ./scripts/live-smoke.mjs --lane heuristic --browser-check",

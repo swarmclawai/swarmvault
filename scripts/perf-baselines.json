@@ -1,0 +1,14 @@
+{
+  "computeDecayScore:10k": {
+    "medianMs": 1.113,
+    "recordedAt": "2026-04-17T09:32:07.947Z"
+  },
+  "resolveLargeRepoDefaults:100k": {
+    "medianMs": 12.548,
+    "recordedAt": "2026-04-17T09:32:07.947Z"
+  },
+  "redact:20KB-prose": {
+    "medianMs": 0.012,
+    "recordedAt": "2026-04-17T09:32:07.947Z"
+  }
+}
