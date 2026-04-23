@@ -15,6 +15,7 @@ import type {
   GraphNode,
   GraphPage,
   GraphReportArtifact,
+  GraphShareArtifact,
   MemoryTier,
   OutputAsset,
   OutputFormat,
@@ -1555,15 +1556,18 @@ export function buildGraphSharePage(input: {
   schemaHash: string;
   metadata: ManagedGraphPageMetadata;
   report: GraphReportArtifact;
+  artifact?: GraphShareArtifact;
   vaultName?: string;
 }): GraphPageRecord {
   const pageId = "graph:share-card";
   const pathValue = "graph/share-card.md";
-  const artifact = buildGraphShareArtifact({
-    graph: input.graph,
-    report: input.report,
-    vaultName: input.vaultName
-  });
+  const artifact =
+    input.artifact ??
+    buildGraphShareArtifact({
+      graph: input.graph,
+      report: input.report,
+      vaultName: input.vaultName
+    });
   const frontmatter = {
     page_id: pageId,
     kind: "graph_report",

@@ -23,10 +23,11 @@ swarmvault scan ./your-repo       # point it at your own codebase or docs
 # → knowledge graph opens in your browser
 ```
 
-Each compile also writes a post-ready share card:
+Each compile also writes a visual and post-ready share card:
 
 ```bash
 swarmvault graph share --post
+swarmvault graph share --svg ./share-card.svg
 ```
 
 No repo handy? Try the built-in demo — creates a sample vault with three sources and opens the graph viewer:
@@ -45,7 +46,7 @@ That single command initializes a vault, ingests sources, compiles a knowledge g
 - **Searchable wiki pages** — source summaries, concept pages, entity pages, cross-references
 - **Contradiction detection** — conflicting claims across sources flagged automatically
 - **Graph report** — surprise scoring, god nodes, community detection, plain-English explanations
-- **Share card** — `wiki/graph/share-card.md` plus `swarmvault graph share --post` for a copyable first-run summary
+- **Share card** — `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, `swarmvault graph share --post`, and `swarmvault graph share --svg` for copyable and visual first-run summaries
 
 ### Three-Layer Architecture
 
@@ -84,7 +85,7 @@ If you liked Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf
 | One-command setup | — | **`swarmvault scan`** |
 | Typed knowledge graph | — | **yes** |
 | Interactive graph viewer | — | **yes** |
-| Post-ready share card | — | **yes** |
+| Visual + post-ready share card | — | **yes** |
 | 30+ input formats | — | **yes** |
 | Code-aware (tree-sitter AST) | — | **yes** |
 | Offline / no API keys | — | **yes** |
@@ -154,6 +155,7 @@ swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile
 swarmvault diff
 swarmvault graph share --post
+swarmvault graph share --svg ./share-card.svg
 swarmvault graph blast ./src/index.ts
 swarmvault query "What is the auth flow?"
 swarmvault graph serve
@@ -162,7 +164,7 @@ swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault graph push neo4j --dry-run
 ```
 
-Need the fastest first pass over a local repo or docs tree? `swarmvault scan ./path --no-serve` initializes the current directory as a vault, ingests that directory, compiles it, and skips opening the graph viewer when you only want the artifacts. It also leaves `wiki/graph/share-card.md` behind so you can run `swarmvault graph share --post` and paste the compact summary anywhere.
+Need the fastest first pass over a local repo or docs tree? `swarmvault scan ./path --no-serve` initializes the current directory as a vault, ingests that directory, compiles it, and skips opening the graph viewer when you only want the artifacts. It also leaves `wiki/graph/share-card.md` and `wiki/graph/share-card.svg` behind so you can run `swarmvault graph share --post` for compact text or `swarmvault graph share --svg ./share-card.svg` for a visual card.
 
 Want the minimal LLM-Wiki starter instead? `swarmvault init --lite` creates just `raw/`, `wiki/`, `wiki/index.md`, `wiki/log.md`, and `swarmvault.schema.md` — no config, no state, no agent installs. Your agent maintains the wiki directly. Upgrade with `swarmvault init` later when you want graph, search, and approvals.
 
@@ -386,7 +388,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Graph report health signals** - graph report artifacts now include community-cohesion summaries, isolated-node and ambiguity warnings, and sharper follow-up questions when the graph has weakly connected or ambiguous regions.
 
-**Post-ready share card** - every compile writes `wiki/graph/share-card.md`, and `swarmvault graph share --post` prints a concise summary with source/page/node counts, top hubs, and the most surprising link for easy sharing.
+**Visual + post-ready share card** - every compile writes `wiki/graph/share-card.md` and `wiki/graph/share-card.svg`; `swarmvault graph share --post` prints concise text, while `swarmvault graph share --svg [path]` writes a 1200x630 visual card with source/page/node counts, top hubs, and the most surprising link for easy sharing.
 
 **Graph blast radius and report export** - `graph blast <target>` traces reverse import impact through module dependencies, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 

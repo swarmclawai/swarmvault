@@ -38,7 +38,7 @@ Stable:
 | `swarmvault explore <question> [--steps <n>] [--format ...] [--gap-fill]` | Stable | 0.7.x (`--gap-fill` since 0.10.0) |
 | `swarmvault lint [--deep\|--no-deep] [--web] [--conflicts] [--decay] [--tiers]` | Stable | 0.1.0 (`--decay`/`--tiers` since 0.10.0) |
 | `swarmvault review list\|show\|accept\|reject` | Stable | 0.7.x |
-| `swarmvault graph query\|path\|explain\|god-nodes\|blast\|share\|serve\|export\|push\|supersession` | Stable | 0.7.x (`supersession` since 0.10.0, `share` since 1.2.0) |
+| `swarmvault graph query\|path\|explain\|god-nodes\|blast\|share\|serve\|export\|push\|supersession` | Stable | 0.7.x (`supersession` since 0.10.0, `share` since 1.2.0, `graph share --svg` since 1.3.0) |
 | `swarmvault candidate list\|promote\|archive\|auto-promote\|preview-scores` | Stable | 0.7.x |
 | `swarmvault watch [--lint] [--repo] [--once] [--code-only] [--debounce <ms>] [--root <path>]` | Stable | 0.7.x (`--root` since 0.11.0) |
 | `swarmvault watch list-roots\|add-root\|remove-root` | Stable | 0.11.0 |

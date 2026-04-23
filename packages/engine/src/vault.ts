@@ -28,6 +28,7 @@ import { runDeepLint } from "./deep-lint.js";
 import { embeddingSimilarityEdges, filterGraphBySourceClass, semanticGraphMatches, semanticPageSearch } from "./embeddings.js";
 import { markSuperseded, resolveDecayConfig, runDecayPass } from "./freshness.js";
 import { enrichGraph } from "./graph-enrichment.js";
+import { buildGraphShareArtifact, renderGraphShareSvg } from "./graph-share.js";
 import {
   blastRadius,
   computeNormLabel,
@@ -2472,7 +2473,7 @@ async function buildGraphOrientationPages(
   previousCompiledAt?: string,
   contradictions: DetectedContradiction[] = [],
   config?: VaultConfig | null
-): Promise<{ records: ManagedPageRecord[]; report: GraphReportArtifact }> {
+): Promise<{ records: ManagedPageRecord[]; report: GraphReportArtifact; shareSvg: string }> {
   const benchmark = await readJsonFile<BenchmarkArtifact>(paths.benchmarkPath);
   const communityRecords: ManagedPageRecord[] = [];
 
@@ -2525,6 +2526,11 @@ async function buildGraphOrientationPages(
         report
       })
   );
+  const shareArtifact = buildGraphShareArtifact({
+    graph,
+    report,
+    vaultName: path.basename(paths.rootDir)
+  });
   const shareRecord = await buildManagedGraphPage(
     path.join(paths.wikiDir, "graph", "share-card.md"),
     {
@@ -2537,6 +2543,7 @@ async function buildGraphOrientationPages(
         graph,
         schemaHash,
         metadata,
+        artifact: shareArtifact,
         report,
         vaultName: path.basename(paths.rootDir)
       })
@@ -2544,7 +2551,8 @@ async function buildGraphOrientationPages(
 
   return {
     records: [reportRecord, shareRecord, ...communityRecords],
-    report
+    report,
+    shareSvg: renderGraphShareSvg(shareArtifact)
   };
 }
 
@@ -3304,6 +3312,7 @@ async function syncVaultArtifacts(
 
   await writeJsonFile(paths.graphPath, graph);
   await writeJsonFile(path.join(paths.wikiDir, "graph", "report.json"), graphOrientation.report);
+  await writeFileIfChanged(path.join(paths.wikiDir, "graph", "share-card.svg"), graphOrientation.shareSvg);
   await writeJsonFile(paths.codeIndexPath, input.codeIndex);
   await writeJsonFile(paths.compileStatePath, {
     generatedAt: graph.generatedAt,
@@ -3359,7 +3368,7 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
     ),
     (page) => page.id
   );
-  const graphOrientation: { records: ManagedPageRecord[]; report: GraphReportArtifact | null } = currentGraph
+  const graphOrientation: { records: ManagedPageRecord[]; report: GraphReportArtifact | null; shareSvg: string } = currentGraph
     ? await buildGraphOrientationPages(
         {
           ...currentGraph,
@@ -3371,7 +3380,7 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
         [],
         config
       )
-    : { records: [], report: null };
+    : { records: [], report: null, shareSvg: "" };
   const dashboardRecords = currentGraph
     ? await buildDashboardRecords(
         config,
@@ -3514,6 +3523,7 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
   }
   if (graphOrientation.report) {
     await writeJsonFile(path.join(paths.wikiDir, "graph", "report.json"), graphOrientation.report);
+    await writeFileIfChanged(path.join(paths.wikiDir, "graph", "share-card.svg"), graphOrientation.shareSvg);
   }
 
   const existingProjectIndexPaths = (await listFilesRecursive(paths.projectsDir))

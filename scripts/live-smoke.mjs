@@ -154,6 +154,12 @@ try {
     await assertExists(path.join(workspaceDir, "state", "graph.json"));
     await assertExists(path.join(workspaceDir, "state", "search.sqlite"));
     await assertExists(path.join(workspaceDir, "wiki", "index.md"));
+    const defaultShareSvgPath = path.join(workspaceDir, "wiki", "graph", "share-card.svg");
+    await assertExists(defaultShareSvgPath);
+    const regeneratedShare = await runCliJson(["graph", "share", "--svg"]);
+    assert.equal(regeneratedShare.svgPath, defaultShareSvgPath, "graph share --svg did not report the default SVG path");
+    const shareSvg = await fs.readFile(defaultShareSvgPath, "utf8");
+    assert.ok(shareSvg.includes('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"'), "visual share card is not a 1200x630 SVG");
     const sourcePage = await fs.readFile(path.join(workspaceDir, "wiki", "sources", `${manifest.sourceId}.md`), "utf8");
     assert.ok(sourcePage.includes("title: Durable Research Vaults"), "markdown source page did not keep the manifest title");
     assert.ok(sourcePage.includes("# Durable Research Vaults"), "markdown source page did not keep a clean heading");

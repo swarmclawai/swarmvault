@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
@@ -60,6 +60,7 @@ import {
   reloadManagedSources,
   removeWatchedRoot,
   renderGraphShareMarkdown,
+  renderGraphShareSvg,
   resumeSourceSession,
   reviewManagedSource,
   reviewSourceScope,
@@ -91,9 +92,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "1.2.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "1.3.0";
   } catch {
-    return "1.2.0";
+    return "1.3.0";
   }
 }
 
@@ -1113,7 +1114,11 @@ graph
   .command("share")
   .description("Print a shareable summary of the compiled graph.")
   .option("--post", "Print only the short social post text", false)
-  .action(async (options: { post?: boolean }) => {
+  .option("--svg [path]", "Write the visual SVG share card, defaulting to wiki/graph/share-card.svg")
+  .action(async (options: { post?: boolean; svg?: boolean | string }) => {
+    if (options.post && options.svg) {
+      throw new Error("Choose either --post or --svg, not both.");
+    }
     const { paths } = await loadVaultConfig(process.cwd());
     const raw = await readFile(paths.graphPath, "utf-8");
     const graph: GraphArtifact = JSON.parse(raw);
@@ -1123,6 +1128,18 @@ graph
       report,
       vaultName: path.basename(paths.rootDir)
     });
+    if (options.svg) {
+      const svgPath =
+        typeof options.svg === "string" ? path.resolve(process.cwd(), options.svg) : path.join(paths.wikiDir, "graph", "share-card.svg");
+      await mkdir(path.dirname(svgPath), { recursive: true });
+      await writeFile(svgPath, renderGraphShareSvg(artifact), "utf8");
+      if (isJson()) {
+        emitJson({ ...artifact, svgPath });
+        return;
+      }
+      log(`Wrote SVG share card to ${svgPath}`);
+      return;
+    }
     if (isJson()) {
       emitJson(artifact);
       return;
@@ -1882,6 +1899,7 @@ program
 
     const { paths } = await loadVaultConfig(demoDir);
     const shareCardPath = path.join(demoDir, "wiki", "graph", "share-card.md");
+    const shareCardSvgPath = path.join(demoDir, "wiki", "graph", "share-card.svg");
 
     let graphStats = "";
     try {
@@ -1901,13 +1919,21 @@ program
       log("");
       log(`Vault location: ${demoDir}`);
       log(`Share card: ${shareCardPath}`);
+      log(`Visual card: ${shareCardSvgPath}`);
     }
 
     if (options.serve !== false) {
       const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
       const server = await startGraphServer(demoDir, port, { full: false });
       if (isJson()) {
-        emitJson({ demoDir, graphStats: graphStats.trim(), shareCardPath, port: server.port, url: `http://localhost:${server.port}` });
+        emitJson({
+          demoDir,
+          graphStats: graphStats.trim(),
+          shareCardPath,
+          shareCardSvgPath,
+          port: server.port,
+          url: `http://localhost:${server.port}`
+        });
       } else {
         log(`Graph viewer running at http://localhost:${server.port}`);
         log("");
@@ -1924,7 +1950,7 @@ program
         process.exit(0);
       });
     } else if (isJson()) {
-      emitJson({ demoDir, graphStats: graphStats.trim(), shareCardPath });
+      emitJson({ demoDir, graphStats: graphStats.trim(), shareCardPath, shareCardSvgPath });
     } else {
       log("");
       log("Try next:");
@@ -2086,9 +2112,11 @@ program
 
     const compiled = await compileVault(rootDir, {});
     const shareCardPath = path.join(rootDir, "wiki", "graph", "share-card.md");
+    const shareCardSvgPath = path.join(rootDir, "wiki", "graph", "share-card.svg");
     if (!isJson()) {
       log(`Compiled ${compiled.sourceCount} source(s), ${compiled.pageCount} page(s).`);
       log(`Share card: ${shareCardPath}`);
+      log(`Visual card: ${shareCardSvgPath}`);
       log("Post text: swarmvault graph share --post");
     }
 
@@ -2096,7 +2124,7 @@ program
       const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
       const server = await startGraphServer(rootDir, port, { full: false });
       if (isJson()) {
-        emitJson({ ...result, compiled, shareCardPath, port: server.port, url: `http://localhost:${server.port}` });
+        emitJson({ ...result, compiled, shareCardPath, shareCardSvgPath, port: server.port, url: `http://localhost:${server.port}` });
       } else {
         log(`Graph viewer running at http://localhost:${server.port}`);
       }
@@ -2107,7 +2135,7 @@ program
         process.exit(0);
       });
     } else if (isJson()) {
-      emitJson({ ...result, compiled, shareCardPath });
+      emitJson({ ...result, compiled, shareCardPath, shareCardSvgPath });
     }
   });
 

@@ -26,7 +26,7 @@ export {
   synthesizeHyperedgeHubs
 } from "./graph-export.js";
 export { pushGraphNeo4j } from "./graph-push.js";
-export { buildGraphShareArtifact, renderGraphShareMarkdown } from "./graph-share.js";
+export { buildGraphShareArtifact, renderGraphShareMarkdown, renderGraphShareSvg } from "./graph-share.js";
 export { blastRadius, graphDiff } from "./graph-tools.js";
 export { getGitHookStatus, installGitHooks, uninstallGitHooks } from "./hooks.js";
 export {

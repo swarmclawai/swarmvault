@@ -14,6 +14,7 @@ swarmvault review show <approval-id> --diff
 swarmvault review accept <approval-id>
 swarmvault query "What is the auth flow?"
 swarmvault graph share --post
+swarmvault graph share --svg ./share-card.svg
 swarmvault graph serve
 ```
 
@@ -25,7 +26,7 @@ swarmvault graph serve
 - `swarmvault diff` reflects the graph-level additions and removals when the vault is inside git
 - `state/approvals/` contains staged review bundles when `--approve` is used
 - `wiki/graph/report.md` highlights the important modules, bridge nodes, and contradictions
-- `wiki/graph/share-card.md` gives a short summary for status updates or sharing
+- `wiki/graph/share-card.md` gives a short summary for status updates, and `wiki/graph/share-card.svg` gives a visual card for sharing
 
 ## Guidance
 

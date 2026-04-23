@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+- Added dependency-free visual graph share cards — every normal compile now writes `wiki/graph/share-card.svg` beside `wiki/graph/share-card.md`, using the existing graph share artifact to render a 1200x630 SVG with vault stats, top hubs, bridge nodes, a surprising link, and the install/scan CTA
+- Extended `swarmvault graph share` with `--svg [path]`, defaulting to `wiki/graph/share-card.svg`; `--post` and default markdown output remain unchanged, and `--json --svg` returns the structured artifact plus `svgPath` for scripts and agents
+- Updated `swarmvault scan` and `swarmvault demo` to surface both markdown and SVG share-card paths so the first-run viral loop leaves copyable text and a visual card ready on disk
+- Added renderer, compile-flow, and installed-package smoke coverage for visual share cards, including XML escaping for graph labels before they enter SVG output
+- Refreshed the OSS README trio, package docs, ClawHub skill bundle, website docs, and product `spec.md` around the visual share-card workflow
+
 ## 1.2.0
 
 - Added `swarmvault graph share [--post]` for post-ready graph summaries — the command reads the compiled graph/report artifacts, prints the same markdown shape written to `wiki/graph/share-card.md`, emits only the compact copyable text with `--post`, and preserves structured output under `--json` for scripts and agents

@@ -61,6 +61,7 @@ swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile --max-tokens 120000
 swarmvault diff
 swarmvault graph share --post
+swarmvault graph share --svg ./share-card.svg
 swarmvault query "What is the auth flow?"
 swarmvault graph blast ./src/index.ts
 swarmvault graph serve
@@ -69,11 +70,11 @@ swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault mcp
 ```
 
-For the fastest scratch walkthrough of a local repo or docs tree, run `swarmvault scan ./path --no-serve`. It initializes the current directory as a vault, ingests that directory, compiles immediately, leaves the graph viewer closed when you only need the generated artifacts, and writes `wiki/graph/share-card.md`.
+For the fastest scratch walkthrough of a local repo or docs tree, run `swarmvault scan ./path --no-serve`. It initializes the current directory as a vault, ingests that directory, compiles immediately, leaves the graph viewer closed when you only need the generated artifacts, and writes `wiki/graph/share-card.md` plus `wiki/graph/share-card.svg`.
 
 If you want the same zero-config walkthrough without supplying your own inputs first, run `swarmvault demo --no-serve`. It creates a temporary demo vault with bundled sources and compiles it immediately.
 
-For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `swarmvault graph share --post` prints a compact copyable summary, while `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need richer sharing or Obsidian-native artifacts. `swarmvault diff` compares the current graph against the last committed graph so you can inspect graph-level changes after a compile.
+For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `swarmvault graph share --post` prints a compact copyable summary, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, and `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need richer sharing or Obsidian-native artifacts. `swarmvault diff` compares the current graph against the last committed graph so you can inspect graph-level changes after a compile.
 
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom. Code files are always parsed locally via tree-sitter; only non-code text or image sources go to configured model providers.
 
@@ -125,7 +126,7 @@ The published ClawHub package is intentionally text-only in this release.
 6. Compile with `swarmvault compile`, use `compile --max-tokens <n>` when the generated wiki must fit a bounded context window, or use `compile --approve` when the change should land in the approval queue first.
 7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search. When the vault lives inside git, `ingest|compile|query --commit` can commit those artifacts immediately after the run.
 8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
-9. Use `swarmvault graph share --post` for a quick copyable summary, `swarmvault graph blast` for reverse-import impact checks, `swarmvault graph serve` for the live workspace plus bookmarklet clipper, `swarmvault graph export --report` for a self-contained HTML report, `swarmvault graph export` for other shareable formats, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
+9. Use `swarmvault graph share --post` for a quick copyable summary, `swarmvault graph share --svg [path]` for a visual share card, `swarmvault graph blast` for reverse-import impact checks, `swarmvault graph serve` for the live workspace plus bookmarklet clipper, `swarmvault graph export --report` for a self-contained HTML report, `swarmvault graph export` for other shareable formats, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
 ## What SwarmVault Writes
 
@@ -136,7 +137,7 @@ The published ClawHub package is intentionally text-only in this release.
 - `wiki/outputs/source-reviews/` for staged source-scoped review artifacts
 - `wiki/outputs/source-guides/` for guided source integration artifacts
 - `wiki/dashboards/` for recent sources, reading log, timeline, source sessions, source guides, research map, contradictions, and open questions
-- `wiki/graph/share-card.md` for the post-ready graph summary generated on compile
+- `wiki/graph/share-card.md` and `wiki/graph/share-card.svg` for post-ready text and visual graph summaries generated on compile
 - `wiki/candidates/` for staged concept/entity pages
 - `state/graph.json` for the compiled graph
 - `state/search.sqlite` for local search

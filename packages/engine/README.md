@@ -206,7 +206,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 ### Compile + Query
 
 - `compileVault(rootDir, { approve })` writes wiki pages, graph data, and search state using the vault schema as guidance, or stages a review bundle
-- compile also writes graph orientation pages such as `wiki/graph/report.md`, `wiki/graph/share-card.md`, `wiki/graph/report.json`, and `wiki/graph/communities/<community>.md`
+- compile also writes graph orientation artifacts such as `wiki/graph/report.md`, `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, `wiki/graph/report.json`, and `wiki/graph/communities/<community>.md`
 - compile propagates semantic tags onto page frontmatter and source-backed graph nodes, and records deterministic `contradicts` edges plus a Contradictions section in the graph report when conflicting claims are found
 - `benchmarkVault(rootDir, { questions })` writes `state/benchmark.json` and folds the latest benchmark summary into `wiki/graph/report.md` and `wiki/graph/report.json`
 - semantic graph query and embedding-backed similarity enrichment cache vectors under `state/embeddings.json` so graph-semantic refresh stays incremental
@@ -218,7 +218,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `explainGraphVault(rootDir, target)` returns node, community, neighbor, provenance, and group-pattern details
 - `listGraphHyperedges(rootDir, target?, limit?)` returns graph hyperedges globally or for a specific node/page target
 - `listGodNodes(rootDir, limit)` returns the most connected bridge-heavy graph nodes
-- `buildGraphShareArtifact(...)` and `renderGraphShareMarkdown(...)` produce the post-ready graph summary used by `wiki/graph/share-card.md` and the CLI `graph share` command
+- `buildGraphShareArtifact(...)`, `renderGraphShareMarkdown(...)`, and `renderGraphShareSvg(...)` produce the post-ready text and 1200x630 visual card used by `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and the CLI `graph share` command
 - project-aware compile also builds `wiki/projects/index.md` plus `wiki/projects/<project>/index.md` rollups without duplicating page trees
 - human-authored insight pages in `wiki/insights/` are indexed into search and available to query without being rewritten by compile
 - `chart` and `image` formats save wrapper markdown pages plus local output assets under `wiki/outputs/assets/<slug>/`
@@ -263,7 +263,7 @@ Running the engine produces a local workspace with these main areas:
 - `raw/sources/`: immutable source copies
 - `raw/assets/`: copied attachments referenced by ingested markdown bundles and remote URL ingests
 - `wiki/`: generated markdown pages, the append-only `log.md` activity trail, staged candidates, saved query outputs, exploration hub pages, and a human-only `insights/` area
-- `wiki/graph/`: generated graph report pages, the share card, and per-community summaries derived from `state/graph.json`
+- `wiki/graph/`: generated graph report pages, markdown/SVG share cards, and per-community summaries derived from `state/graph.json`
 - `wiki/graph/report.json`: machine-readable graph report data used by the viewer and export surfaces
 - `wiki/outputs/assets/`: local chart/image artifacts and JSON manifests for saved visual outputs
 - `wiki/code/`: generated module pages for ingested code sources

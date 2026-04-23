@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGraphShareArtifact, renderGraphShareMarkdown } from "../src/graph-share.js";
+import { buildGraphShareArtifact, renderGraphShareMarkdown, renderGraphShareSvg } from "../src/graph-share.js";
 import type { GraphArtifact, GraphNode, GraphPage, GraphReportArtifact, SourceManifest } from "../src/types.js";
 
 function node(input: Partial<GraphNode> & { id: string; label: string; type: GraphNode["type"] }): GraphNode {
@@ -152,5 +152,22 @@ describe("graph share card", () => {
     expect(markdown).toContain("# SwarmVault Share Card");
     expect(markdown).toContain("## Share Post");
     expect(markdown).toContain("swarmvault graph share --post");
+  });
+
+  it("renders an escaped visual SVG share card", () => {
+    const unsafeGraph = graph();
+    unsafeGraph.nodes[0] = {
+      ...unsafeGraph.nodes[0]!,
+      label: "Knowledge <script>alert(1)</script>"
+    };
+    const artifact = buildGraphShareArtifact({ graph: unsafeGraph, report: null, vaultName: "demo-vault" });
+    const svg = renderGraphShareSvg(artifact);
+
+    expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"');
+    expect(svg).toContain("<title>SwarmVault share card for demo-vault</title>");
+    expect(svg).toContain("Sources");
+    expect(svg).toContain("Graph nodes");
+    expect(svg).toContain("Knowledge &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(svg).not.toContain("<script>alert(1)</script>");
   });
 });

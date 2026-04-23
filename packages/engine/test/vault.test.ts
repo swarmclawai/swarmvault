@@ -725,6 +725,10 @@ describe("swarmvault workflow", () => {
 
     const compile = await compileVault(rootDir);
     expect(compile.pageCount).toBeGreaterThan(0);
+    const shareSvgPath = path.join(rootDir, "wiki", "graph", "share-card.svg");
+    const shareSvg = await fs.readFile(shareSvgPath, "utf8");
+    expect(shareSvg).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"');
+    expect(shareSvg).toContain("SwarmVault share card");
     const sourcePagePath = path.join(rootDir, "wiki", "sources", `${manifest.sourceId}.md`);
     const parsedSourcePage = matter(await fs.readFile(sourcePagePath, "utf8"));
     expect(parsedSourcePage.data.title).toBe("Local-First SwarmVault");

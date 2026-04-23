@@ -68,6 +68,7 @@ Then verify:
 
 - `wiki/graph/report.md`
 - `wiki/graph/share-card.md`
+- `wiki/graph/share-card.svg`
 - `state/graph.json`
 - `state/search.sqlite`
 
