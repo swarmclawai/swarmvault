@@ -16,7 +16,8 @@ type SessionOperation =
   | "schedule"
   | "orchestration"
   | "supersede"
-  | "consolidate";
+  | "consolidate"
+  | "context";
 
 export interface SessionRecordInput {
   operation: SessionOperation;

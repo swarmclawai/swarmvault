@@ -1,6 +1,6 @@
 {
   "name": "@swarmvaultai/viewer",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Graph viewer package for SwarmVault graph artifacts.",
   "type": "module",
   "main": "dist/lib.js",

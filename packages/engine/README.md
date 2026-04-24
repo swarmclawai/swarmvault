@@ -22,9 +22,11 @@ import {
   addInput,
   addManagedSource,
   benchmarkVault,
+  buildContextPack,
   compileVault,
   createMcpServer,
   createWebSearchAdapter,
+  deleteContextPack,
   deleteManagedSource,
   defaultVaultConfig,
   defaultVaultSchema,
@@ -42,6 +44,7 @@ import {
   getWebSearchAdapterForTask,
   lintVault,
   listGodNodes,
+  listContextPacks,
   listManagedSourceRecords,
   listSchedules,
   loadVaultConfig,
@@ -51,6 +54,7 @@ import {
   pushGraphNeo4j,
   queryGraphVault,
   queryVault,
+  readContextPack,
   reloadManagedSources,
   runWatchCycle,
   runSchedule,
@@ -73,6 +77,7 @@ import {
   addInput,
   addManagedSource,
   benchmarkVault,
+  buildContextPack,
   compileVault,
   exploreVault,
   exportGraphHtml,
@@ -86,6 +91,7 @@ import {
   pushGraphNeo4j,
   queryGraphVault,
   queryVault,
+  readContextPack,
   reloadManagedSources,
   runWatchCycle,
   watchVault
@@ -106,6 +112,13 @@ console.log(benchmark.avgQueryTokens);
 
 const saved = await queryVault(rootDir, { question: "What changed most recently?" });
 console.log(saved.savedPath);
+
+const contextPack = await buildContextPack(rootDir, {
+  goal: "Implement the auth refactor",
+  target: "./src",
+  budgetTokens: 8000
+});
+console.log(contextPack.markdownPath);
 
 const graphQuery = await queryGraphVault(rootDir, "Which nodes bridge the biggest communities?");
 console.log(graphQuery.summary);
@@ -211,6 +224,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `benchmarkVault(rootDir, { questions })` writes `state/benchmark.json` and folds the latest benchmark summary into `wiki/graph/report.md` and `wiki/graph/report.json`
 - semantic graph query and embedding-backed similarity enrichment cache vectors under `state/embeddings.json` so graph-semantic refresh stays incremental
 - `queryVault(rootDir, { question, save, format, review })` answers against the compiled vault using the same schema layer and saves by default
+- `buildContextPack(rootDir, { goal, target, budgetTokens, format })` builds an agent-ready evidence bundle with relevant pages, graph nodes, edges, hyperedges, citations, token-budget accounting, and explicit omitted entries
 - `exploreVault(rootDir, { question, steps, format, review })` runs a save-first multi-step exploration loop and writes a hub page plus step outputs
 - `searchVault(rootDir, query, limit)` searches compiled pages directly
 - `queryGraphVault(rootDir, question, { traversal, budget })` runs deterministic local graph search, preferring semantic seed matches from `tasks.embeddingProvider` when configured and falling back to lexical search plus matching group patterns otherwise
@@ -219,6 +233,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `listGraphHyperedges(rootDir, target?, limit?)` returns graph hyperedges globally or for a specific node/page target
 - `listGodNodes(rootDir, limit)` returns the most connected bridge-heavy graph nodes
 - `buildGraphShareArtifact(...)`, `renderGraphShareMarkdown(...)`, `renderGraphShareSvg(...)`, `renderGraphSharePreviewHtml(...)`, and `renderGraphShareBundleFiles(...)` produce the post-ready text, 1200x630 visual card, self-contained HTML preview, and portable share kit used by `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, `wiki/graph/share-kit/`, and the CLI `graph share` command
+- `listContextPacks(rootDir)`, `readContextPack(rootDir, id)`, and `deleteContextPack(rootDir, id)` manage saved context-pack artifacts under `state/context-packs/`
 - project-aware compile also builds `wiki/projects/index.md` plus `wiki/projects/<project>/index.md` rollups without duplicating page trees
 - human-authored insight pages in `wiki/insights/` are indexed into search and available to query without being rewritten by compile
 - `chart` and `image` formats save wrapper markdown pages plus local output assets under `wiki/outputs/assets/<slug>/`
@@ -252,7 +267,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `exportGraphFormat(rootDir, "svg" | "graphml" | "cypher", outputPath)` exports the graph into interoperable file formats
 - `pushGraphNeo4j(rootDir, options)` upserts the current graph into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing
 
-The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, ingestion, compile, lint, graph report reads, hyperedge reads, and graph-native read operations such as graph query, node explain, neighbor lookup, shortest path, and god-node listing, along with resources for config, graph, manifests, schema, page content, and session artifacts.
+The MCP surface includes tools for workspace info, page search, page reads, source listing, querying, context-pack build/read/list, ingestion, compile, lint, graph report reads, hyperedge reads, and graph-native read operations such as graph query, node explain, neighbor lookup, shortest path, and god-node listing, along with resources for config, graph, manifests, schema, page content, context-pack listings, and session artifacts.
 
 ## Artifacts
 
@@ -264,6 +279,7 @@ Running the engine produces a local workspace with these main areas:
 - `raw/assets/`: copied attachments referenced by ingested markdown bundles and remote URL ingests
 - `wiki/`: generated markdown pages, the append-only `log.md` activity trail, staged candidates, saved query outputs, exploration hub pages, and a human-only `insights/` area
 - `wiki/graph/`: generated graph report pages, markdown/SVG share cards, the portable `share-kit/`, and per-community summaries derived from `state/graph.json`
+- `wiki/context/`: markdown companions for saved context packs
 - `wiki/graph/report.json`: machine-readable graph report data used by the viewer and export surfaces
 - `wiki/outputs/assets/`: local chart/image artifacts and JSON manifests for saved visual outputs
 - `wiki/code/`: generated module pages for ingested code sources
@@ -277,6 +293,7 @@ Running the engine produces a local workspace with these main areas:
 - `state/code-index.json`: repo-aware code module aliases and local resolution data
 - `state/benchmark.json`: latest benchmark/trust summary for the current vault
 - `state/graph.json`: compiled graph, including semantic-similarity edges and hyperedge-style group patterns
+- `state/context-packs/`: JSON context-pack artifacts for agent kickoff, review, and handoff workflows
 - `state/search.sqlite`: full-text index
 - `state/sessions/`: canonical session artifacts
 - `state/approvals/`: staged review bundles from `compileVault({ approve: true })`

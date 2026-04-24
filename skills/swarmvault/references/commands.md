@@ -41,6 +41,10 @@ swarmvault compile --approve
 swarmvault diff
 swarmvault query "<question>"
 swarmvault query "<question>" --commit
+swarmvault context build "<goal>" --target ./src --budget 8000
+swarmvault context build "<goal>" --target concept:auth --format llms
+swarmvault context list
+swarmvault context show <context-pack-id>
 swarmvault explore "<question>" --steps 3
 swarmvault lint
 swarmvault lint --conflicts

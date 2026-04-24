@@ -18,6 +18,7 @@ swarmvault ingest ./deck.pptx
 swarmvault inbox import ./capture-bundle
 swarmvault compile
 swarmvault query "What are the main claims and conflicts?"
+swarmvault context build "Review the main claims and conflicts" --target "main claims" --budget 8000
 swarmvault explore "What should I read next?" --steps 3
 ```
 
@@ -27,10 +28,12 @@ swarmvault explore "What should I read next?" --steps 3
 - `state/extracts/` contains PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, audio, YouTube, or image extraction sidecars when relevant
 - `wiki/graph/report.md` surfaces contradictions, surprise links, and benchmark data
 - `wiki/outputs/` contains saved query and explore outputs
+- `wiki/context/` and `state/context-packs/` contain saved review packs when `context build` is used
 
 ## Guidance
 
 - Use `swarmvault add` for research URLs and `swarmvault ingest` for direct local files.
 - If image extraction is weak, verify that a real `visionProvider` is configured.
 - If audio extraction is missing, verify that `tasks.audioProvider` points at a provider with `audio` capability.
+- Use `swarmvault context build` when another agent or future session needs a bounded evidence bundle for review.
 - Use `lint --conflicts` when the user specifically wants contradiction review.

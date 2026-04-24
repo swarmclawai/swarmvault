@@ -13,6 +13,7 @@ swarmvault review list
 swarmvault review show <approval-id> --diff
 swarmvault review accept <approval-id>
 swarmvault query "What is the auth flow?"
+swarmvault context build "Hand off the auth flow work" --target ./src --budget 8000
 swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
@@ -27,10 +28,12 @@ swarmvault graph serve
 - `swarmvault diff` reflects the graph-level additions and removals when the vault is inside git
 - `state/approvals/` contains staged review bundles when `--approve` is used
 - `wiki/graph/report.md` highlights the important modules, bridge nodes, and contradictions
+- `wiki/context/` and `state/context-packs/` contain bounded handoff packs when `context build` is used
 - `wiki/graph/share-card.md` gives a short summary for status updates, `wiki/graph/share-card.svg` gives a visual card, and `wiki/graph/share-kit/` gives a portable folder for posting, linking, or screenshotting
 
 ## Guidance
 
 - Prefer reading `wiki/graph/report.md` and the relevant `wiki/code/*.md` pages before broad grep.
+- Use `swarmvault context build` before handing a scoped repo task to another agent or reviewer.
 - If organization is wrong, update `swarmvault.schema.md` first instead of hand-editing generated pages.
 - Use `swarmvault watch --lint --repo` plus `swarmvault hook install` when the repo should stay current automatically.

@@ -17,6 +17,7 @@ Expected shape:
 - mentions `wiki/` and `state/`
 - prefers `wiki/graph/report.md` once compile exists
 - mentions `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, `wiki/graph/share-kit/`, `swarmvault graph share --post`, `swarmvault graph share --svg`, or `swarmvault graph share --bundle` when the user wants a copyable, visual, or portable summary
+- mentions `swarmvault context build`, `wiki/context/`, or `state/context-packs/` when the user asks for agent handoff or bounded review context
 
 ## Managed source prompt
 
@@ -42,6 +43,20 @@ Expected shape:
 - uses `ingest <dir> --repo-root .` and `compile`
 - reads generated module pages or graph report before broad search
 - saves the answer unless the user asks for ephemeral output
+- may build `swarmvault context build "Explain auth" --target ./src --budget 8000` when the next agent or review needs reusable bounded context
+
+## Context handoff prompt
+
+Prompt:
+
+> Build a bounded handoff pack for the next agent working on auth.
+
+Expected shape:
+
+- compiles first when graph/search artifacts are missing or stale
+- uses `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>`
+- points at both `wiki/context/` and `state/context-packs/`
+- mentions omitted items when the token budget is too small
 
 ## Research prompt
 

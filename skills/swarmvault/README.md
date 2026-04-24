@@ -1,6 +1,6 @@
 # SwarmVault Skill
 
-Use the SwarmVault skill when you want a local-first knowledge vault that compiles books, articles, notes, transcripts, chat exports, emails, calendars, datasets, spreadsheets, slide decks, screenshots, URLs, code, and research captures into durable markdown pages, a searchable graph, dashboards, and reviewable outputs on disk.
+Use the SwarmVault skill when you want a local-first knowledge vault that compiles books, articles, notes, transcripts, chat exports, emails, calendars, datasets, spreadsheets, slide decks, screenshots, URLs, code, and research captures into durable markdown pages, a searchable graph, dashboards, context packs, and reviewable outputs on disk.
 
 SwarmVault is built on the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern: keep a durable wiki between you and raw sources using a three-layer architecture (raw sources, wiki, schema). The LLM does the bookkeeping — cross-referencing, consistency, updating — while you curate sources and think about what they mean. SwarmVault turns that pattern into a local toolchain with graph navigation, search, review flows, automation, and optional provider-backed synthesis.
 
@@ -64,6 +64,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault query "What is the auth flow?"
+swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault graph blast ./src/index.ts
 swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
@@ -76,6 +77,8 @@ For the fastest scratch walkthrough of a local repo or docs tree, run `swarmvaul
 If you want the same zero-config walkthrough without supplying your own inputs first, run `swarmvault demo --no-serve`. It creates a temporary demo vault with bundled sources and compiles it immediately.
 
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `swarmvault graph share --post` prints a compact copyable summary, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, `swarmvault graph share --bundle [dir]` writes a portable share kit for posting, linking, or screenshotting, and `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need richer sharing or Obsidian-native artifacts. `swarmvault diff` compares the current graph against the last committed graph so you can inspect graph-level changes after a compile.
+
+`swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>` creates an agent-ready evidence pack from the compiled vault. It saves JSON under `state/context-packs/`, writes a markdown companion under `wiki/context/`, reports omitted items when the token budget is too small, and can print `markdown`, `json`, or `llms` output for kickoff prompts and handoffs.
 
 The default `heuristic` provider is a valid local/offline starting point. Add a model provider in `swarmvault.config.json` when you want richer synthesis quality or optional capabilities such as embeddings, vision, or image generation. The recommended fully-local setup is `ollama pull gemma4` wired up as the `compileProvider` and `queryProvider` (see the root README for the exact config block). Any supported provider works - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Together, xAI, Cerebras, openai-compatible, or custom. Code files are always parsed locally via tree-sitter; only non-code text or image sources go to configured model providers.
 
@@ -126,7 +129,7 @@ The published ClawHub package is intentionally text-only in this release.
 5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when you want the stronger guided-session workflow. Set `profile.guidedIngestDefault: true` when guided mode should be the default for ingest/source commands, and use `--no-guide` to force the lighter path for a specific run. Profiles using `guidedSessionMode: "canonical_review"` stage approval-queued canonical page edits; `insights_only` profiles keep exploratory synthesis under `wiki/insights/`.
 6. Compile with `swarmvault compile`, use `compile --max-tokens <n>` when the generated wiki must fit a bounded context window, or use `compile --approve` when the change should land in the approval queue first.
 7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search. When the vault lives inside git, `ingest|compile|query --commit` can commit those artifacts immediately after the run.
-8. Use `swarmvault query`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
+8. Use `swarmvault query`, `swarmvault context build`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
 9. Use `swarmvault graph share --post` for a quick copyable summary, `swarmvault graph share --svg [path]` for a visual share card, `swarmvault graph share --bundle [dir]` for a portable share kit, `swarmvault graph blast` for reverse-import impact checks, `swarmvault graph serve` for the live workspace plus bookmarklet clipper, `swarmvault graph export --report` for a self-contained HTML report, `swarmvault graph export` for other shareable formats, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
 ## What SwarmVault Writes
@@ -139,8 +142,10 @@ The published ClawHub package is intentionally text-only in this release.
 - `wiki/outputs/source-guides/` for guided source integration artifacts
 - `wiki/dashboards/` for recent sources, reading log, timeline, source sessions, source guides, research map, contradictions, and open questions
 - `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` for post-ready text, visual graph summaries, HTML preview, and JSON metadata generated on compile
+- `wiki/context/` for markdown context-pack companions
 - `wiki/candidates/` for staged concept/entity pages
 - `state/graph.json` for the compiled graph
+- `state/context-packs/` for saved JSON context packs with citations, token-budget accounting, included items, and omitted items
 - `state/search.sqlite` for local search
 - `state/sources.json` plus `state/sources/<id>/` for managed-source registry state and working sync data
 - `state/approvals/` for compile approval bundles
@@ -172,6 +177,8 @@ Expose the vault over MCP with:
 ```bash
 swarmvault mcp
 ```
+
+The MCP surface includes context-pack build/read/list tools so host agents can request bounded evidence bundles without shelling out to the CLI.
 
 ## Links
 

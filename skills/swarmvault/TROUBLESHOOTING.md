@@ -75,6 +75,21 @@ Then verify:
 
 If the vault lives inside git and you want a quick graph-level delta, run `swarmvault diff`.
 
+## Context pack is empty or missing expected evidence
+
+Context packs are built from compiled graph and search artifacts. Run `swarmvault compile` first when the vault is new, then build a narrower pack:
+
+```bash
+swarmvault context build "Prepare the next agent" --target ./src --budget 8000
+```
+
+Then verify:
+
+- `wiki/context/`
+- `state/context-packs/`
+
+If many items are listed as omitted, increase `--budget` or narrow `--target`.
+
 ## Agent install or hooks seem stale
 
 Re-run the relevant install command in the project root:

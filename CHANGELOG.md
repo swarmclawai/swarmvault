@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0
+
+- Added agent context packs — `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>` now saves bounded evidence bundles under `state/context-packs/` with markdown companions in `wiki/context/`
+- Added `context list`, `context show <id>`, and `context delete <id>` for saved pack lifecycle management, with `markdown`, `json`, and `llms` output modes for agent kickoff, PR review, and handoff workflows
+- Exposed context packs through the engine API and MCP via `build_context_pack`, `list_context_packs`, `read_context_pack`, and the `swarmvault://context-packs` resource
+- Added focused engine coverage for token-budget fitting, omitted-item reporting, artifact writes, read/list/delete behavior, and citation preservation
+- Refreshed the OSS README trio, package docs, ClawHub skill bundle, website docs, stability contract, and product `spec.md` around the context-pack workflow
+
 ## 1.4.0
 
 - Added portable graph share kits — every normal compile now writes `wiki/graph/share-kit/` beside the existing markdown and SVG share cards, with `share-card.md`, `share-post.txt`, `share-card.svg`, `share-preview.html`, and `share-artifact.json`

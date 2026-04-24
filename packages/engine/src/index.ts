@@ -6,6 +6,14 @@ export { DEFAULT_PROMOTION_CONFIG, evaluateCandidateForPromotion } from "./candi
 export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
 export { DEFAULT_CONSOLIDATION_CONFIG, resolveConsolidationConfig, runConsolidation } from "./consolidate.js";
 export {
+  buildContextPack,
+  deleteContextPack,
+  listContextPacks,
+  readContextPack,
+  renderContextPackLlms,
+  renderContextPackMarkdown
+} from "./context-packs.js";
+export {
   applyDecayToPages,
   computeDecayScore,
   DEFAULT_HALF_LIFE_DAYS,

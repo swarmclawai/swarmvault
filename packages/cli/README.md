@@ -44,6 +44,7 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault benchmark
 swarmvault query "What keeps recurring?" --commit
+swarmvault context build "Ship this feature safely" --target ./src --budget 8000
 swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
@@ -278,6 +279,19 @@ Human-authored pages in `wiki/insights/` are also indexed into search and query 
 
 By default, query uses the local SQLite search index. When an embedding-capable provider is available and `search.hybrid` is not disabled, semantic page matches are fused into the same candidate set before answer generation. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `search.rerank: true` when you want the configured `queryProvider` to rerank the merged top hits. `--commit` immediately commits saved `wiki/` and `state/` changes when the vault root is inside a git repo.
 
+### `swarmvault context build|list|show|delete`
+
+Build and manage agent-ready context packs from the compiled vault.
+
+- `context build "<goal>"` assembles relevant pages, graph nodes, edges, hyperedges, citations, and explicit omitted entries into a bounded bundle
+- `--target <path-or-node>` anchors the pack around a file, page id, node id, or graph label
+- `--budget <tokens>` caps the estimated token budget; over-budget candidates are listed in `omittedItems`
+- `--format markdown|json|llms` controls the printed output shape, while every pack is still saved as JSON
+- saved artifacts live under `state/context-packs/`, with companion markdown pages under `wiki/context/`
+- `context list`, `context show <id>`, and `context delete <id>` manage saved packs
+
+Use this before handing work to an agent, starting a PR review, or preserving the evidence bundle behind a design/debugging decision.
+
 ### `swarmvault explore "<question>" [--steps <n>] [--format markdown|report|slides|chart|image]`
 
 Run a save-first multi-step research loop.
@@ -345,10 +359,13 @@ Run SwarmVault as a local MCP server over stdio. This exposes the vault to compa
 - `compile_vault`
 - `lint_vault`
 - `blast_radius`
+- `build_context_pack`
+- `list_context_packs`
+- `read_context_pack`
 
-`compile_vault` also accepts `maxTokens` for bounded wiki output, and `blast_radius` traces reverse import impact for a file or module target.
+`compile_vault` also accepts `maxTokens` for bounded wiki output, `blast_radius` traces reverse import impact for a file or module target, and `build_context_pack` creates the same bounded agent evidence bundles as `swarmvault context build`.
 
-The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `swarmvault://sessions/{path}`, and includes `schemaPath` in `workspace_info`.
+The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `swarmvault://sessions/{path}`, `swarmvault://context-packs`, and includes `schemaPath` in `workspace_info`.
 
 ### `swarmvault graph serve`
 

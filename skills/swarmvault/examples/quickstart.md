@@ -16,6 +16,7 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault query "What are the key concepts?"
+swarmvault context build "Explain the key concepts to the next agent" --target ./repo --budget 8000
 swarmvault graph serve
 swarmvault graph export --report ./graph-report.html
 ```
@@ -31,6 +32,7 @@ swarmvault graph export --report ./graph-report.html
 - `graph export --report` writes a shareable HTML report when the user wants a lighter artifact than the full workspace
 - `wiki/outputs/source-briefs/` contains a source brief
 - `wiki/outputs/` contains the saved query answer
+- `wiki/context/` and `state/context-packs/` contain the saved context pack when `context build` is used
 - `state/graph.json` and `state/search.sqlite` exist
 
 ## Guidance

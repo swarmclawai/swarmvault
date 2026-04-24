@@ -5,6 +5,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { loadVaultConfig } from "./config.js";
+import { buildContextPack, listContextPacks, readContextPack } from "./context-packs.js";
 import { ingestInputDetailed, listManifests } from "./ingest.js";
 import { runMigration } from "./migrate.js";
 import { loadVaultSchema } from "./schema.js";
@@ -37,7 +38,7 @@ import {
 } from "./vault.js";
 import { getWatchStatus } from "./watch.js";
 
-const SERVER_VERSION = "1.4.0";
+const SERVER_VERSION = "1.5.0";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -232,6 +233,50 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         format
       });
       return asToolText(result);
+    })
+  );
+
+  server.registerTool(
+    "build_context_pack",
+    {
+      description: "Build a cited, token-bounded context pack for an agent task.",
+      inputSchema: {
+        goal: z.string().min(1).describe("Task, question, or goal the agent needs context for"),
+        target: z.string().optional().describe("Optional page, node, path, project, or label to anchor the pack"),
+        budgetTokens: z.number().int().min(200).optional().describe("Approximate token budget for included context"),
+        format: z.enum(["markdown", "json", "llms"]).optional().describe("Preferred rendered output format")
+      }
+    },
+    safeHandler(async ({ goal, target, budgetTokens, format }) => {
+      const result = await buildContextPack(rootDir, { goal, target, budgetTokens, format });
+      return asToolText(result);
+    })
+  );
+
+  server.registerTool(
+    "list_context_packs",
+    {
+      description: "List saved SwarmVault context packs."
+    },
+    safeHandler(async () => {
+      return asToolText(await listContextPacks(rootDir));
+    })
+  );
+
+  server.registerTool(
+    "read_context_pack",
+    {
+      description: "Read a saved SwarmVault context pack by id.",
+      inputSchema: {
+        id: z.string().min(1).describe("Context pack id")
+      }
+    },
+    safeHandler(async ({ id }) => {
+      const pack = await readContextPack(rootDir, id);
+      if (!pack) {
+        return asToolError(`Context pack not found: ${id}`);
+      }
+      return asToolText(pack);
     })
   );
 
@@ -487,6 +532,19 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
         .map((filePath) => toPosix(path.relative(paths.sessionsDir, filePath)))
         .sort();
       return asTextResource("swarmvault://sessions", JSON.stringify(files, null, 2));
+    }
+  );
+
+  server.registerResource(
+    "swarmvault-context-packs",
+    "swarmvault://context-packs",
+    {
+      title: "SwarmVault Context Packs",
+      description: "Saved token-bounded context packs for agent tasks.",
+      mimeType: "application/json"
+    },
+    async () => {
+      return asTextResource("swarmvault://context-packs", JSON.stringify(await listContextPacks(rootDir), null, 2));
     }
   );
 

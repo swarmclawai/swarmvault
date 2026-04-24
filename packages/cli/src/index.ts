@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
-import type { GraphArtifact, GuidedSourceSessionQuestion, SourceClass } from "@swarmvaultai/engine";
+import type { ContextPackFormat, GraphArtifact, GuidedSourceSessionQuestion, SourceClass } from "@swarmvaultai/engine";
 import {
   acceptApproval,
   addInput,
@@ -14,10 +14,12 @@ import {
   autoCommitWikiChanges,
   benchmarkVault,
   blastRadiusVault,
+  buildContextPack,
   buildGraphShareArtifact,
   compileVault,
   consolidateVault,
   createSupersessionEdge,
+  deleteContextPack,
   deleteManagedSource,
   downloadWhisperModel,
   explainGraphVault,
@@ -41,6 +43,7 @@ import {
   lintVault,
   listApprovals,
   listCandidates,
+  listContextPacks,
   listGodNodes,
   listManagedSourceRecords,
   listManifests,
@@ -54,11 +57,14 @@ import {
   queryGraphVault,
   queryVault,
   readApproval,
+  readContextPack,
   readGraphReport,
   registerLocalWhisperProvider,
   rejectApproval,
   reloadManagedSources,
   removeWatchedRoot,
+  renderContextPackLlms,
+  renderContextPackMarkdown,
   renderGraphShareBundleFiles,
   renderGraphShareMarkdown,
   renderGraphShareSvg,
@@ -93,9 +99,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "1.4.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "1.5.0";
   } catch {
-    return "1.4.0";
+    return "1.5.0";
   }
 }
 
@@ -879,6 +885,83 @@ program
       await maybeEmitHeuristicNotice(["query"]);
     }
   );
+
+const context = program.command("context").description("Build and manage token-bounded agent context packs.");
+
+context
+  .command("build")
+  .description("Build a cited, token-bounded context pack for an agent task.")
+  .argument("<goal>", "Task, question, or goal the agent needs context for")
+  .option("--target <target>", "Optional page, node, path, project, or label to anchor the pack")
+  .option("--budget <tokens>", "Approximate token budget for included context", String(8000))
+  .addOption(new Option("--format <format>", "Output format").choices(["markdown", "json", "llms"]).default("markdown"))
+  .action(async (goal: string, options: { target?: string; budget?: string; format?: ContextPackFormat }) => {
+    const budgetTokens = parsePositiveInt(options.budget, 8000);
+    const result = await buildContextPack(process.cwd(), {
+      goal,
+      target: options.target,
+      budgetTokens,
+      format: options.format
+    });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(result.rendered);
+    log(`Saved context pack to ${result.markdownPath}`);
+    log(`Saved context artifact to ${result.artifactPath}`);
+  });
+
+context
+  .command("list")
+  .description("List saved context packs.")
+  .action(async () => {
+    const packs = await listContextPacks(process.cwd());
+    if (isJson()) {
+      emitJson(packs);
+      return;
+    }
+    if (!packs.length) {
+      log("No context packs.");
+      return;
+    }
+    for (const pack of packs) {
+      log(`${pack.id} — ${pack.goal} (${pack.itemCount} item(s), ${pack.omittedCount} omitted)`);
+    }
+  });
+
+context
+  .command("show")
+  .description("Print a saved context pack.")
+  .argument("<id>", "Context pack id")
+  .addOption(new Option("--format <format>", "Output format").choices(["markdown", "json", "llms"]).default("markdown"))
+  .action(async (id: string, options: { format?: ContextPackFormat }) => {
+    const pack = await readContextPack(process.cwd(), id);
+    if (!pack) {
+      throw new Error(`Context pack not found: ${id}`);
+    }
+    if (isJson() || options.format === "json") {
+      emitJson(pack);
+      return;
+    }
+    log(options.format === "llms" ? renderContextPackLlms(pack) : renderContextPackMarkdown(pack));
+  });
+
+context
+  .command("delete")
+  .description("Delete a saved context pack artifact and markdown page.")
+  .argument("<id>", "Context pack id")
+  .action(async (id: string) => {
+    const deleted = await deleteContextPack(process.cwd(), id);
+    if (!deleted) {
+      throw new Error(`Context pack not found: ${id}`);
+    }
+    if (isJson()) {
+      emitJson(deleted);
+      return;
+    }
+    log(`Deleted context pack ${deleted.id}.`);
+  });
 
 program
   .command("explore")

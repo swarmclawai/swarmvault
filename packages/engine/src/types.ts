@@ -70,6 +70,8 @@ export type EvidenceClass = "extracted" | "inferred" | "ambiguous";
 export type Polarity = "positive" | "negative" | "neutral";
 export type OutputOrigin = "query" | "explore" | "source_brief" | "source_review" | "source_guide" | "source_session";
 export type OutputFormat = "markdown" | "report" | "slides" | "chart" | "image";
+export type ContextPackFormat = "markdown" | "json" | "llms";
+export type ContextPackItemKind = "page" | "node" | "edge" | "hyperedge";
 export type OutputAssetRole = "primary" | "preview" | "manifest" | "poster";
 export type GraphExportFormat = "html" | "html-standalone" | "report" | "svg" | "graphml" | "cypher" | "json" | "obsidian" | "canvas";
 export type PageStatus = "draft" | "candidate" | "active" | "archived";
@@ -1035,6 +1037,84 @@ export interface GraphDiffResult {
   addedPages: Array<{ id: string; path: string; title: string; kind: PageKind }>;
   removedPages: Array<{ id: string; path: string; title: string; kind: PageKind }>;
   summary: string;
+}
+
+export interface ContextPackItem {
+  id: string;
+  kind: ContextPackItemKind;
+  title: string;
+  reason: string;
+  score: number;
+  estimatedTokens: number;
+  excerpt?: string;
+  path?: string;
+  pageId?: string;
+  nodeId?: string;
+  edgeId?: string;
+  hyperedgeId?: string;
+  sourceIds: string[];
+  pageIds: string[];
+  nodeIds: string[];
+  edgeIds: string[];
+  freshness?: Freshness;
+  evidenceClass?: EvidenceClass;
+  confidence?: number;
+}
+
+export interface ContextPackOmittedItem {
+  id: string;
+  kind: ContextPackItemKind;
+  title: string;
+  reason: string;
+  estimatedTokens: number;
+}
+
+export interface ContextPack {
+  id: string;
+  title: string;
+  goal: string;
+  target?: string;
+  createdAt: string;
+  format: ContextPackFormat;
+  budgetTokens: number;
+  estimatedTokens: number;
+  artifactPath: string;
+  markdownPath: string;
+  citations: string[];
+  relatedPageIds: string[];
+  relatedNodeIds: string[];
+  relatedSourceIds: string[];
+  graphQuery: GraphQueryResult;
+  items: ContextPackItem[];
+  omittedItems: ContextPackOmittedItem[];
+}
+
+export interface ContextPackSummary {
+  id: string;
+  title: string;
+  goal: string;
+  target?: string;
+  createdAt: string;
+  budgetTokens: number;
+  estimatedTokens: number;
+  artifactPath: string;
+  markdownPath: string;
+  itemCount: number;
+  omittedCount: number;
+}
+
+export interface BuildContextPackOptions {
+  goal: string;
+  target?: string;
+  budgetTokens?: number;
+  format?: ContextPackFormat;
+}
+
+export interface BuildContextPackResult {
+  pack: ContextPack;
+  artifactPath: string;
+  markdownPath: string;
+  rendered: string;
 }
 
 export interface ApprovalEntry {
