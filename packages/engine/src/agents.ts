@@ -142,6 +142,51 @@ const agentFileKinds = {
   vscode: ".github/chatmodes/swarmvault.chatmode.md"
 } as const;
 
+// Project-level skill bundle directories for agents that follow the
+// swarmskills convention (rooted at <project>/<dir>/swarmvault/SKILL.md).
+// Paths mirror swarmskills' adapter table so a vault installed for these
+// agents lines up with skill bundles managed by swarmskills.
+const SKILL_BUNDLE_AGENTS: Record<string, string> = {
+  amp: ".config/agents/skills",
+  augment: ".augment/skills",
+  adal: ".adal/skills",
+  bob: ".bob/skills",
+  cline: ".agents/skills",
+  codebuddy: ".codebuddy/skills",
+  "command-code": ".commandcode/skills",
+  continue: ".continue/skills",
+  cortex: ".snowflake/cortex/skills",
+  crush: ".config/crush/skills",
+  deepagents: ".deepagents/agent/skills",
+  firebender: ".firebender/skills",
+  iflow: ".iflow/skills",
+  junie: ".junie/skills",
+  "kilo-code": ".kilocode/skills",
+  kimi: ".config/agents/skills",
+  kode: ".kode/skills",
+  mcpjam: ".mcpjam/skills",
+  "mistral-vibe": ".vibe/skills",
+  mux: ".mux/skills",
+  neovate: ".neovate/skills",
+  openclaw: ".openclaw/skills",
+  openhands: ".openhands/skills",
+  pochi: ".pochi/skills",
+  qoder: ".qoder/skills",
+  "qwen-code": ".qwen/skills",
+  replit: ".config/agents/skills",
+  "roo-code": ".roo/skills",
+  "trae-cn": ".trae-cn/skills",
+  warp: ".agents/skills",
+  windsurf: ".codeium/windsurf/skills",
+  zencoder: ".zencoder/skills"
+};
+
+function skillBundleTarget(rootDir: string, agent: AgentType): string | null {
+  const relativeSkillsDir = SKILL_BUNDLE_AGENTS[agent];
+  if (!relativeSkillsDir) return null;
+  return path.join(rootDir, relativeSkillsDir, "swarmvault", "SKILL.md");
+}
+
 const hermesUserSkillRelative = path.join(".hermes", "skills", "swarmvault", "SKILL.md");
 
 function hermesUserSkillPath(): string {
@@ -313,8 +358,11 @@ function primaryTargetPathForAgent(rootDir: string, agent: AgentType): string {
       return path.join(rootDir, agentFileKinds.antigravityRules);
     case "vscode":
       return path.join(rootDir, agentFileKinds.vscode);
-    default:
+    default: {
+      const bundleTarget = skillBundleTarget(rootDir, agent);
+      if (bundleTarget) return bundleTarget;
       throw new Error(`Unsupported agent ${String(agent)}`);
+    }
   }
 }
 
@@ -650,8 +698,13 @@ export async function installAgent(rootDir: string, agent: AgentType, options: I
     case "vscode":
       await writeOwnedFile(target, buildVscodeChatmodeFile());
       break;
-    default:
+    default: {
+      if (SKILL_BUNDLE_AGENTS[agent]) {
+        await writeOwnedFile(target, buildStandaloneSkillFile());
+        break;
+      }
       throw new Error(`Unsupported agent ${String(agent)}`);
+    }
   }
 
   if (agent === "aider") {

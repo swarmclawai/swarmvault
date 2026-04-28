@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.0
+
+- Extended `swarmvault install --agent` with 32 additional coding agents (amp, augment, adal, bob, cline, codebuddy, command-code, continue, cortex, crush, deepagents, firebender, iflow, junie, kilo-code, kimi, kode, mcpjam, mistral-vibe, mux, neovate, openclaw, openhands, pochi, qoder, qwen-code, replit, roo-code, trae-cn, warp, windsurf, zencoder), each writing a project-level skill bundle to that tool's conventional skills directory.
+- Updated the OSS README trio, ClawHub skill bundle, and `agentTypeSchema` so the extended roster is discoverable across docs, configuration, and engine API.
+
 ## 3.0.0
 
 - Added the 3.0 retrieval surface: `swarmvault retrieval status|rebuild|doctor`, engine retrieval status/rebuild/doctor APIs, MCP `retrieval_status`, `rebuild_retrieval`, and `doctor_retrieval` tools, plus a `state/retrieval/manifest.json` health record beside the local SQLite FTS shard.

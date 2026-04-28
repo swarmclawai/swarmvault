@@ -535,6 +535,56 @@ describe("swarmvault workflow", () => {
     expect(vscodeChatmode.content).toContain("# SwarmVault mode");
   });
 
+  it("installs skill bundles for the extended coding-agent roster", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const cases: Array<{ agent: Parameters<typeof installAgent>[1]; expected: string[] }> = [
+      { agent: "amp", expected: [".config", "agents", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "augment", expected: [".augment", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "adal", expected: [".adal", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "bob", expected: [".bob", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "cline", expected: [".agents", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "codebuddy", expected: [".codebuddy", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "command-code", expected: [".commandcode", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "continue", expected: [".continue", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "cortex", expected: [".snowflake", "cortex", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "crush", expected: [".config", "crush", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "deepagents", expected: [".deepagents", "agent", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "firebender", expected: [".firebender", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "iflow", expected: [".iflow", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "junie", expected: [".junie", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "kilo-code", expected: [".kilocode", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "kimi", expected: [".config", "agents", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "kode", expected: [".kode", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "mcpjam", expected: [".mcpjam", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "mistral-vibe", expected: [".vibe", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "mux", expected: [".mux", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "neovate", expected: [".neovate", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "openclaw", expected: [".openclaw", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "openhands", expected: [".openhands", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "pochi", expected: [".pochi", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "qoder", expected: [".qoder", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "qwen-code", expected: [".qwen", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "replit", expected: [".config", "agents", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "roo-code", expected: [".roo", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "trae-cn", expected: [".trae-cn", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "warp", expected: [".agents", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "windsurf", expected: [".codeium", "windsurf", "skills", "swarmvault", "SKILL.md"] },
+      { agent: "zencoder", expected: [".zencoder", "skills", "swarmvault", "SKILL.md"] }
+    ];
+
+    for (const { agent, expected } of cases) {
+      const result = await installAgent(rootDir, agent);
+      const expectedPath = path.join(rootDir, ...expected);
+      expect(result.target).toBe(expectedPath);
+      const skillRaw = await fs.readFile(expectedPath, "utf8");
+      const parsed = matter(skillRaw);
+      expect(parsed.data.name).toBe("swarmvault");
+      expect(parsed.content).toContain("SwarmVault compiles curated sources");
+    }
+  });
+
   it("installs hermes user-scope skill + repo AGENTS.md", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

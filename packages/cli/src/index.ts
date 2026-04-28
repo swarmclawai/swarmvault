@@ -115,9 +115,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.0.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.1.0";
   } catch {
-    return "3.0.0";
+    return "3.1.0";
   }
 }
 
@@ -2195,7 +2195,7 @@ program
   .description("Install SwarmVault instructions for an agent in the current project.")
   .requiredOption(
     "--agent <agent>",
-    "codex, claude, cursor, goose, pi, gemini, opencode, aider, copilot, trae, claw, droid, kiro, hermes, antigravity, or vscode"
+    "claude, codex, cursor, gemini, goose, opencode, copilot, aider, droid, pi, trae, claw, kiro, hermes, antigravity, vscode, amp, augment, adal, bob, cline, codebuddy, command-code, continue, cortex, crush, deepagents, firebender, iflow, junie, kilo-code, kimi, kode, mcpjam, mistral-vibe, mux, neovate, openclaw, openhands, pochi, qoder, qwen-code, replit, roo-code, trae-cn, warp, windsurf, or zencoder"
   )
   .option("--hook", "Also install hook/plugin guidance when the target agent supports it", false)
   .action(
@@ -2216,7 +2216,39 @@ program
         | "kiro"
         | "hermes"
         | "antigravity"
-        | "vscode";
+        | "vscode"
+        | "amp"
+        | "augment"
+        | "adal"
+        | "bob"
+        | "cline"
+        | "codebuddy"
+        | "command-code"
+        | "continue"
+        | "cortex"
+        | "crush"
+        | "deepagents"
+        | "firebender"
+        | "iflow"
+        | "junie"
+        | "kilo-code"
+        | "kimi"
+        | "kode"
+        | "mcpjam"
+        | "mistral-vibe"
+        | "mux"
+        | "neovate"
+        | "openclaw"
+        | "openhands"
+        | "pochi"
+        | "qoder"
+        | "qwen-code"
+        | "replit"
+        | "roo-code"
+        | "trae-cn"
+        | "warp"
+        | "windsurf"
+        | "zencoder";
       hook?: boolean;
     }) => {
       const hookCapableAgents = new Set(["claude", "opencode", "gemini", "copilot"]);

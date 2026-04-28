@@ -176,6 +176,38 @@ Supported agent installs:
 - `swarmvault install --agent hermes`
 - `swarmvault install --agent antigravity`
 - `swarmvault install --agent vscode`
+- `swarmvault install --agent amp`
+- `swarmvault install --agent augment`
+- `swarmvault install --agent adal`
+- `swarmvault install --agent bob`
+- `swarmvault install --agent cline`
+- `swarmvault install --agent codebuddy`
+- `swarmvault install --agent command-code`
+- `swarmvault install --agent continue`
+- `swarmvault install --agent cortex`
+- `swarmvault install --agent crush`
+- `swarmvault install --agent deepagents`
+- `swarmvault install --agent firebender`
+- `swarmvault install --agent iflow`
+- `swarmvault install --agent junie`
+- `swarmvault install --agent kilo-code`
+- `swarmvault install --agent kimi`
+- `swarmvault install --agent kode`
+- `swarmvault install --agent mcpjam`
+- `swarmvault install --agent mistral-vibe`
+- `swarmvault install --agent mux`
+- `swarmvault install --agent neovate`
+- `swarmvault install --agent openclaw`
+- `swarmvault install --agent openhands`
+- `swarmvault install --agent pochi`
+- `swarmvault install --agent qoder`
+- `swarmvault install --agent qwen-code`
+- `swarmvault install --agent replit`
+- `swarmvault install --agent roo-code`
+- `swarmvault install --agent trae-cn`
+- `swarmvault install --agent warp`
+- `swarmvault install --agent windsurf`
+- `swarmvault install --agent zencoder`
 
 Expose the vault over MCP with:
 

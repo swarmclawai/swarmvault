@@ -463,8 +463,40 @@ clawhub install swarmvault
 | Hermes | `swarmvault install --agent hermes` |
 | Google Antigravity | `swarmvault install --agent antigravity` |
 | VS Code Copilot Chat | `swarmvault install --agent vscode` |
+| Amp | `swarmvault install --agent amp` |
+| Augment | `swarmvault install --agent augment` |
+| AdaL | `swarmvault install --agent adal` |
+| IBM Bob | `swarmvault install --agent bob` |
+| Cline | `swarmvault install --agent cline` |
+| CodeBuddy | `swarmvault install --agent codebuddy` |
+| Command Code | `swarmvault install --agent command-code` |
+| Continue | `swarmvault install --agent continue` |
+| Cortex Code | `swarmvault install --agent cortex` |
+| Crush | `swarmvault install --agent crush` |
+| Deep Agents | `swarmvault install --agent deepagents` |
+| Firebender | `swarmvault install --agent firebender` |
+| iFlow CLI | `swarmvault install --agent iflow` |
+| Junie | `swarmvault install --agent junie` |
+| Kilo Code | `swarmvault install --agent kilo-code` |
+| Kimi Code CLI | `swarmvault install --agent kimi` |
+| Kode | `swarmvault install --agent kode` |
+| MCPJam | `swarmvault install --agent mcpjam` |
+| Mistral Vibe | `swarmvault install --agent mistral-vibe` |
+| Mux | `swarmvault install --agent mux` |
+| Neovate | `swarmvault install --agent neovate` |
+| OpenClaw | `swarmvault install --agent openclaw` |
+| OpenHands | `swarmvault install --agent openhands` |
+| Pochi | `swarmvault install --agent pochi` |
+| Qoder | `swarmvault install --agent qoder` |
+| Qwen Code | `swarmvault install --agent qwen-code` |
+| Replit | `swarmvault install --agent replit` |
+| Roo Code | `swarmvault install --agent roo-code` |
+| TRAE CN | `swarmvault install --agent trae-cn` |
+| Warp | `swarmvault install --agent warp` |
+| Windsurf | `swarmvault install --agent windsurf` |
+| Zencoder | `swarmvault install --agent zencoder` |
 
-Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応しており、graph-first の文脈注入ができます。
+Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応しており、graph-first の文脈注入ができます。拡張ロスターのエージェントは、対象ツールが規定する skills ディレクトリにプロジェクト単位の skill バンドルを書き込みます（例: `.cline/skills/swarmvault/SKILL.md`、`.codeium/windsurf/skills/swarmvault/SKILL.md`）。
 
 <!-- readme-section:worked-examples -->
 ## 実例
