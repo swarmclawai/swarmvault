@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/swarmclawai-swarmvault-badge.png)](https://mseep.ai/app/swarmclawai-swarmvault)
+
 # SwarmVault
 
 <!-- readme-language-nav:start -->
