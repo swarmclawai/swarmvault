@@ -350,7 +350,7 @@ async function publishNpmPackages(version) {
       continue;
     }
 
-    const publishArgs = ["publish", npmPackage.dir, "--access", "public", "--tag", releaseArgs.npmTag];
+    const publishArgs = ["publish", `./${npmPackage.dir}`, "--access", "public", "--tag", releaseArgs.npmTag];
     if (releaseArgs.otp) {
       publishArgs.push("--otp", releaseArgs.otp);
     }
