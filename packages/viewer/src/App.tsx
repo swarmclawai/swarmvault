@@ -448,8 +448,9 @@ export function App() {
     setBusyAction("doctor:repair");
     setActionError(null);
     try {
-      await fetchDoctorReport({ repair: true });
+      const result = await fetchDoctorReport({ repair: true });
       await refresh();
+      return result;
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -462,8 +463,9 @@ export function App() {
       setBusyAction("capture");
       setActionError(null);
       try {
-        await captureToVault(payload);
+        const result = await captureToVault(payload);
         await refresh();
+        return result;
       } catch (error) {
         setActionError(error instanceof Error ? error.message : String(error));
       } finally {
@@ -478,8 +480,9 @@ export function App() {
       setBusyAction("context");
       setActionError(null);
       try {
-        await createContextPack(payload);
+        const result = await createContextPack(payload);
         await refresh();
+        return result;
       } catch (error) {
         setActionError(error instanceof Error ? error.message : String(error));
       } finally {
@@ -494,9 +497,10 @@ export function App() {
       setBusyAction("task:start");
       setActionError(null);
       try {
-        await createTask(payload);
+        const result = await createTask(payload);
         await refresh();
         setWorkflowTab("memory");
+        return result;
       } catch (error) {
         setActionError(error instanceof Error ? error.message : String(error));
       } finally {

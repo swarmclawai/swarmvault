@@ -38,7 +38,7 @@ swarmvault graph export --report ./graph-report.html
 - `wiki/context/` and `state/context-packs/` contain the saved context pack when `context build` is used
 - `wiki/memory/` and `state/memory/tasks/` contain task ledger artifacts when `task start` is used
 - `state/graph.json` and `state/retrieval/` exist
-- `swarmvault doctor` reports `ok` or gives concrete next commands such as `swarmvault compile` or `swarmvault retrieval rebuild`
+- `swarmvault doctor` reports `ok` or gives concrete next commands such as `swarmvault compile` or `swarmvault retrieval rebuild`; `graph serve` shows those checks and commands in the workbench
 
 ## Guidance
 

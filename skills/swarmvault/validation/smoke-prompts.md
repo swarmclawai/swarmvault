@@ -114,5 +114,6 @@ Expected shape:
 - may suggest `swarmvault diff` when the user is asking what a compile changed
 - may use `graph blast <target>` when the user is asking about change impact instead of broad graph browsing
 - may run `swarmvault doctor` before opening the live workspace when the vault health is uncertain
+- mentions that the live workbench shows doctor details, copyable suggested commands, explicit capture modes, and budgeted context/task actions when the user asks what the viewer can do
 - mentions `swarmvault mcp`
 - prefers existing report and graph artifacts when already present

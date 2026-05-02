@@ -529,18 +529,67 @@ textarea:focus-visible,
   font-size: var(--text-xs);
 }
 
+.workbench-receipt {
+  margin: 0;
+  color: var(--c-text-success);
+  font-size: var(--text-xs);
+}
+
 .workbench-checks {
   align-content: start;
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .workbench-check {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--sp-2);
   font-size: var(--text-xs);
   color: var(--c-text-secondary);
   border-bottom: 1px solid var(--c-border-subtle);
-  padding-bottom: var(--sp-1);
+  padding-bottom: var(--sp-2);
+}
+
+.workbench-check-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workbench-check-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-weight: 700;
+}
+
+.workbench-check p {
+  margin: 0;
+}
+
+.workbench-check-detail {
+  color: var(--c-text-muted);
+}
+
+.workbench-command-list {
+  display: grid;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+}
+
+.workbench-command {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.workbench-command code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--c-text-accent);
 }
 
 .workbench-check.check-error {

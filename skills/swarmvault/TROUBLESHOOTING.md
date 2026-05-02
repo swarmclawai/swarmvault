@@ -78,7 +78,7 @@ If the vault lives inside git and you want a quick graph-level delta, run `swarm
 
 ## Vault doctor reports warnings
 
-`swarmvault doctor` is the broad health summary. It checks graph artifacts, retrieval, review queues, watch state, migrations, managed sources, and task ledgers, then prints concrete follow-up commands.
+`swarmvault doctor` is the broad health summary. It checks graph artifacts, retrieval, review queues, watch state, migrations, managed sources, and task ledgers, then prints concrete follow-up commands. The `swarmvault graph serve` workbench shows the same full check list with details and copyable suggested commands.
 
 Safe derived retrieval repairs can be applied with:
 

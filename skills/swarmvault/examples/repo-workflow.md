@@ -32,7 +32,7 @@ swarmvault graph serve
 - `wiki/graph/report.md` highlights the important modules, bridge nodes, and contradictions
 - `wiki/context/` and `state/context-packs/` contain bounded handoff packs when `context build` is used
 - `wiki/memory/` and `state/memory/tasks/` contain durable task records when `task start` is used
-- `swarmvault doctor` summarizes graph, retrieval, review, watch, migration, source, and task health before handoff
+- `swarmvault doctor` summarizes graph, retrieval, review, watch, migration, source, and task health before handoff; the live workbench shows the same details and suggested commands
 - `wiki/graph/share-card.md` gives a short summary for status updates, `wiki/graph/share-card.svg` gives a visual card, and `wiki/graph/share-kit/` gives a portable folder for posting, linking, or screenshotting
 
 ## Guidance

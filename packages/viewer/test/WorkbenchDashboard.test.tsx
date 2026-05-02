@@ -10,7 +10,7 @@ const report: ViewerDoctorReport = {
   status: "warning",
   generatedAt: "2026-04-29T20:00:00.000Z",
   rootDir: "/tmp/vault",
-  version: "3.2.0",
+  version: "3.3.0",
   counts: {
     sources: 2,
     managedSources: 1,
@@ -23,8 +23,31 @@ const report: ViewerDoctorReport = {
     pendingSemanticRefresh: 0
   },
   checks: [
+    { id: "workspace", label: "Workspace", status: "ok", summary: "Workspace ready." },
     { id: "graph", label: "Graph", status: "ok", summary: "Graph present." },
-    { id: "retrieval", label: "Retrieval", status: "warning", summary: "Retrieval stale." }
+    {
+      id: "retrieval",
+      label: "Retrieval",
+      status: "warning",
+      summary: "Retrieval stale.",
+      detail: "Manifest is older than graph.",
+      actions: [{ command: "swarmvault retrieval doctor --repair", description: "Rebuild retrieval artifacts." }]
+    },
+    {
+      id: "migration",
+      label: "Migration",
+      status: "warning",
+      summary: "Migration preview available.",
+      actions: [{ command: "swarmvault migrate --dry-run", description: "Preview migration changes." }]
+    },
+    {
+      id: "review",
+      label: "Review Queues",
+      status: "warning",
+      summary: "Approvals need review.",
+      actions: [{ command: "swarmvault review list", description: "Inspect staged approval bundles." }]
+    },
+    { id: "watch", label: "Watch", status: "ok", summary: "No pending refresh entries." }
   ],
   repaired: []
 };
@@ -33,10 +56,10 @@ function renderDashboard() {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  const onRepair = vi.fn().mockResolvedValue(undefined);
-  const onCapture = vi.fn().mockResolvedValue(undefined);
-  const onBuildContext = vi.fn().mockResolvedValue(undefined);
-  const onStartTask = vi.fn().mockResolvedValue(undefined);
+  const onRepair = vi.fn().mockResolvedValue({ repaired: ["retrieval"] });
+  const onCapture = vi.fn().mockResolvedValue({ sourceId: "clip-1", title: "Example Article" });
+  const onBuildContext = vi.fn().mockResolvedValue({ pack: { id: "context-1" } });
+  const onStartTask = vi.fn().mockResolvedValue({ id: "task-1", title: "Ship the release" });
   act(() => {
     root.render(
       <WorkbenchDashboard
@@ -80,19 +103,29 @@ describe("WorkbenchDashboard", () => {
     expect(text).toContain("Sources 2");
     expect(text).toContain("Managed 1");
     expect(text).toContain("Review 1");
+    expect(text).toContain("Manifest is older than graph.");
+    expect(text).toContain("swarmvault retrieval doctor --repair");
+    expect(text).toContain("swarmvault migrate --dry-run");
+    expect(text).toContain("swarmvault review list");
+    expect(text).toContain("Watch");
 
     const captureUrl = handle.container.querySelector<HTMLInputElement>('input[aria-label="Capture URL"]');
     const captureText = handle.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Capture text"]');
+    const captureMode = handle.container.querySelector<HTMLSelectElement>('select[aria-label="Capture mode"]');
     const goal = handle.container.querySelector<HTMLInputElement>('input[aria-label="Agent goal"]');
     const target = handle.container.querySelector<HTMLInputElement>('input[aria-label="Agent target"]');
+    const budget = handle.container.querySelector<HTMLInputElement>('input[aria-label="Token budget"]');
     expect(captureUrl).toBeTruthy();
     expect(captureText).toBeTruthy();
+    expect(captureMode).toBeTruthy();
     expect(goal).toBeTruthy();
     expect(target).toBeTruthy();
+    expect(budget).toBeTruthy();
 
     await act(async () => {
       fireEvent.input(captureUrl!, { target: { value: "https://example.com/article" } });
       fireEvent.input(captureText!, { target: { value: "important excerpt" } });
+      fireEvent.change(captureMode!, { target: { value: "inbox" } });
     });
     const captureButton = Array.from(handle.container.querySelectorAll<HTMLButtonElement>("button")).find(
       (button) => button.textContent?.trim() === "Capture"
@@ -105,10 +138,23 @@ describe("WorkbenchDashboard", () => {
       selectionText: "important excerpt",
       sourceMode: "inbox"
     });
+    expect(handle.container.textContent ?? "").toContain("Captured Example Article");
 
     await act(async () => {
       fireEvent.input(goal!, { target: { value: "Ship the release" } });
       fireEvent.input(target!, { target: { value: "packages/engine" } });
+      fireEvent.input(budget!, { target: { value: "12000" } });
+    });
+    const packButton = Array.from(handle.container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Build Pack"
+    );
+    await act(async () => {
+      packButton?.click();
+    });
+    expect(handle.onBuildContext).toHaveBeenCalledWith({
+      goal: "Ship the release",
+      target: "packages/engine",
+      budgetTokens: 12000
     });
     const taskButton = Array.from(handle.container.querySelectorAll<HTMLButtonElement>("button")).find(
       (button) => button.textContent?.trim() === "Start Task"
@@ -119,8 +165,18 @@ describe("WorkbenchDashboard", () => {
     expect(handle.onStartTask).toHaveBeenCalledWith({
       goal: "Ship the release",
       target: "packages/engine",
-      budgetTokens: 8000
+      budgetTokens: 12000
     });
+    expect(handle.container.textContent ?? "").toContain("Started task task-1");
+
+    const repairButton = Array.from(handle.container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Repair"
+    );
+    await act(async () => {
+      repairButton?.click();
+    });
+    expect(handle.onRepair).toHaveBeenCalled();
+    expect(handle.container.textContent ?? "").toContain("Repaired retrieval");
     handle.cleanup();
   });
 });

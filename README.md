@@ -53,7 +53,7 @@ That single command initializes a vault, ingests sources, compiles a knowledge g
 - **Share kit** — `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, `wiki/graph/share-kit/`, `swarmvault graph share --post`, `swarmvault graph share --svg`, and `swarmvault graph share --bundle` for copyable, visual, and HTML-preview first-run summaries
 - **Context packs** — `swarmvault context build "<goal>"` writes a cited, token-bounded agent handoff under `wiki/context/` plus `state/context-packs/`
 - **Agent task ledger** — `swarmvault task start|update|finish|resume` records durable local task history under `wiki/memory/` plus `state/memory/`; `memory` remains a compatibility alias
-- **Vault doctor and workbench** — `swarmvault doctor [--repair]`, MCP `doctor_vault`, and the graph viewer health strip inspect graph, retrieval, reviews, watch state, migrations, managed sources, and task state from one place
+- **Vault doctor and workbench** — `swarmvault doctor [--repair]`, MCP `doctor_vault`, and the graph viewer workbench inspect graph, retrieval, reviews, watch state, migrations, managed sources, and task state, with detailed checks, suggested commands, safe repair, explicit capture modes, and budgeted agent handoffs
 
 ### Three-Layer Architecture
 
@@ -183,7 +183,7 @@ Need the fastest first pass over a local repo or docs tree? `swarmvault scan ./p
 
 Need to hand bounded context to an agent? `swarmvault context build "Ship this feature safely" --target ./src --budget 8000` combines graph traversal, local search hits, freshness, evidence classes, and citations into a saved context pack. Use `--format llms` for an `llms.txt`-style handoff, `context list` to find prior packs, and `context show <id>` to replay one. For longer-running work, `swarmvault task start "<goal>" --target <path-or-node>` creates a durable task ledger, `task update` records notes, decisions, changed paths, and linked packs, and `task resume <id>` prints the next-agent handoff. Existing `memory` commands and `--memory <id>` flags remain supported as compatibility aliases for the same task ledger.
 
-Need a quick health pass before handing the vault to an agent or opening the viewer? `swarmvault doctor` checks graph, retrieval, review queues, watch status, migration state, managed sources, and task ledgers. Add `--repair` to rebuild safe derived retrieval artifacts. `swarmvault graph serve` surfaces the same doctor summary in the workbench, alongside capture, context-pack, and task-start actions.
+Need a quick health pass before handing the vault to an agent or opening the viewer? `swarmvault doctor` checks graph, retrieval, review queues, watch status, migration state, managed sources, and task ledgers. Add `--repair` to rebuild safe derived retrieval artifacts. `swarmvault graph serve` surfaces every doctor check in the workbench with details and copyable suggested commands, alongside explicit capture modes, context-pack creation, and task-start actions with editable token budgets.
 
 Want the minimal LLM-Wiki starter instead? `swarmvault init --lite` creates just `raw/`, `wiki/`, `wiki/index.md`, `wiki/log.md`, and `swarmvault.schema.md` — no config, no state, no agent installs. Your agent maintains the wiki directly. Upgrade with `swarmvault init` later when you want graph, search, and approvals.
 
@@ -393,7 +393,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Agent task ledger** - `swarmvault task start|update|finish|resume` records task goals, linked context packs, decisions, graph evidence, touched paths, outcomes, and follow-ups as git-friendly JSON plus markdown under `state/memory/tasks/` and `wiki/memory/tasks/`. Compile includes task nodes and decisions in the graph, and the viewer exposes the task history. Existing `memory` commands remain compatibility aliases.
 
-**Vault doctor and workbench** - `swarmvault doctor [--repair]` checks graph artifacts, retrieval, review queues, watch state, migrations, managed sources, source/page counts, and task state. The graph viewer workbench surfaces the same health summary with repair, richer capture, context-pack, and task-start actions.
+**Vault doctor and workbench** - `swarmvault doctor [--repair]` checks graph artifacts, retrieval, review queues, watch state, migrations, managed sources, source/page counts, and task state. The graph viewer workbench surfaces every check with details, copyable suggested commands, safe repair, explicit capture modes, budgeted context-pack creation, and task-start actions.
 
 **Reviewable changes** - `compile --approve` stages changes into approval bundles. New concepts and entities land in `wiki/candidates/` first. Nothing mutates silently.
 

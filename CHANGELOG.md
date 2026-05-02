@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.3.0
+
+- Polished the graph viewer workbench so `graph serve` now shows every vault doctor check with detail text and copyable suggested commands, keeps warnings ahead of passing checks, and reports action receipts after repair, capture, context-pack, and task-start actions.
+- Made workbench capture and agent handoff controls more explicit with selectable capture modes (`ingest`, normalized `add`, or `inbox`) and an editable token budget for context packs and task starts.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.3.0`.
+
 ## 3.2.0
 
 - Added `swarmvault doctor [--repair]` as a whole-vault health check for graph artifacts, retrieval, review queues, watch status, migration state, managed sources, page counts, and task ledgers, with structured `--json` output and safe retrieval repair.

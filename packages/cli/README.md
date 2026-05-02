@@ -125,6 +125,7 @@ Run a whole-vault health check before handing the workspace to an agent or openi
 - emits suggested follow-up commands for warnings and errors
 - supports `--json` for structured automation output
 - add `--repair` to rebuild safe derived retrieval artifacts
+- the live viewer workbench shows the same checks with details and copyable suggested commands
 
 ### `swarmvault source add|list|reload|review|guide|session|delete`
 
@@ -420,6 +421,8 @@ The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `sw
 ### `swarmvault graph serve`
 
 Start the local graph workspace backed by `state/graph.json`, `/api/search`, `/api/page`, local graph query/path/explain endpoints, and the workbench APIs for doctor, retrieval repair, capture, context packs, task start, and source reload.
+
+The workbench renders every vault doctor check with details, suggested commands that can be copied back to a terminal, safe one-click retrieval repair through `doctor --repair`, selectable capture modes (`ingest`, normalized `add`, or `inbox`), editable token budgets for context packs and task starts, and action receipts after workbench operations complete.
 
 It also exposes `/api/bookmarklet` and `/api/clip`, so a running local viewer can capture the current browser URL, selected text, markdown, HTML excerpts, and tags through the workbench or bookmarklet without leaving the browser.
 
