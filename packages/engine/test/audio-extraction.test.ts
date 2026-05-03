@@ -1,15 +1,37 @@
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultVaultConfig } from "../src/config.js";
-import { extractAudioTranscription } from "../src/extraction.js";
+import { extractAudioTranscription, extractPublicVideoTranscription, extractVideoTranscription } from "../src/extraction.js";
 import { createProvider } from "../src/index.js";
 import { OpenAiCompatibleProviderAdapter } from "../src/providers/openai-compatible.js";
 import * as registry from "../src/providers/registry.js";
 import type { ProviderAdapter, ProviderConfig } from "../src/types.js";
 
+const tempDirs: string[] = [];
+
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+async function makeTempDir(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-video-extraction-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+async function makeFakeBinary(dir: string, name: string, script: string): Promise<string> {
+  const binPath = path.join(dir, name);
+  await fs.writeFile(binPath, `#!/usr/bin/env node\n${script}\n`, "utf8");
+  await fs.chmod(binPath, 0o755);
+  return binPath;
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  delete process.env.SWARMVAULT_FFMPEG_BINARY;
+  delete process.env.SWARMVAULT_YTDLP_BINARY;
 });
 
 describe("audio provider config", () => {
@@ -193,5 +215,96 @@ describe("extractAudioTranscription", () => {
 
     expect(result.extractedText).toBeUndefined();
     expect(result.artifact.warnings![0]).toContain("unavailable");
+  });
+});
+
+describe("video transcription extraction", () => {
+  it("extracts local video audio with ffmpeg and routes it through the audio provider", async () => {
+    const tmpDir = await makeTempDir();
+    process.env.SWARMVAULT_FFMPEG_BINARY = await makeFakeBinary(
+      tmpDir,
+      "ffmpeg",
+      "const fs = require('node:fs'); fs.writeFileSync(process.argv.at(-1), 'fake wav bytes');"
+    );
+    const mockProvider = {
+      id: "mock-video-audio",
+      type: "openai" as const,
+      model: "whisper-1",
+      capabilities: new Set(["audio"] as const),
+      generateText: vi.fn(),
+      generateStructured: vi.fn(),
+      transcribeAudio: vi.fn().mockResolvedValue({
+        text: "The architecture review discusses graph clusters.",
+        duration: 9,
+        language: "en"
+      })
+    };
+    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as unknown as ProviderAdapter);
+
+    const result = await extractVideoTranscription("/tmp/test-vault", {
+      mimeType: "video/mp4",
+      bytes: Buffer.from("fake video"),
+      fileName: "review.mp4"
+    });
+
+    expect(result.extractedText).toContain("architecture review");
+    expect(result.artifact.extractor).toBe("video_transcription");
+    expect(result.artifact.sourceKind).toBe("video");
+    expect(result.artifact.providerId).toBe("mock-video-audio");
+    expect(mockProvider.transcribeAudio).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mimeType: "audio/wav",
+        fileName: "review.wav"
+      })
+    );
+  });
+
+  it("downloads public video audio with yt-dlp when URL video mode is requested", async () => {
+    const tmpDir = await makeTempDir();
+    process.env.SWARMVAULT_YTDLP_BINARY = await makeFakeBinary(
+      tmpDir,
+      "yt-dlp",
+      [
+        "const fs = require('node:fs');",
+        "const outIndex = process.argv.indexOf('-o') + 1;",
+        "const template = process.argv[outIndex];",
+        "fs.writeFileSync(template.replace('%(ext)s', 'wav'), 'downloaded wav');"
+      ].join("\n")
+    );
+    const mockProvider = {
+      id: "mock-public-video",
+      type: "openai" as const,
+      model: "whisper-1",
+      capabilities: new Set(["audio"] as const),
+      generateText: vi.fn(),
+      generateStructured: vi.fn(),
+      transcribeAudio: vi.fn().mockResolvedValue({
+        text: "Public demo transcript.",
+        language: "en"
+      })
+    };
+    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider as unknown as ProviderAdapter);
+
+    const result = await extractPublicVideoTranscription("/tmp/test-vault", {
+      url: "https://videos.example/demo"
+    });
+
+    expect(result.extractedText).toBe("Public demo transcript.");
+    expect(result.artifact.extractor).toBe("video_transcription");
+    expect(result.artifact.metadata?.url).toBe("https://videos.example/demo");
+  });
+
+  it("returns an explicit warning when the optional ffmpeg binary is unavailable", async () => {
+    process.env.SWARMVAULT_FFMPEG_BINARY = path.join(os.tmpdir(), "missing-ffmpeg");
+
+    const result = await extractVideoTranscription("/tmp/test-vault", {
+      mimeType: "video/mp4",
+      bytes: Buffer.from("fake video"),
+      fileName: "missing.mp4"
+    });
+
+    expect(result.extractedText).toBeUndefined();
+    expect(result.artifact.sourceKind).toBe("video");
+    expect(result.artifact.warnings?.[0]).toContain("ffmpeg");
   });
 });

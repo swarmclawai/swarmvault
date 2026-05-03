@@ -22,6 +22,7 @@ swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./customer-call.mp3
 swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
+swarmvault ingest --video https://example.com/product-demo.mp4
 swarmvault source session transcript-or-session-id
 ```
 
@@ -57,6 +58,7 @@ swarmvault source add https://github.com/karpathy/micrograd
 swarmvault ingest ./src --repo-root .
 swarmvault ingest ./customer-call.mp3
 swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
+swarmvault ingest --video https://example.com/product-demo.mp4
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile --max-tokens 120000
 swarmvault diff
@@ -68,6 +70,7 @@ swarmvault context build "Implement the auth refactor" --target ./src --budget 8
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
 swarmvault doctor --repair
 swarmvault graph blast ./src/index.ts
+swarmvault graph cluster
 swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
 swarmvault graph export --obsidian ./exports/graph-vault
@@ -78,7 +81,7 @@ For the fastest scratch walkthrough of a local repo or docs tree, run `swarmvaul
 
 If you want the same zero-config walkthrough without supplying your own inputs first, run `swarmvault demo --no-serve`. It creates a temporary demo vault with bundled sources and compiles it immediately.
 
-For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `swarmvault graph share --post` prints a compact copyable summary, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, `swarmvault graph share --bundle [dir]` writes a portable share kit for posting, linking, or screenshotting, and `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need richer sharing or Obsidian-native artifacts. `swarmvault diff` compares the current graph against the last committed graph so you can inspect graph-level changes after a compile.
+For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `swarmvault graph share --post` prints a compact copyable summary, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, `swarmvault graph share --bundle [dir]` writes a portable share kit for posting, linking, or screenshotting, `swarmvault graph cluster [--resolution <n>]` recomputes communities and graph report artifacts from the existing graph without re-ingest, and `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, and `--canvas` when you need richer sharing or Obsidian-native artifacts. `swarmvault diff` compares the current graph against the last committed graph so you can inspect graph-level changes after a compile.
 
 `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>` creates an agent-ready evidence pack from the compiled vault. It saves JSON under `state/context-packs/`, writes a markdown companion under `wiki/context/`, reports omitted items when the token budget is too small, and can print `markdown`, `json`, or `llms` output for kickoff prompts and handoffs.
 
@@ -94,7 +97,7 @@ For local semantic graph query without API keys, point `tasks.embeddingProvider`
 
 With an embedding-capable provider available, SwarmVault can also merge semantic page matches into local search by default. `tasks.embeddingProvider` is the explicit way to choose that backend, but SwarmVault can also fall back to a `queryProvider` with embeddings support. Set `retrieval.rerank: true` when you want the configured `queryProvider` to rerank the merged top hits before answering.
 
-Audio file ingest uses `tasks.audioProvider` when you configure a provider with `audio` capability. The fully-local option is `swarmvault provider setup --local-whisper --apply`, which installs a `local-whisper` provider, downloads a whisper.cpp ggml model into `~/.swarmvault/models/`, and assigns `tasks.audioProvider` so voice memos, meetings, and interviews transcribe with no API keys and no network calls. YouTube transcript ingest works without a model provider. If you want to pin graph clustering instead of using the adaptive default, set `graph.communityResolution` in `swarmvault.config.json`.
+Audio and video ingest use `tasks.audioProvider` when you configure a provider with `audio` capability. The fully-local option is `swarmvault provider setup --local-whisper --apply`, which installs a `local-whisper` provider, downloads a whisper.cpp ggml model into `~/.swarmvault/models/`, and assigns `tasks.audioProvider` so voice memos, meetings, interviews, and video audio transcribe with no API keys and no network calls. Local video needs `ffmpeg`; public video URL ingest with `--video` needs `yt-dlp`. YouTube transcript ingest works without a model provider. If you want to pin graph clustering instead of using the adaptive default, set `graph.communityResolution` in `swarmvault.config.json` or run `swarmvault graph cluster --resolution <n>` for one recompute.
 
 `swarmvault lint --deep --web` augments deep-lint findings with external evidence from a configured `webSearch` adapter. Web search is currently scoped to deep lint; compile, query, and explore stay on local vault state plus your configured LLM providers.
 
@@ -109,9 +112,9 @@ Source-scoped artifacts are intentionally split by role:
 | Source guide | `source guide`, `source add --guide`, `ingest --guide` | Guided walkthrough with approval-bundled updates in `wiki/outputs/source-guides/` |
 | Source session | `source session`, `source add --guide`, `ingest --guide` | Resumable workflow state in `wiki/outputs/source-sessions/` and `state/source-sessions/` |
 
-Supported non-code ingest includes `.pdf`, the full Word family (`.docx`, `.docm`, `.dotx`, `.dotm`), `.rtf`, `.odt`, `.odp`, `.ods`, `.epub`, `.csv`, `.tsv`, the full Excel family (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.xltx`, `.xltm`), the full PowerPoint family (`.pptx`, `.pptm`, `.potx`, `.potm`), `.ipynb` (Jupyter notebooks), `.bib` (BibTeX), `.org` (Org-mode), `.adoc`/`.asciidoc`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.webm`, and other `audio/*` inputs) through `tasks.audioProvider`, direct YouTube transcript URLs, images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.ico`, `.heic`, `.heif`, `.avif`, `.jxl`), markdown/MDX/text notes, structured config/data (`.json`, `.jsonc`, `.json5`, `.yaml`, `.toml`, `.xml`, `.ini`, `.conf`, `.cfg`, `.env`, `.properties`) with schema hints, common developer manifests (`package.json`, `tsconfig.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `go.sum`, `Dockerfile`, `Makefile`, `LICENSE`, `.gitignore`, `.editorconfig`, and similar) via content-sniffed text ingest so they are never silently dropped, browser clips, and research URLs captured through `swarmvault add`.
+Supported non-code ingest includes `.pdf`, the full Word family (`.docx`, `.docm`, `.dotx`, `.dotm`), `.rtf`, `.odt`, `.odp`, `.ods`, `.epub`, `.csv`, `.tsv`, the full Excel family (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`, `.xltx`, `.xltm`), the full PowerPoint family (`.pptx`, `.pptm`, `.potx`, `.potm`), `.ipynb` (Jupyter notebooks), `.bib` (BibTeX), `.org` (Org-mode), `.adoc`/`.asciidoc`, `.srt`, `.vtt`, Slack exports, `.eml`, `.mbox`, `.ics`, audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.webm`, and other `audio/*` inputs) through `tasks.audioProvider`, video files (`.mp4`, `.mov`, `.m4v`, `.mkv`, `.avi`, and other `video/*` inputs) through `ffmpeg` plus `tasks.audioProvider`, public video URLs with `--video` through `yt-dlp` plus `tasks.audioProvider`, direct YouTube transcript URLs, images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.ico`, `.heic`, `.heif`, `.avif`, `.jxl`), markdown/MDX/text notes, structured config/data (`.json`, `.jsonc`, `.json5`, `.yaml`, `.toml`, `.xml`, `.ini`, `.conf`, `.cfg`, `.env`, `.properties`) with schema hints, common developer manifests (`package.json`, `tsconfig.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `go.sum`, `Dockerfile`, `Makefile`, `LICENSE`, `.gitignore`, `.editorconfig`, and similar) via content-sniffed text ingest so they are never silently dropped, browser clips, and research URLs captured through `swarmvault add`.
 
-Supported code ingest covers `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.sh`, `.bash`, `.zsh`, `.py`, `.go`, `.rs`, `.java`, `.kt`, `.kts`, `.scala`, `.sc`, `.dart`, `.lua`, `.zig`, `.cs`, `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hh`, `.hpp`, `.hxx`, `.php`, `.rb`, `.ps1`, `.psm1`, `.psd1`, `.ex`, `.exs`, `.ml`, `.mli`, `.m`, `.mm`, `.res`, `.resi`, `.sol`, `.vue`, `.css`, `.html`, `.htm`, plus extensionless executable scripts with `#!/usr/bin/env node|python|ruby|bash|zsh` shebangs. Each language goes through a tree-sitter AST walk to extract symbols, imports, and local module references.
+Supported code ingest covers `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.sh`, `.bash`, `.zsh`, `.py`, `.go`, `.rs`, `.java`, `.kt`, `.kts`, `.scala`, `.sc`, `.dart`, `.lua`, `.zig`, `.cs`, `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hh`, `.hpp`, `.hxx`, `.php`, `.rb`, `.ps1`, `.psm1`, `.psd1`, `.ex`, `.exs`, `.ml`, `.mli`, `.m`, `.mm`, `.res`, `.resi`, `.sol`, `.vue`, `.css`, `.html`, `.htm`, `.sql`, plus extensionless executable scripts with `#!/usr/bin/env node|python|ruby|bash|zsh` shebangs. Each language goes through a parser-backed local analysis path to extract symbols, imports, and local module references; SQL also emits table/view symbols plus read/write/join/reference graph edges.
 
 ## What The Skill Package Includes
 
@@ -137,7 +140,7 @@ The published ClawHub package is intentionally text-only in this release.
 7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search. When the vault lives inside git, `ingest|compile|query --commit` can commit those artifacts immediately after the run.
 8. Use `swarmvault query`, `swarmvault context build`, `swarmvault task`, `swarmvault memory`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
 9. Use `swarmvault doctor [--repair]` when the vault needs one health summary before deeper troubleshooting or handoff.
-10. Use `swarmvault graph share --post` for a quick copyable summary, `swarmvault graph share --svg [path]` for a visual share card, `swarmvault graph share --bundle [dir]` for a portable share kit, `swarmvault graph blast` for reverse-import impact checks, `swarmvault graph serve` for the live workspace, detailed health workbench, prioritized next actions, explicit capture modes, title/tag capture fields, budgeted agent handoffs, and bookmarklet clipper, `swarmvault graph export --report` for a self-contained HTML report, `swarmvault graph export` for other shareable formats, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
+10. Use `swarmvault graph share --post` for a quick copyable summary, `swarmvault graph share --svg [path]` for a visual share card, `swarmvault graph share --bundle [dir]` for a portable share kit, `swarmvault graph blast` for reverse-import impact checks, `swarmvault graph cluster` for graph community/report refresh without re-ingest, `swarmvault graph serve` for the live workspace, detailed health workbench, prioritized next actions, explicit capture modes, title/tag capture fields, budgeted agent handoffs, and bookmarklet clipper, `swarmvault graph export --report` for a self-contained HTML report, `swarmvault graph export` for other shareable formats, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
 ## What SwarmVault Writes
 
@@ -219,7 +222,7 @@ Expose the vault over MCP with:
 swarmvault mcp
 ```
 
-The MCP surface includes graph stats, community lookup, hyperedges, context-pack build/read/list, task start/update/finish/list/read/resume, compatibility memory task, `doctor_vault`, and retrieval status/rebuild/doctor tools so host agents can request bounded evidence, keep a durable task ledger, and inspect vault health without shelling out to the CLI.
+The MCP surface includes graph stats, graph clustering refresh, community lookup, hyperedges, context-pack build/read/list, task start/update/finish/list/read/resume, compatibility memory task, `doctor_vault`, and retrieval status/rebuild/doctor tools so host agents can request bounded evidence, keep a durable task ledger, and inspect vault health without shelling out to the CLI.
 
 ## Links
 

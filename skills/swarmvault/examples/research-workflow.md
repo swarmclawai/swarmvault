@@ -26,7 +26,7 @@ swarmvault explore "What should I read next?" --steps 3
 ## What To Check
 
 - `raw/sources/` contains normalized markdown captures for `add`
-- `state/extracts/` contains PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, audio, YouTube, or image extraction sidecars when relevant
+- `state/extracts/` contains PDF, DOCX, EPUB, CSV/TSV, XLSX, PPTX, audio, video, YouTube, or image extraction sidecars when relevant
 - `wiki/graph/report.md` surfaces contradictions, surprise links, and benchmark data
 - `swarmvault doctor` reports whether graph and retrieval artifacts are ready for query or handoff
 - `wiki/outputs/` contains saved query and explore outputs
@@ -36,6 +36,6 @@ swarmvault explore "What should I read next?" --steps 3
 
 - Use `swarmvault add` for research URLs and `swarmvault ingest` for direct local files.
 - If image extraction is weak, verify that a real `visionProvider` is configured.
-- If audio extraction is missing, verify that `tasks.audioProvider` points at a provider with `audio` capability.
+- If audio or video extraction is missing, verify that `tasks.audioProvider` points at a provider with `audio` capability. Local video also needs `ffmpeg`; public video URLs with `--video` need `yt-dlp`.
 - Use `swarmvault context build` when another agent or future session needs a bounded evidence bundle for review.
 - Use `lint --conflicts` when the user specifically wants contradiction review.

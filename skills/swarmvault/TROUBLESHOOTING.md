@@ -27,11 +27,13 @@ Check whether the vault is still using the built-in `heuristic` provider. That i
 
 For local semantic graph query, `embeddingProvider` must point at an embedding-capable backend such as `ollama` or another OpenAI-compatible embeddings service. The built-in `heuristic` provider does not generate embeddings.
 
-## Audio files ingest, but no transcript appears
+## Audio or video files ingest, but no transcript appears
 
-Audio ingest needs `tasks.audioProvider` to point at a provider with `audio` capability. Without that, SwarmVault still ingests the source and records an extraction warning instead of failing the whole run.
+Audio and video ingest need `tasks.audioProvider` to point at a provider with `audio` capability. Without that, SwarmVault still ingests the source and records an extraction warning instead of failing the whole run.
 
 The quickest fully-local fix is `swarmvault provider setup --local-whisper --apply`, which installs a `local-whisper` provider (whisper.cpp shell-out), downloads the default ggml model into `~/.swarmvault/models/`, and wires `tasks.audioProvider` at it. If the command reports the binary missing, install whisper.cpp first (`brew install whisper-cpp` on macOS, `sudo apt install whisper.cpp` on Debian/Ubuntu) and re-run. Override binary or model paths with `localWhisper.binaryPath` / `localWhisper.modelPath` in `swarmvault.config.json` or `SWARMVAULT_WHISPER_BINARY` in the environment.
+
+Local video extraction also needs `ffmpeg` on PATH or `SWARMVAULT_FFMPEG_BINARY`. Public video URL ingest with `swarmvault ingest --video <url>` or `swarmvault add --video <url>` needs `yt-dlp` on PATH or `SWARMVAULT_YTDLP_BINARY`.
 
 YouTube transcript ingest does not need a model provider, but it can still fail when the video has no accessible captions or the upstream transcript fetch path is unavailable.
 

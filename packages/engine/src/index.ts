@@ -150,6 +150,7 @@ export {
   readApproval,
   readGraphReport,
   readPage,
+  refreshGraphClusters,
   rejectApproval,
   runAutoPromotion,
   searchVault,

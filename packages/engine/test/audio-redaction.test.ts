@@ -16,8 +16,16 @@ async function createTempWorkspace(): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  delete process.env.SWARMVAULT_YTDLP_BINARY;
   vi.restoreAllMocks();
 });
+
+async function makeFakeBinary(dir: string, name: string, script: string): Promise<string> {
+  const binPath = path.join(dir, name);
+  await fs.writeFile(binPath, `#!/usr/bin/env node\n${script}\n`, "utf8");
+  await fs.chmod(binPath, 0o755);
+  return binPath;
+}
 
 /**
  * Minimal valid 16-bit mono 16kHz WAV with a short run of silence. The mock
@@ -87,5 +95,51 @@ describe("audio transcription redaction", () => {
     const patternIds = (result.redactions ?? []).flatMap((entry) => entry.matches.map((match) => match.patternId));
     expect(patternIds).toContain("aws_access_key_id");
     expect(patternIds).toContain("stripe_live_key");
+  });
+
+  it("scrubs secrets from public video transcripts before writing raw and extract sidecars", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    const binDir = await createTempWorkspace();
+    process.env.SWARMVAULT_YTDLP_BINARY = await makeFakeBinary(
+      binDir,
+      "yt-dlp",
+      [
+        "const fs = require('node:fs');",
+        "const outIndex = process.argv.indexOf('-o') + 1;",
+        "const template = process.argv[outIndex];",
+        "fs.writeFileSync(template.replace('%(ext)s', 'wav'), 'downloaded wav');"
+      ].join("\n")
+    );
+
+    const secretLive = `sk_${"li"}ve_PUBLICVIDEOFIXTUREFIXTUREFIXTURE`;
+    const mockProvider: ProviderAdapter = {
+      id: "mock-public-video",
+      type: "openai",
+      model: "whisper-mock",
+      capabilities: new Set(["audio"]),
+      generateText: vi.fn(),
+      generateStructured: vi.fn(),
+      transcribeAudio: vi.fn().mockResolvedValue({
+        text: `The public demo mentions ${secretLive} and AKIAIOSFODNN7EXAMPLE.`,
+        language: "en"
+      })
+    } as unknown as ProviderAdapter;
+    vi.spyOn(registry, "getProviderForTask").mockResolvedValue(mockProvider);
+
+    const result = await ingestInputDetailed(rootDir, "https://videos.example/demo", { video: true });
+    const manifest = [...result.created, ...result.updated][0];
+    expect(manifest).toBeDefined();
+    expect(manifest.sourceKind).toBe("video");
+
+    const rawContent = await fs.readFile(path.resolve(rootDir, manifest.storedPath), "utf8");
+    expect(rawContent).not.toContain(secretLive);
+    expect(rawContent).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(rawContent).toContain("[REDACTED]");
+
+    const extractedContent = await fs.readFile(path.resolve(rootDir, manifest.extractedTextPath as string), "utf8");
+    expect(extractedContent).not.toContain(secretLive);
+    expect(extractedContent).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(extractedContent).toContain("[REDACTED]");
   });
 });

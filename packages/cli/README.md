@@ -2,7 +2,7 @@
 
 `@swarmvaultai/cli` is the global command-line entry point for SwarmVault.
 
-It gives you the `swarmvault` command for building a local-first knowledge vault from files, audio transcripts, YouTube URLs, reStructuredText and DOCX documents, browser clips, saved query outputs, and guided exploration runs.
+It gives you the `swarmvault` command for building a local-first knowledge vault from files, audio/video transcripts, YouTube URLs, reStructuredText and DOCX documents, browser clips, saved query outputs, and guided exploration runs.
 
 ## Install
 
@@ -35,6 +35,7 @@ sed -n '1,120p' swarmvault.schema.md
 swarmvault ingest ./notes.md
 swarmvault ingest ./customer-call.mp3
 swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
+swarmvault ingest --video https://example.com/product-demo.mp4
 swarmvault ingest ./repo
 swarmvault add https://arxiv.org/abs/2401.12345
 swarmvault compile --max-tokens 120000
@@ -53,6 +54,7 @@ swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph blast ./src/index.ts
 swarmvault graph update .
+swarmvault graph cluster
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
 swarmvault watch status
@@ -171,15 +173,16 @@ Source-scoped artifacts are intentionally split by role:
 Ingest a local file path, directory path, or URL into immutable source storage and write manifests to `state/manifests/`.
 
 - local directories recurse by default
-- directory ingest respects `.gitignore` unless you pass `--no-gitignore`
+- directory ingest respects `.gitignore` and `.swarmvaultignore` unless you pass `--no-gitignore` or `--no-swarmvaultignore`
 - repo-aware directory ingest records `repoRelativePath` and later compile writes `state/code-index.json`
 - use `source add` instead when the same local directory, public GitHub repo root, or docs hub should stay registered and reloadable
 - URL ingest still localizes remote image references by default
 - YouTube URLs short-circuit to direct transcript capture instead of generic HTML fetch
-- local file and archive ingest supports markdown, text, reStructuredText, HTML, PDF, Word, RTF, OpenDocument, EPUB, CSV/TSV, Excel, PowerPoint, Jupyter notebooks, BibTeX, Org-mode, AsciiDoc, transcripts, Slack exports, email, calendar, audio, structured config/data, developer manifests, images, and code
+- public video URLs passed with `--video` use `yt-dlp` for audio extraction before provider-backed transcription
+- local file and archive ingest supports markdown, text, reStructuredText, HTML, PDF, Word, RTF, OpenDocument, EPUB, CSV/TSV, Excel, PowerPoint, Jupyter notebooks, BibTeX, Org-mode, AsciiDoc, transcripts, Slack exports, email, calendar, audio, video, structured config/data, developer manifests, images, and code
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
 - set `profile.guidedIngestDefault: true` when guided mode should be the default for `ingest`, and use `--no-guide` to force a plain ingest for one run
-- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, and Vue single-file components
+- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, Vue single-file components, and SQL files with table/view graph relations
 
 Useful flags:
 
@@ -193,6 +196,8 @@ Useful flags:
 - `--include-resources`
 - `--include-generated`
 - `--no-gitignore`
+- `--no-swarmvaultignore`
+- `--video`
 - `--no-include-assets`
 - `--max-asset-size <bytes>`
 - `--commit`
@@ -201,7 +206,7 @@ Repo ingest defaults to `first_party` material. The extra `--include-*` flags op
 
 Large repo ingest now emits low-noise progress on materially large batches, and parser compatibility failures stay local to the affected source instead of aborting unrelated analysis.
 
-Audio files use `tasks.audioProvider` when you configure a provider with `audio` capability. When no such provider is configured, SwarmVault still ingests the source and records an explicit extraction warning instead of failing. YouTube transcript ingest does not require a model provider.
+Audio and video files use `tasks.audioProvider` when you configure a provider with `audio` capability. Local video extraction shells out to `ffmpeg`; public video URL extraction with `--video` shells out to `yt-dlp`. When no audio provider or extractor binary is configured, SwarmVault still ingests the source and records an explicit extraction warning instead of failing. YouTube transcript ingest does not require a model provider.
 
 When `--commit` is set, SwarmVault stages `wiki/` and `state/` changes and creates a git commit when the vault root is inside a git worktree. Outside git, it becomes a no-op instead of failing.
 
@@ -215,6 +220,7 @@ Capture supported URLs through a normalized markdown layer before ingesting them
 - X/Twitter URLs use a graceful public capture path
 - unsupported URLs fall back to generic URL ingest instead of failing
 - optional metadata: `--author <name>` and `--contributor <name>`
+- `--video` treats the URL as a public video and routes extracted audio through `tasks.audioProvider`
 - normalized captures record fields such as `source_type`, `source_url`, `canonical_url`, `title`, `authors`, `published_at`, `updated_at`, `doi`, and `tags` when available
 - use `source add` instead when the URL is a public GitHub repo root or a docs hub that should stay synced over time
 
@@ -383,6 +389,15 @@ Refresh code-derived graph artifacts from tracked repo roots or one explicit rep
 - with `path`, refreshes that repo root instead of the tracked set
 - `--json` returns the same one-shot watch result shape, including repo import/update/remove counts and pending semantic refresh entries
 
+### `swarmvault graph cluster [--resolution <n>]`
+
+Recompute communities, node degrees, bridge scores, god-node flags, and graph report artifacts from the existing `state/graph.json` without re-ingesting or re-analyzing sources.
+
+- writes refreshed graph metrics back to `state/graph.json`
+- updates `wiki/graph/report.md`, `wiki/graph/report.json`, share artifacts, and per-community graph pages
+- uses `graph.communityResolution` by default, or `--resolution <n>` for a one-off override
+- `--json` returns counts plus the graph/report paths
+
 ### `swarmvault hook install|uninstall|status`
 
 Manage SwarmVault's local git hook blocks for the nearest git repository.
@@ -428,6 +443,7 @@ Run SwarmVault as a local MCP server over stdio. This exposes the vault to compa
 - `query_graph`
 - `graph_report`
 - `graph_stats`
+- `cluster_graph`
 - `get_node`
 - `get_community`
 - `get_neighbors`
@@ -435,7 +451,7 @@ Run SwarmVault as a local MCP server over stdio. This exposes the vault to compa
 - `shortest_path`
 - `god_nodes`
 
-`compile_vault` also accepts `maxTokens` for bounded wiki output, `graph_stats` returns lightweight graph counts, `get_community` resolves community members and pages, `blast_radius` traces reverse import impact for a file or module target, `build_context_pack` creates the same bounded agent evidence bundles as `swarmvault context build`, the task tools mirror `swarmvault task`, the memory tools mirror the compatibility command group, `doctor_vault` mirrors `swarmvault doctor`, and retrieval tools inspect or repair the local index.
+`compile_vault` also accepts `maxTokens` for bounded wiki output, `graph_stats` returns lightweight graph counts, `cluster_graph` mirrors `swarmvault graph cluster`, `get_community` resolves community members and pages, `blast_radius` traces reverse import impact for a file or module target, `build_context_pack` creates the same bounded agent evidence bundles as `swarmvault context build`, the task tools mirror `swarmvault task`, the memory tools mirror the compatibility command group, `doctor_vault` mirrors `swarmvault doctor`, and retrieval tools inspect or repair the local index.
 
 The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `swarmvault://sessions/{path}`, `swarmvault://context-packs`, `swarmvault://tasks`, `swarmvault://memory-tasks`, and includes `schemaPath` in `workspace_info`.
 
@@ -548,6 +564,7 @@ Agent target mapping:
 - `trae` writes `.trae/rules/swarmvault.md`
 - `claw` writes `.claw/skills/swarmvault/SKILL.md`
 - `droid` writes `.factory/rules/swarmvault.md`
+- `vscode` writes `.github/chatmodes/swarmvault.chatmode.md` plus `.github/copilot-instructions.md`
 
 Hook semantics:
 

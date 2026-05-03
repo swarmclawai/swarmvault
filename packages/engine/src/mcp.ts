@@ -37,6 +37,7 @@ import {
   readApproval,
   readGraphReport,
   readPage,
+  refreshGraphClusters,
   rejectApproval,
   runAutoPromotion,
   searchVault
@@ -192,6 +193,20 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     },
     safeHandler(async () => {
       return asToolText(await graphStatsVault(rootDir));
+    })
+  );
+
+  server.registerTool(
+    "cluster_graph",
+    {
+      description:
+        "Recompute graph communities, node degrees, god-node flags, and graph report artifacts from the existing compiled graph.",
+      inputSchema: {
+        resolution: z.number().positive().optional().describe("Optional Louvain community resolution override")
+      }
+    },
+    safeHandler(async ({ resolution }) => {
+      return asToolText(await refreshGraphClusters(rootDir, { resolution }));
     })
   );
 

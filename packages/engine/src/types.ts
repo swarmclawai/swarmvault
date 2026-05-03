@@ -153,6 +153,7 @@ export type SourceKind =
   | "email"
   | "calendar"
   | "audio"
+  | "video"
   | "youtube"
   | "binary"
   | "code";
@@ -189,8 +190,19 @@ export type CodeLanguage =
   | "solidity"
   | "html"
   | "css"
-  | "vue";
-export type CodeSymbolKind = "function" | "class" | "interface" | "type_alias" | "enum" | "variable" | "struct" | "trait";
+  | "vue"
+  | "sql";
+export type CodeSymbolKind =
+  | "function"
+  | "class"
+  | "interface"
+  | "type_alias"
+  | "enum"
+  | "variable"
+  | "struct"
+  | "trait"
+  | "table"
+  | "view";
 export type OrchestrationRole = "research" | "audit" | "context" | "safety";
 
 export const webSearchProviderTypeSchema = z.enum(["http-json", "custom"]);
@@ -614,6 +626,7 @@ export type ExtractionKind =
   | "calendar_text"
   | "image_vision"
   | "audio_transcription"
+  | "video_transcription"
   | "youtube_transcript";
 
 export interface ExtractionTerm {
@@ -658,6 +671,8 @@ export interface IngestOptions {
   exclude?: string[];
   maxFiles?: number;
   gitignore?: boolean;
+  swarmvaultignore?: boolean;
+  video?: boolean;
   extractClasses?: SourceClass[];
   resume?: string;
   /**
@@ -820,6 +835,13 @@ export interface CodeSymbol {
   implements: string[];
 }
 
+export interface CodeRelation {
+  sourceName?: string;
+  targetName: string;
+  relation: string;
+  confidence?: number;
+}
+
 export interface CodeAnalysis {
   moduleId: string;
   language: CodeLanguage;
@@ -830,6 +852,7 @@ export interface CodeAnalysis {
   symbols: CodeSymbol[];
   exports: string[];
   diagnostics: CodeDiagnostic[];
+  relations?: CodeRelation[];
 }
 
 export interface SourceRationale {
@@ -1043,6 +1066,15 @@ export interface GraphStatsResult {
   sourceClasses: Record<SourceClass, { sources: number; pages: number; nodes: number }>;
   edgeRelations: Record<string, number>;
   hyperedgeRelations: Record<string, number>;
+}
+
+export interface GraphClusterRefreshResult {
+  graphPath: string;
+  nodeCount: number;
+  edgeCount: number;
+  communityCount: number;
+  changedPages: string[];
+  reportPath: string;
 }
 
 export interface GraphCommunityResult {

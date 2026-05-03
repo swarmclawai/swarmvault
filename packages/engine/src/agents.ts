@@ -419,6 +419,10 @@ function targetsForAgent(rootDir: string, agent: AgentType, options: InstallAgen
     targets.push(path.join(rootDir, agentFileKinds.agents));
   }
 
+  if (agent === "vscode") {
+    targets.push(path.join(rootDir, agentFileKinds.copilot));
+  }
+
   if (agent === "aider") {
     targets.push(path.join(rootDir, ".aider.conf.yml"));
   }
@@ -754,6 +758,7 @@ export async function installAgent(rootDir: string, agent: AgentType, options: I
       break;
     case "vscode":
       await writeOwnedFile(target, buildVscodeChatmodeFile());
+      await upsertManagedBlock(path.join(rootDir, agentFileKinds.copilot), buildManagedBlock("copilot"));
       break;
     default: {
       if (SKILL_BUNDLE_AGENTS[agent]) {

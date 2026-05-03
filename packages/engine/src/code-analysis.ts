@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
+import type { TableColumnAst } from "node-sql-parser";
 import ts from "typescript";
 import YAML from "yaml";
 import { analyzeTreeSitterCode } from "./code-tree-sitter.js";
@@ -18,6 +20,9 @@ import type {
   SourceRationale
 } from "./types.js";
 import { normalizeWhitespace, slugify, toPosix, truncate, uniqueBy } from "./utils.js";
+
+const require = createRequire(import.meta.url);
+const { Parser: SqlParser } = require("node-sql-parser") as typeof import("node-sql-parser");
 
 type DraftCodeSymbol = {
   name: string;
@@ -440,7 +445,7 @@ function makeRationale(
 
 function stripCodeExtension(filePath: string): string {
   return filePath.replace(
-    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx)$/i,
+    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx|sql)$/i,
     ""
   );
 }
@@ -1929,6 +1934,262 @@ function analyzeTypeScriptLikeCode(
   };
 }
 
+type SqlAstRecord = Record<string, unknown>;
+
+function asSqlRecord(value: unknown): SqlAstRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as SqlAstRecord) : null;
+}
+
+function sqlString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeSqlIdentifier(value: unknown): string | undefined {
+  const raw = sqlString(value);
+  if (!raw) {
+    return undefined;
+  }
+  const parts = raw.split(".").filter(Boolean);
+  const last = parts.at(-1) ?? raw;
+  const pairedQuotes: Array<[string, string]> = [
+    ['"', '"'],
+    ["`", "`"],
+    ["[", "]"]
+  ];
+  for (const [start, end] of pairedQuotes) {
+    if (last.startsWith(start) && last.endsWith(end) && last.length >= 2) {
+      return last.slice(1, -1).trim() || undefined;
+    }
+  }
+  return last;
+}
+
+function sqlTableNamesFromField(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return uniqueBy(
+      value.flatMap((item) => sqlTableNamesFromField(item)),
+      (name) => name
+    );
+  }
+  const direct = normalizeSqlIdentifier(value);
+  if (direct) {
+    return [direct];
+  }
+
+  const record = asSqlRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  const tableName = normalizeSqlIdentifier(record.table);
+  if (tableName) {
+    return [tableName];
+  }
+  const viewName = normalizeSqlIdentifier(record.view);
+  if (viewName) {
+    return [viewName];
+  }
+  const name = normalizeSqlIdentifier(record.name);
+  return name ? [name] : [];
+}
+
+function sqlStatements(ast: TableColumnAst["ast"]): unknown[] {
+  return Array.isArray(ast) ? ast : [ast];
+}
+
+function sqlStatementType(statement: SqlAstRecord): string {
+  return sqlString(statement.type)?.toLowerCase() ?? "";
+}
+
+function sqlCreateKeyword(statement: SqlAstRecord): string {
+  return sqlString(statement.keyword)?.toLowerCase() ?? "";
+}
+
+function sqlTableListEntry(entry: string): { action: string; tableName: string } | null {
+  const [action, , rawName] = entry.split("::");
+  const tableName = normalizeSqlIdentifier(rawName);
+  return action && tableName ? { action: action.toLowerCase(), tableName } : null;
+}
+
+function visitSqlAst(value: unknown, visitor: (record: SqlAstRecord) => void, seen = new WeakSet<object>()): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      visitSqlAst(item, visitor, seen);
+    }
+    return;
+  }
+  const record = asSqlRecord(value);
+  if (!record || seen.has(record)) {
+    return;
+  }
+  seen.add(record);
+  visitor(record);
+  for (const child of Object.values(record)) {
+    visitSqlAst(child, visitor, seen);
+  }
+}
+
+function sqlErrorLocation(error: unknown): { line: number; column: number } {
+  const record = asSqlRecord(error);
+  const location = asSqlRecord(record?.location);
+  const start = asSqlRecord(location?.start);
+  const line = typeof start?.line === "number" ? start.line : 1;
+  const column = typeof start?.column === "number" ? start.column : 1;
+  return { line, column };
+}
+
+function parseSqlContent(content: string): { parsed?: TableColumnAst; diagnostics: CodeDiagnostic[] } {
+  const parser = new SqlParser();
+  const parseOptions = { parseOptions: { includeLocations: true } };
+  for (const options of [{ ...parseOptions, database: "postgresql" }, parseOptions]) {
+    try {
+      return { parsed: parser.parse(content, options), diagnostics: [] };
+    } catch (error) {
+      if (options === parseOptions) {
+        const location = sqlErrorLocation(error);
+        return {
+          diagnostics: [
+            buildDiagnostic(3001, error instanceof Error ? error.message : String(error), location.line, location.column, "error")
+          ]
+        };
+      }
+    }
+  }
+  return { diagnostics: [buildDiagnostic(3001, "Unable to parse SQL source.", 1, 1, "error")] };
+}
+
+function analyzeSqlCode(manifest: SourceManifest, content: string): { code: CodeAnalysis; rationales: SourceRationale[] } {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const relations: NonNullable<CodeAnalysis["relations"]> = [];
+  const symbolKeys = new Set<string>();
+  const relationKeys = new Set<string>();
+  const parsed = parseSqlContent(content);
+
+  const addSymbol = (name: string, kind: Extract<CodeSymbolKind, "table" | "view">, exported: boolean) => {
+    const key = `${kind}:${name.toLowerCase()}`;
+    const existing = draftSymbols.find((symbol) => `${symbol.kind}:${symbol.name.toLowerCase()}` === key);
+    if (existing) {
+      existing.exported = existing.exported || exported;
+      return;
+    }
+    if (symbolKeys.has(key)) {
+      return;
+    }
+    symbolKeys.add(key);
+    draftSymbols.push({
+      name,
+      kind,
+      signature: `${kind === "view" ? "CREATE VIEW" : "CREATE TABLE"} ${name}`,
+      exported,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: []
+    });
+    if (exported) {
+      exportLabels.push(name);
+    }
+  };
+
+  const addRelation = (sourceName: string | undefined, targetName: string, relation: string, confidence = 0.95) => {
+    const key = `${sourceName ?? "module"}:${relation}:${targetName}`;
+    if (relationKeys.has(key)) {
+      return;
+    }
+    relationKeys.add(key);
+    relations.push({ sourceName, targetName, relation, confidence });
+  };
+
+  if (!parsed.parsed) {
+    const code = finalizeCodeAnalysis(manifest, "sql", imports, draftSymbols, exportLabels, parsed.diagnostics);
+    return { code: { ...code, relations }, rationales: [] };
+  }
+
+  const parsedStatements = sqlStatements(parsed.parsed.ast);
+
+  for (const entry of parsed.parsed.tableList ?? []) {
+    const parsedEntry = sqlTableListEntry(entry);
+    if (!parsedEntry) {
+      continue;
+    }
+    addSymbol(parsedEntry.tableName, "table", parsedEntry.action === "create");
+    if (parsedEntry.action === "select") {
+      addRelation(undefined, parsedEntry.tableName, "reads");
+    } else if (["create", "insert", "update", "delete", "replace"].includes(parsedEntry.action)) {
+      addRelation(undefined, parsedEntry.tableName, "writes");
+    }
+  }
+
+  const processSelect = (statement: SqlAstRecord, sourceName: string | undefined) => {
+    const tableNames = uniqueBy(sqlTableNamesFromField(statement.from), (name) => name);
+    for (const tableName of tableNames) {
+      addSymbol(tableName, "table", false);
+      addRelation(sourceName, tableName, "reads");
+    }
+    if (tableNames.length > 1) {
+      const joinSource = sourceName ?? tableNames[0];
+      for (const tableName of tableNames.slice(1)) {
+        addRelation(joinSource, tableName, "joins", 0.9);
+      }
+    }
+  };
+
+  for (const statementValue of parsedStatements) {
+    const statement = asSqlRecord(statementValue);
+    if (!statement) {
+      continue;
+    }
+    const statementType = sqlStatementType(statement);
+
+    if (statementType === "create") {
+      const keyword = sqlCreateKeyword(statement);
+      if (keyword === "view") {
+        const viewName = sqlTableNamesFromField(statement.view)[0];
+        if (viewName) {
+          addSymbol(viewName, "view", true);
+          addRelation(undefined, viewName, "writes");
+        }
+        const selectStatement = asSqlRecord(statement.select);
+        if (selectStatement) {
+          processSelect(selectStatement, viewName);
+        }
+      } else {
+        for (const tableName of sqlTableNamesFromField(statement.table)) {
+          addSymbol(tableName, "table", true);
+          addRelation(undefined, tableName, "writes");
+          visitSqlAst(statement.create_definitions, (record) => {
+            const references = asSqlRecord(record.reference_definition);
+            if (!references) {
+              return;
+            }
+            for (const referencedTable of sqlTableNamesFromField(references.table)) {
+              addSymbol(referencedTable, "table", false);
+              addRelation(tableName, referencedTable, "references");
+            }
+          });
+        }
+      }
+      continue;
+    }
+
+    if (statementType === "select") {
+      processSelect(statement, undefined);
+      continue;
+    }
+
+    if (["insert", "update", "delete", "replace"].includes(statementType)) {
+      for (const tableName of sqlTableNamesFromField(statement.table)) {
+        addSymbol(tableName, "table", false);
+        addRelation(undefined, tableName, "writes");
+      }
+    }
+  }
+
+  const code = finalizeCodeAnalysis(manifest, "sql", imports, draftSymbols, exportLabels, parsed.diagnostics);
+  return { code: { ...code, relations }, rationales: [] };
+}
+
 export function inferCodeLanguage(filePath: string, mimeType = "", options: CodeLanguageDetectionOptions = {}): CodeLanguage | undefined {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".ts" || extension === ".mts" || extension === ".cts") {
@@ -1948,6 +2209,9 @@ export function inferCodeLanguage(filePath: string, mimeType = "", options: Code
   }
   if (extension === ".py") {
     return "python";
+  }
+  if (extension === ".sql") {
+    return "sql";
   }
   if (extension === ".go") {
     return "go";
@@ -2333,6 +2597,8 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       return [".sh", ".bash", ".zsh"];
     case "python":
       return [".py"];
+    case "sql":
+      return [".sql"];
     case "go":
       return [".go"];
     case "rust":
@@ -3152,12 +3418,14 @@ export async function analyzeCodeSource(manifest: SourceManifest, extractedText:
   const { code, rationales } =
     language === "javascript" || language === "jsx" || language === "typescript" || language === "tsx"
       ? analyzeTypeScriptLikeCode(manifest, extractedText)
-      : language === "vue"
-        ? await analyzeVueSource(manifest, extractedText)
-        : await analyzeTreeSitterCode(manifest, extractedText, language);
+      : language === "sql"
+        ? analyzeSqlCode(manifest, extractedText)
+        : language === "vue"
+          ? await analyzeVueSource(manifest, extractedText)
+          : await analyzeTreeSitterCode(manifest, extractedText, language);
 
   return {
-    analysisVersion: 7,
+    analysisVersion: 8,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
     semanticHash: manifest.semanticHash,

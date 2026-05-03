@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added local video and public video URL ingest: local `video/*` files extract audio with `ffmpeg`, `swarmvault ingest --video <url>` / `swarmvault add --video <url>` extract public video audio with `yt-dlp`, and both route transcripts through the configured `tasks.audioProvider` while preserving warning sidecars when a binary or provider is missing.
+- Added `.swarmvaultignore` support for directory ingest, enabled by default alongside `.gitignore` and disableable with `--no-swarmvaultignore`.
+- Added parser-backed SQL code analysis for `.sql` sources, including table/view symbols plus extracted `reads`, `writes`, `joins`, and `references` graph edges.
+- Added `swarmvault graph cluster [--resolution <n>]`, engine `refreshGraphClusters`, and MCP `cluster_graph` to recompute communities, graph metrics, god-node flags, graph report pages, and share artifacts from an existing compiled graph without re-ingesting sources.
+- Updated the VS Code installer path so `swarmvault install --agent vscode` writes both the chat mode and `.github/copilot-instructions.md`.
+
 ## 3.5.0
 
 - Added `swarmvault install --agent codex --hook`, which writes `.codex/hooks.json` plus `.codex/hooks/swarmvault-graph-first.js` so Codex sessions are reminded to read `wiki/graph/report.md` before broad shell search.

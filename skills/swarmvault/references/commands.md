@@ -25,6 +25,7 @@ swarmvault source delete <source-id>
 swarmvault ingest <path-or-url>
 swarmvault ingest ./customer-call.mp3
 swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
+swarmvault ingest --video https://example.com/product-demo.mp4
 swarmvault ingest <path-or-url> --commit
 swarmvault ingest <path-or-url> --guide
 swarmvault ingest <directory> --repo-root .
@@ -72,6 +73,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph cluster
 swarmvault graph update ./src
 swarmvault graph refresh
 swarmvault graph export --html ./graph.html

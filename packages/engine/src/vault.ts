@@ -113,6 +113,7 @@ import type {
   ExploreResult,
   ExploreStepResult,
   GraphArtifact,
+  GraphClusterRefreshResult,
   GraphCommunityResult,
   GraphEdge,
   GraphExplainResult,
@@ -2155,6 +2156,27 @@ function buildGraph(
       const resolveLocalSymbolId = (targetName: string): string | undefined =>
         localSymbolIdsByName.get(targetName) ??
         (analysis.code?.language === "go" ? localGoMethodIdsByShortName.get(targetName) : undefined);
+
+      for (const relation of analysis.code.relations ?? []) {
+        const targetId = resolveLocalSymbolId(relation.targetName);
+        if (!targetId) {
+          continue;
+        }
+        const sourceId = relation.sourceName ? (resolveLocalSymbolId(relation.sourceName) ?? moduleId) : moduleId;
+        if (sourceId === targetId) {
+          continue;
+        }
+        pushEdge({
+          id: `${sourceId}->${targetId}:${relation.relation}:${slugify(relation.targetName)}`,
+          source: sourceId,
+          target: targetId,
+          relation: relation.relation,
+          status: "extracted",
+          evidenceClass: "extracted",
+          confidence: relation.confidence ?? 1,
+          provenance: [analysis.sourceId]
+        });
+      }
 
       for (const rationale of analysis.rationales) {
         const targetSymbolId = rationale.symbolName ? symbolIdsByName.get(rationale.symbolName) : undefined;
@@ -6187,6 +6209,56 @@ export async function graphStatsVault(rootDir: string): Promise<GraphStatsResult
     sourceClasses,
     edgeRelations,
     hyperedgeRelations
+  };
+}
+
+export async function refreshGraphClusters(rootDir: string, options: { resolution?: number } = {}): Promise<GraphClusterRefreshResult> {
+  const { config, paths } = await loadVaultConfig(rootDir);
+  const schemas = await loadVaultSchemas(rootDir);
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  if (!graph) {
+    throw new Error("No compiled graph found. Run `swarmvault compile` first.");
+  }
+
+  const metrics = deriveGraphMetrics(resetGraphNodeMetrics(graph.nodes), graph.edges, {
+    resolution: options.resolution ?? config.graph?.communityResolution
+  });
+  const communities = metrics.communities ?? [];
+  const nodes = applyNormLabel(metrics.nodes);
+  const edges = pruneDanglingEdges(nodes, graph.edges);
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const hyperedges = (graph.hyperedges ?? []).filter((hyperedge) => hyperedge.nodeIds.every((nodeId) => nodeIds.has(nodeId)));
+  const refreshedGraph: GraphArtifact = {
+    ...graph,
+    generatedAt: new Date().toISOString(),
+    nodes,
+    edges,
+    hyperedges,
+    communities
+  };
+  const orientation = await buildGraphOrientationPages(refreshedGraph, paths, schemas.effective.global.hash, graph.generatedAt, [], config);
+  const pages = sortGraphPages(
+    uniqueBy(
+      [
+        ...refreshedGraph.pages.filter((page) => page.kind !== "graph_report" && page.kind !== "community_summary"),
+        ...orientation.records.map((record) => record.page)
+      ],
+      (page) => page.id
+    )
+  );
+  await writeJsonFile(paths.graphPath, {
+    ...refreshedGraph,
+    pages
+  });
+  await refreshIndexesAndSearch(rootDir, pages);
+
+  return {
+    graphPath: paths.graphPath,
+    nodeCount: nodes.length,
+    edgeCount: edges.length,
+    communityCount: communities.length,
+    changedPages: orientation.records.map((record) => record.page.path),
+    reportPath: path.join(paths.wikiDir, "graph", "report.json")
   };
 }
 

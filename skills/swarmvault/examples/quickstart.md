@@ -15,6 +15,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph cluster
 swarmvault query "What are the key concepts?"
 swarmvault context build "Explain the key concepts to the next agent" --target ./repo --budget 8000
 swarmvault task start "Explain the key concepts to the next agent" --target ./repo --agent codex
@@ -31,6 +32,7 @@ swarmvault graph export --report ./graph-report.html
 - `scan --no-serve` leaves a compiled vault behind even when the viewer is not launched
 - `state/sources.json` contains the managed source registry entry
 - `wiki/graph/report.md` exists after compile
+- `graph cluster` refreshes graph communities and report artifacts from the existing graph without another ingest
 - `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` exist after compile; `graph share --post` prints copyable text, `graph share --svg [path]` writes the visual card, and `graph share --bundle [dir]` writes the portable share kit
 - `graph export --report` writes a shareable HTML report when the user wants a lighter artifact than the full workspace
 - `wiki/outputs/source-briefs/` contains a source brief

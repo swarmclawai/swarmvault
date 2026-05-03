@@ -83,7 +83,7 @@ Prompt:
 Expected shape:
 
 - uses `swarmvault add`
-- may use `swarmvault ingest` for direct audio files or YouTube transcript URLs
+- may use `swarmvault ingest` for direct audio/video files, `swarmvault ingest --video <url>` for public video URLs, or direct YouTube transcript URLs
 - compiles before answering if needed
 - points at contradiction/report artifacts when conflicts exist
 
@@ -113,6 +113,7 @@ Expected shape:
 - may suggest `graph export --report`, `graph export --html-standalone`, `graph export --canvas`, or `graph export --obsidian` when a lighter shareable artifact is a better fit
 - may suggest `swarmvault diff` when the user is asking what a compile changed
 - may use `graph blast <target>` when the user is asking about change impact instead of broad graph browsing
+- may use `graph cluster [--resolution <n>]` when the graph exists but community/report metrics need to be recomputed
 - may run `swarmvault doctor` before opening the live workspace when the vault health is uncertain
 - mentions that the live workbench shows doctor details, copyable suggested commands, explicit capture modes, and budgeted context/task actions when the user asks what the viewer can do
 - mentions `swarmvault mcp`

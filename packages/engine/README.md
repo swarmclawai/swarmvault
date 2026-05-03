@@ -61,6 +61,7 @@ import {
   queryVault,
   readContextPack,
   readMemoryTask,
+  refreshGraphClusters,
   rebuildRetrievalIndex,
   reloadManagedSources,
   resumeMemoryTask,
@@ -107,6 +108,7 @@ import {
   queryGraphVault,
   queryVault,
   readContextPack,
+  refreshGraphClusters,
   rebuildRetrievalIndex,
   resumeMemoryTask,
   reloadManagedSources,
@@ -160,6 +162,7 @@ console.log(await doctorRetrieval(rootDir));
 
 const graphQuery = await queryGraphVault(rootDir, "Which nodes bridge the biggest communities?");
 console.log(graphQuery.summary);
+console.log(await refreshGraphClusters(rootDir, { resolution: 1 }));
 
 const exploration = await exploreVault(rootDir, { question: "What should I investigate next?", steps: 3, format: "report" });
 console.log(exploration.hubPath);

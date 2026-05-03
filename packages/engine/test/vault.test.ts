@@ -531,10 +531,14 @@ describe("swarmvault workflow", () => {
 
     const vscodeTarget = await installAgent(rootDir, "vscode");
     expect(vscodeTarget.target).toBe(path.join(rootDir, ".github", "chatmodes", "swarmvault.chatmode.md"));
+    expect(vscodeTarget.targets).toContain(path.join(rootDir, ".github", "copilot-instructions.md"));
     const vscodeChatmode = matter(await fs.readFile(vscodeTarget.target, "utf8"));
     expect(vscodeChatmode.data.description).toContain("SwarmVault");
     expect(Array.isArray(vscodeChatmode.data.tools)).toBe(true);
     expect(vscodeChatmode.content).toContain("# SwarmVault mode");
+    const vscodeInstructions = await fs.readFile(path.join(rootDir, ".github", "copilot-instructions.md"), "utf8");
+    expect(vscodeInstructions).toContain("swarmvault:managed:start");
+    expect(vscodeInstructions).toContain("Read `wiki/graph/report.md` before broad file searching");
   });
 
   it("installs skill bundles for the extended coding-agent roster", async () => {

@@ -159,6 +159,7 @@ swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./customer-call.mp3
 swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
+swarmvault ingest --video https://example.com/product-demo.mp4
 swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
@@ -168,6 +169,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph cluster
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
@@ -365,6 +367,7 @@ clawhub install swarmvault
 | 邮件 | `.eml .mbox` | 本地提取单封邮件并展开邮箱文件 |
 | 日历 | `.ics` | 本地展开 `VEVENT` 事件 |
 | 音频 | `.mp3 .wav .m4a .aac .ogg .webm` 及其他 `audio/*` 文件 | 本地 Whisper（`swarmvault provider setup --local-whisper`），或通过 `tasks.audioProvider` 使用 provider 驱动的转录 |
+| 视频 | `.mp4 .mov .m4v .mkv .avi`，以及带 `--video` 的 URL 输入 | 通过 `ffmpeg` 或 `yt-dlp` 提取音频，再交给 `tasks.audioProvider` 转录 |
 | HTML | `.html`、URL | Readability + Turndown 转 Markdown（URL 抓取） |
 | YouTube URL | `youtube.com/watch`、`youtu.be`、`youtube.com/embed`、`youtube.com/shorts` | 直接抓取转录文本，并提取标题与视频元数据 |
 | Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider（已配置时） |
@@ -372,7 +375,7 @@ clawhub install swarmvault
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
 | 配置 / 数据 | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | 结构化预览，带 key/value schema 提示 |
 | 开发清单文件 | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` 等 | 基于内容嗅探的文本 ingest —— 常见开发配置不会被静默丢弃 |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 基于 tree-sitter 的 AST 与模块解析（包括 `tsconfig.json` 路径别名） |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm .sql`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 基于 AST/parser 的分析与模块解析（包括 `tsconfig.json` 路径别名）；SQL 会生成 table/view 节点以及 read/write/join/reference 边 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 | Managed sources | 本地目录、公开 GitHub 仓库根 URL、文档中心 URL | 通过 `swarmvault source add` 的 registry 同步 |
 
@@ -413,19 +416,19 @@ clawhub install swarmvault
 
 **可视化 + 可直接发布的 share kit** - 每次 compile 都会写入 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`；`swarmvault graph share --post` 会打印简短文本，`swarmvault graph share --svg [path]` 会写出 1200x630 的可视化卡片，`swarmvault graph share --bundle [dir]` 会写出 markdown、发布文本、SVG、HTML 预览和 JSON 元数据，便于发布、链接或截图。
 
-**图谱 blast radius、refresh 与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
+**图谱 blast radius、refresh、聚类与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，`graph cluster [--resolution <n>]` 可以在不重新 ingest 的情况下基于现有 graph 重新计算 communities、degree、god-node 标记与 graph report 页面，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
 
 **图谱 diff** - `swarmvault diff` 将当前知识图谱与上次提交的版本进行对比，显示新增/移除的节点、边和页面，让你清楚看到每次 compile 改变了什么。
 
 **Obsidian 图谱导出** - `graph export --obsidian` 会写出一个适合 Obsidian 打开的笔记包，保留原有 wiki 目录结构，附加图谱连接和适配 Breadcrumbs/Juggl 的类型化链接 frontmatter、社区页面、孤立节点 stub、Dataview 仪表盘页面、复制后的资产文件，以及包含 `types.json`、节点类型颜色分组和 `cssclasses` 的完整 `.obsidian` 配置。
 
-**自适应图谱社区划分** - SwarmVault 会根据小图或稀疏图自动调整 Louvain community resolution；如果你想固定聚类结果，可以在 `swarmvault.config.json` 中设置 `graph.communityResolution`。
+**自适应图谱社区划分** - SwarmVault 会根据小图或稀疏图自动调整 Louvain community resolution；如果你想固定聚类结果，可以在 `swarmvault.config.json` 中设置 `graph.communityResolution`，或用 `swarmvault graph cluster --resolution <n>` 覆盖单次重算。
 
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
 **16 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid、Kiro、Hermes、Google Antigravity 和 VS Code Copilot Chat。可选 graph-first hooks 会先引导包括 Codex 在内的支持 agent 读取 wiki，再进行大范围搜索。
 
-**MCP server** - `swarmvault mcp` 通过 stdio 把知识库暴露给任意兼容的代理客户端，包括 graph stats、community lookup、hyperedges、context-pack、task ledger、兼容 memory-task、vault doctor 与 retrieval health 工具。
+**MCP server** - `swarmvault mcp` 通过 stdio 把知识库暴露给任意兼容的代理客户端，包括 graph stats、graph clustering refresh、community lookup、hyperedges、context-pack、task ledger、兼容 memory-task、vault doctor 与 retrieval health 工具。
 
 **内置浏览器剪藏器** - `graph serve` 会暴露本地 `/api/bookmarklet` 页面和 `/api/clip` 接口，让正在运行的 vault 可以从工作台或 bookmarklet 收录当前浏览器 URL、页面标题、选中文本、Markdown、HTML 片段和标签。URL-only bookmarklet 剪藏会使用 normalized `add`，选中文本会走 inbox 导入路径。
 
@@ -534,7 +537,7 @@ Codex、Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用
 
 SwarmVault 默认在本地处理数据：
 
-- **代码文件** 通过 tree-sitter 在本地解析。源代码内容不会发送到外部 API。
+- **代码文件** 通过 TypeScript compiler API、tree-sitter 或 SQL parser 在本地解析。源代码内容不会发送到外部 API。
 - **文档和文本** 发送到已配置的 provider 进行语义提取。使用内置 `heuristic` provider 时，所有数据保留在本地。
 - **图像** 仅在配置了视觉 provider 时才发送。
 - **Heuristic 模式**（默认）完全离线运行——无需 API 密钥，无需网络连接。

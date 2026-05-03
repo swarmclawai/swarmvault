@@ -73,6 +73,7 @@ import {
   readGraphReport,
   readMemoryTask,
   rebuildRetrievalIndex,
+  refreshGraphClusters,
   registerLocalWhisperProvider,
   rejectApproval,
   reloadManagedSources,
@@ -126,6 +127,12 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parsePositiveNumber(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function collectRepeated(value: string, previous: string[]): string[] {
@@ -383,6 +390,8 @@ program
   .option("--include-resources", "Also ingest repo files classified as resources", false)
   .option("--include-generated", "Also ingest repo files classified as generated output", false)
   .option("--no-gitignore", "Ignore .gitignore rules when ingesting a directory")
+  .option("--no-swarmvaultignore", "Ignore .swarmvaultignore rules when ingesting a directory")
+  .option("--video", "Treat a URL input as a public video and transcribe extracted audio", false)
   .option("--resume <run-id>", "Re-run only the failed files from a prior ingest run id")
   .option("--commit", "Auto-commit wiki and state changes after ingest")
   .option("--no-redact", "Skip PII/secret redaction for this run (overrides config)")
@@ -400,6 +409,8 @@ program
         includeResources?: boolean;
         includeGenerated?: boolean;
         gitignore?: boolean;
+        swarmvaultignore?: boolean;
+        video?: boolean;
         resume?: string;
         review?: boolean;
         guide?: boolean;
@@ -431,6 +442,8 @@ program
         exclude: options.exclude,
         maxFiles,
         gitignore: options.gitignore,
+        swarmvaultignore: options.swarmvaultignore,
+        video: options.video,
         extractClasses,
         resume: options.resume,
         redact: options.redact
@@ -582,11 +595,13 @@ program
   .argument("<input>", "Supported URL or bare arXiv id")
   .option("--author <name>", "Human author or curator for this capture")
   .option("--contributor <name>", "Additional contributor metadata for this capture")
+  .option("--video", "Treat the URL as a public video and transcribe extracted audio", false)
   .option("--no-redact", "Skip PII/secret redaction for this capture (overrides config)")
-  .action(async (input: string, options: { author?: string; contributor?: string; redact?: boolean }) => {
+  .action(async (input: string, options: { author?: string; contributor?: string; video?: boolean; redact?: boolean }) => {
     const result = await addInput(process.cwd(), input, {
       author: options.author,
       contributor: options.contributor,
+      video: options.video,
       redact: options.redact
     });
     if (isJson()) {
@@ -1409,6 +1424,26 @@ graph
     }
     log(
       `Updated graph from ${result.watchedRepoRoots.length} repo root${result.watchedRepoRoots.length === 1 ? "" : "s"}. Imported ${result.repoImportedCount}, updated ${result.repoUpdatedCount}, removed ${result.repoRemovedCount}, pending semantic refresh ${result.pendingSemanticRefreshCount}.`
+    );
+  });
+
+graph
+  .command("cluster")
+  .alias("clusters")
+  .description("Recompute graph communities, degrees, god-node flags, and graph report artifacts without re-ingesting sources.")
+  .option("--resolution <number>", "Override the Louvain community resolution for this run")
+  .action(async (options: { resolution?: string }) => {
+    const resolution = parsePositiveNumber(options.resolution);
+    if (options.resolution && resolution === undefined) {
+      throw new Error("--resolution must be a positive number.");
+    }
+    const result = await refreshGraphClusters(process.cwd(), { resolution });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(
+      `Refreshed ${result.communityCount} communities across ${result.nodeCount} nodes and ${result.edgeCount} edges. Report: ${result.reportPath}`
     );
   });
 

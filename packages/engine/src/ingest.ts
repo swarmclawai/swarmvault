@@ -31,11 +31,13 @@ import {
   extractOrgText,
   extractPdfText,
   extractPptxText,
+  extractPublicVideoTranscription,
   extractRtfText,
   extractSlackExportArchive,
   extractSlackExportDirectory,
   extractStructuredData,
   extractTranscriptText,
+  extractVideoTranscription,
   extractXlsxText,
   extractYoutubeTranscript,
   isSlackExportArchive,
@@ -81,6 +83,8 @@ import { clearPendingSemanticRefreshEntries } from "./watch-state.js";
 const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
 const DEFAULT_MAX_DIRECTORY_FILES = 5000;
 const HARD_REPO_IGNORES = new Set([".git", ".venv"]);
+const SWARMVAULT_IGNORE_FILENAME = ".swarmvaultignore";
+const VCS_BOUNDARY_DIRS = new Set([".git", ".hg", ".svn"]);
 const PROGRESS_FILE_THRESHOLD = 150;
 const PROGRESS_UPDATE_INTERVAL = 100;
 const RST_HEADING_MARKERS = new Set(["=", "-", "~", "^", '"', "#", "*", "+"]);
@@ -172,6 +176,7 @@ type PreparedInput = {
   mimeType: string;
   storedExtension: string;
   payloadBytes: Buffer;
+  payloadIsText?: boolean;
   extractedText?: string;
   extractionArtifact?: SourceExtractionArtifact;
   extractionHash?: string;
@@ -204,6 +209,10 @@ function isTextualSourceKindForPayload(sourceKind: SourceManifest["sourceKind"])
   return sourceKind === "markdown" || sourceKind === "text" || sourceKind === "code" || sourceKind === "html";
 }
 
+function shouldRedactPayload(prepared: PreparedInput): boolean {
+  return prepared.payloadIsText === true || isTextualSourceKindForPayload(prepared.sourceKind);
+}
+
 type InboxAttachmentRef = {
   absolutePath: string;
   relativeRef: string;
@@ -217,6 +226,8 @@ type NormalizedIngestOptions = {
   exclude: string[];
   maxFiles: number;
   gitignore: boolean;
+  swarmvaultignore: boolean;
+  video: boolean;
   extractClasses: SourceClass[];
   resume?: string;
   repoAnalysis?: VaultConfig["repoAnalysis"];
@@ -342,6 +353,9 @@ function inferKind(mimeType: string, filePath: string, detectionOptions: CodeLan
   }
   if (mimeType.startsWith("audio/") || /\.(mp3|wav|m4a|ogg|flac|webm|aac|wma)$/i.test(filePath)) {
     return "audio";
+  }
+  if (mimeType.startsWith("video/") || /\.(mp4|mov|m4v|mkv|avi)$/i.test(filePath)) {
+    return "video";
   }
   if (mimeType.startsWith("image/") || isImagePath(filePath)) {
     return "image";
@@ -844,6 +858,8 @@ function normalizeIngestOptions(options?: IngestOptions): NormalizedIngestOption
     exclude: (options?.exclude ?? []).map((pattern) => pattern.trim()).filter(Boolean),
     maxFiles: Math.max(1, Math.floor(options?.maxFiles ?? DEFAULT_MAX_DIRECTORY_FILES)),
     gitignore: options?.gitignore ?? true,
+    swarmvaultignore: options?.swarmvaultignore ?? true,
+    video: options?.video ?? false,
     extractClasses: options?.extractClasses ?? ["first_party"],
     resume: options?.resume,
     redact: options?.redact
@@ -1548,6 +1564,70 @@ async function loadGitignoreMatcher(repoRoot: string, enabled: boolean) {
   return matcher;
 }
 
+async function hasVcsBoundary(dir: string): Promise<boolean> {
+  for (const name of VCS_BOUNDARY_DIRS) {
+    if (await fileExists(path.join(dir, name))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+type SwarmvaultIgnoreMatcher = {
+  anchorDir: string;
+  matchInputRelative: boolean;
+  matcher: ReturnType<typeof ignore>;
+};
+
+async function loadSwarmvaultIgnoreMatchers(inputDir: string, repoRoot: string, enabled: boolean): Promise<SwarmvaultIgnoreMatcher[]> {
+  if (!enabled) {
+    return [];
+  }
+
+  const start = path.resolve(inputDir);
+  const boundary = path.resolve(repoRoot);
+  const dirs: string[] = [];
+  let current = start;
+
+  while (true) {
+    dirs.push(current);
+    if (current === boundary || (current !== start && (await hasVcsBoundary(current)))) {
+      break;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  const matchers: SwarmvaultIgnoreMatcher[] = [];
+  for (const dir of dirs.reverse()) {
+    const ignorePath = path.join(dir, SWARMVAULT_IGNORE_FILENAME);
+    if (!(await fileExists(ignorePath))) {
+      continue;
+    }
+    const matcher = ignore();
+    matcher.add(await fs.readFile(ignorePath, "utf8"));
+    matchers.push({ anchorDir: dir, matchInputRelative: dir !== start, matcher });
+  }
+  return matchers;
+}
+
+function swarmvaultIgnoreMatches(absolutePath: string, inputDir: string, matchers: SwarmvaultIgnoreMatcher[]): boolean {
+  return matchers.some(({ anchorDir, matchInputRelative, matcher }) => {
+    const relativeToAnchor = toPosix(path.relative(anchorDir, absolutePath));
+    if (withinRoot(anchorDir, absolutePath) && relativeToAnchor && matcher.ignores(relativeToAnchor)) {
+      return true;
+    }
+    if (!matchInputRelative || !withinRoot(inputDir, absolutePath)) {
+      return false;
+    }
+    const relativeToInput = toPosix(path.relative(inputDir, absolutePath));
+    return Boolean(relativeToInput && matcher.ignores(relativeToInput));
+  });
+}
+
 function builtInIgnoreReason(relativePath: string): string | null {
   for (const segment of relativePath.split("/")) {
     if (HARD_REPO_IGNORES.has(segment)) {
@@ -1568,20 +1648,41 @@ async function collectDirectoryFiles(
   options: NormalizedIngestOptions
 ): Promise<{ files: string[]; skipped: DirectoryIngestResult["skipped"] }> {
   const matcher = await loadGitignoreMatcher(repoRoot, options.gitignore);
+  const swarmvaultIgnoreMatchers = await loadSwarmvaultIgnoreMatchers(inputDir, repoRoot, options.swarmvaultignore);
   const skipped: DirectoryIngestResult["skipped"] = [];
   const files: string[] = [];
-  const stack = [inputDir];
+  const stack: Array<{ dir: string; matchers: typeof swarmvaultIgnoreMatchers }> = [{ dir: inputDir, matchers: swarmvaultIgnoreMatchers }];
 
   while (stack.length > 0) {
-    const currentDir = stack.pop();
-    if (!currentDir) {
+    const current = stack.pop();
+    if (!current) {
       continue;
     }
+    const currentDir = current.dir;
+    let currentSwarmvaultIgnoreMatchers = current.matchers;
+    const localSwarmvaultIgnorePath = path.join(currentDir, SWARMVAULT_IGNORE_FILENAME);
+    if (
+      options.swarmvaultignore &&
+      !currentSwarmvaultIgnoreMatchers.some((entry) => entry.anchorDir === currentDir) &&
+      (await fileExists(localSwarmvaultIgnorePath))
+    ) {
+      const localMatcher = ignore();
+      localMatcher.add(await fs.readFile(localSwarmvaultIgnorePath, "utf8"));
+      currentSwarmvaultIgnoreMatchers = [
+        ...currentSwarmvaultIgnoreMatchers,
+        { anchorDir: currentDir, matchInputRelative: false, matcher: localMatcher }
+      ];
+    }
+
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
 
     for (const entry of entries) {
       const absolutePath = path.join(currentDir, entry.name);
+      if (entry.name === SWARMVAULT_IGNORE_FILENAME) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "swarmvaultignore" });
+        continue;
+      }
       const relativeToRepo = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(inputDir, absolutePath));
       const relativePath = relativeToRepo || entry.name;
       const builtInReason = builtInIgnoreReason(relativePath);
@@ -1593,13 +1694,17 @@ async function collectDirectoryFiles(
         skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "gitignore" });
         continue;
       }
+      if (swarmvaultIgnoreMatches(absolutePath, inputDir, currentSwarmvaultIgnoreMatchers)) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "swarmvaultignore" });
+        continue;
+      }
       if (matchesAnyGlob(relativePath, options.exclude)) {
         skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "exclude_glob" });
         continue;
       }
 
       if (entry.isDirectory()) {
-        stack.push(absolutePath);
+        stack.push({ dir: absolutePath, matchers: currentSwarmvaultIgnoreMatchers });
         continue;
       }
       if (!entry.isFile()) {
@@ -1848,7 +1953,7 @@ async function persistPreparedInput(
   if (redactor) {
     const counts = new Map<string, number>();
     let redactedPayload: Buffer | undefined;
-    if (isTextualSourceKindForPayload(prepared.sourceKind)) {
+    if (shouldRedactPayload(prepared)) {
       const payloadText = prepared.payloadBytes.toString("utf8");
       const payloadResult = redactor.redact(payloadText);
       for (const match of payloadResult.matches) {
@@ -2685,6 +2790,15 @@ async function prepareFileInputs(
     });
     extractedText = extracted.extractedText;
     extractionArtifact = extracted.artifact;
+  } else if (sourceKind === "video") {
+    title = path.basename(absoluteInput, path.extname(absoluteInput));
+    const extracted = await extractVideoTranscription(rootDir, {
+      mimeType,
+      bytes: payloadBytes,
+      fileName: absoluteInput
+    });
+    extractedText = extracted.extractedText;
+    extractionArtifact = extracted.artifact;
   } else {
     title = path.basename(absoluteInput, path.extname(absoluteInput));
   }
@@ -2725,6 +2839,32 @@ async function prepareFileInput(
 async function prepareUrlInputs(rootDir: string, input: string, options: NormalizedIngestOptions): Promise<PreparedInput[]> {
   await validateUrlSafety(input);
 
+  if (options.video) {
+    const extracted = await extractPublicVideoTranscription(rootDir, { url: input });
+    const finalUrl = normalizeOriginUrl(input);
+    const inputUrl = new URL(finalUrl);
+    const title = extracted.title?.trim() || inputUrl.hostname + inputUrl.pathname;
+    const extractedText = extracted.extractedText;
+    const payloadBytes = Buffer.from(extractedText ?? "", "utf8");
+
+    return [
+      finalizePreparedInput({
+        title,
+        originType: "url",
+        sourceKind: "video",
+        url: finalUrl,
+        mimeType: "video/url",
+        storedExtension: ".md",
+        payloadBytes,
+        payloadIsText: true,
+        extractedText,
+        extractionArtifact: extracted.artifact,
+        extractionHash: buildExtractionHash(extractedText, extracted.artifact),
+        details: extracted.artifact.metadata
+      })
+    ];
+  }
+
   const youtubeVideoId = parseYoutubeVideoId(input);
   if (youtubeVideoId) {
     const extracted = await extractYoutubeTranscript({ videoId: youtubeVideoId, url: input });
@@ -2741,6 +2881,7 @@ async function prepareUrlInputs(rootDir: string, input: string, options: Normali
         mimeType: "text/html",
         storedExtension: ".md",
         payloadBytes,
+        payloadIsText: true,
         extractedText,
         extractionArtifact: extracted.artifact,
         extractionHash: buildExtractionHash(extractedText, extracted.artifact),
@@ -3197,7 +3338,8 @@ function isSupportedInboxKind(sourceKind: SourceManifest["sourceKind"]): boolean
     "email",
     "calendar",
     "image",
-    "audio"
+    "audio",
+    "video"
   ].includes(sourceKind);
 }
 
@@ -3230,6 +3372,17 @@ export async function addInput(rootDir: string, input: string, options: AddOptio
   const redactor = resolveIngestRedactor(config, options);
   if (!isHttpUrl(input) && !arxivIdFromInput(input) && !doiFromInput(input)) {
     throw new Error("`swarmvault add` only supports URLs, bare arXiv ids, and bare DOI strings in the current release.");
+  }
+
+  if (options.video && isHttpUrl(input)) {
+    const manifest = await ingestInput(rootDir, input, options);
+    return {
+      captureType: "url",
+      manifest,
+      normalizedUrl: normalizeOriginUrl(input),
+      title: manifest.title,
+      fallback: false
+    };
   }
 
   let prepared: PreparedInput | null = null;

@@ -109,6 +109,43 @@ describe("code-aware ingestion", () => {
     expect(modulePage).toContain("diagnostic");
   });
 
+  it("extracts SQL tables and deterministic read/write relationships into the graph", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.writeFile(
+      path.join(rootDir, "schema.sql"),
+      [
+        "CREATE TABLE users (id integer primary key, name text);",
+        "CREATE TABLE orders (id integer primary key, user_id integer references users(id));",
+        "CREATE VIEW active_orders AS",
+        "  SELECT users.id, orders.id AS order_id",
+        "  FROM users",
+        "  JOIN orders ON orders.user_id = users.id;",
+        "INSERT INTO orders (id, user_id) SELECT 1, id FROM users;"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manifest = await ingestInput(rootDir, "schema.sql");
+    expect(manifest.sourceKind).toBe("code");
+    expect(manifest.language).toBe("sql");
+
+    await compileVault(rootDir);
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.nodes.some((node) => node.type === "module" && node.language === "sql")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "users" && node.symbolKind === "table")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "symbol" && node.label === "active_orders" && node.symbolKind === "view")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "reads")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "writes")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "joins")).toBe(true);
+
+    const modulePage = await fs.readFile(path.join(rootDir, "wiki", "code", `${manifest.sourceId}.md`), "utf8");
+    expect(modulePage).toContain("Language: `sql`");
+    expect(modulePage).toContain("active_orders");
+  });
+
   it("builds module pages for Python, Go, Rust, and Java sources", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

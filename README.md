@@ -159,6 +159,7 @@ swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./customer-call.mp3
 swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
+swarmvault ingest --video https://example.com/product-demo.mp4
 swarmvault source session transcript-or-session-id
 swarmvault ingest ./src --repo-root .
 swarmvault add https://arxiv.org/abs/2401.12345
@@ -168,6 +169,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph cluster
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
@@ -363,6 +365,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Email | `.eml .mbox` | Local message extraction and mailbox expansion |
 | Calendar | `.ics` | Local VEVENT expansion |
 | Audio | `.mp3 .wav .m4a .aac .ogg .webm` and other `audio/*` files | Local Whisper (`swarmvault provider setup --local-whisper`) or provider-backed transcription via `tasks.audioProvider` |
+| Video | `.mp4 .mov .m4v .mkv .avi` and URL inputs with `--video` | `ffmpeg` or `yt-dlp` extracts audio, then `tasks.audioProvider` transcribes it |
 | HTML | `.html`, URLs | Readability + Turndown to markdown (URL ingest) |
 | YouTube URLs | `youtube.com/watch`, `youtu.be`, `youtube.com/embed`, `youtube.com/shorts` | Direct transcript capture with extracted title and video metadata |
 | Images | `.png .jpg .jpeg .gif .webp .bmp .tif .tiff .svg .ico .heic .heif .avif .jxl` | Vision provider (when configured) |
@@ -370,7 +373,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
 | Config / data | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | Structured preview with key/value schema hints |
 | Developer manifests | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` (and similar) | Content-sniffed text ingest — no plaintext dev files are silently dropped |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm`, plus extensionless scripts with `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebangs | AST via tree-sitter + module resolution (including `tsconfig.json` path aliases) |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm .sql`, plus extensionless scripts with `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebangs | AST/parser-backed analysis + module resolution (including `tsconfig.json` path aliases); SQL adds table/view nodes plus read/write/join/reference edges |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 | Managed sources | local directories, public GitHub repo roots, docs hubs | Registry-backed sync via `swarmvault source add` |
 
@@ -415,19 +418,19 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Visual + post-ready share kit** - every compile writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`; `swarmvault graph share --post` prints concise text, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, and `swarmvault graph share --bundle [dir]` writes markdown, post text, SVG, HTML preview, and JSON metadata for easy posting, linking, or screenshotting.
 
-**Graph blast radius, refresh, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
+**Graph blast radius, refresh, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 
 **Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
 
 **Obsidian graph export** - `graph export --obsidian` writes an Obsidian-friendly bundle that preserves wiki folders, appends graph connections with typed link frontmatter for Breadcrumbs/Juggl, emits community notes and orphan-node stubs, copies assets, generates Dataview dashboard pages, and includes a full `.obsidian` config with `types.json`, node-type color groups, and `cssclasses` on every page.
 
-**Adaptive graph communities** - SwarmVault auto-tunes Louvain community resolution for very small or sparse graphs, and you can pin a specific value with `graph.communityResolution` in `swarmvault.config.json`.
+**Adaptive graph communities** - SwarmVault auto-tunes Louvain community resolution for very small or sparse graphs, and you can pin a specific value with `graph.communityResolution` in `swarmvault.config.json` or override one recompute with `swarmvault graph cluster --resolution <n>`.
 
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
 **16 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, GitHub Copilot CLI, Trae, Claw/OpenClaw, Droid, Kiro, Hermes, Google Antigravity, and VS Code Copilot Chat. Optional graph-first hooks bias supported agents, including Codex, toward the wiki before broad search.
 
-**MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio, including graph stats, community lookup, hyperedges, context-pack, task-ledger, compatibility memory-task, vault doctor, and retrieval health tools.
+**MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio, including graph stats, graph clustering refresh, community lookup, hyperedges, context-pack, task-ledger, compatibility memory-task, vault doctor, and retrieval health tools.
 
 **Built-in browser clipper** - `graph serve` exposes a local `/api/bookmarklet` page and `/api/clip` endpoint so a running vault can capture the current browser URL, page title, selected text, markdown, HTML excerpts, and tags from the workbench or bookmarklet. URL-only bookmarklet clips use normalized `add`; selected text is imported through the inbox path.
 
@@ -536,7 +539,7 @@ See the [provider docs](https://www.swarmvault.ai/docs/providers) for configurat
 
 SwarmVault processes your data locally by default:
 
-- **Code files** are parsed on your machine via tree-sitter. Source code contents are never sent to external APIs.
+- **Code files** are parsed on your machine via the TypeScript compiler API, tree-sitter, or the SQL parser. Source code contents are never sent to external APIs.
 - **Documents and text** are sent to your configured provider for semantic extraction. With the built-in `heuristic` provider, everything stays local.
 - **Images** are sent to a vision-capable provider only when one is configured.
 - **Heuristic mode** (the default) is fully offline — no API keys, no network calls.

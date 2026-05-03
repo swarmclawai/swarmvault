@@ -98,7 +98,9 @@ type TreeSitterGrammarAsset = {
   relativePath: string;
 };
 
-const grammarAssetByLanguage: Record<Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">, TreeSitterGrammarAsset> = {
+type TreeSitterCodeLanguage = Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx" | "sql">;
+
+const grammarAssetByLanguage: Record<TreeSitterCodeLanguage, TreeSitterGrammarAsset> = {
   bash: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-bash.wasm" },
   python: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-python.wasm" },
   go: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-go.wasm" },
@@ -141,7 +143,7 @@ function resolvePackageRoot(packageName: string): string {
   return resolved;
 }
 
-function grammarAssetPath(language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">): string {
+function grammarAssetPath(language: TreeSitterCodeLanguage): string {
   const asset = grammarAssetByLanguage[language];
   return path.join(resolvePackageRoot(asset.packageName), asset.relativePath);
 }
@@ -165,7 +167,7 @@ async function ensureTreeSitterInit(module: TreeSitterModule): Promise<void> {
   return treeSitterInitPromise;
 }
 
-async function loadLanguage(language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">): Promise<TreeLanguage> {
+async function loadLanguage(language: TreeSitterCodeLanguage): Promise<TreeLanguage> {
   const cached = languageCache.get(language);
   if (cached) {
     return cached;
@@ -4627,7 +4629,7 @@ function cFamilyCodeAnalysis(
 export async function analyzeTreeSitterCode(
   manifest: SourceManifest,
   content: string,
-  language: Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx">
+  language: TreeSitterCodeLanguage
 ): Promise<{
   code: CodeAnalysis;
   rationales: SourceRationale[];

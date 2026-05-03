@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -313,6 +314,195 @@ export async function extractAudioTranscription(
         providerId: provider.id,
         providerModel: provider.model,
         warnings: [`Audio transcription failed: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+type ToolRunResult = {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+};
+
+function videoBinary(envName: "SWARMVAULT_FFMPEG_BINARY" | "SWARMVAULT_YTDLP_BINARY", fallback: string): string {
+  const configured = process.env[envName]?.trim();
+  return configured || fallback;
+}
+
+function runTool(binary: string, args: string[], options?: { cwd?: string }): Promise<ToolRunResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, args, {
+      cwd: options?.cwd,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function toolFailure(binary: string, result: ToolRunResult): Error {
+  const tail = (result.stderr || result.stdout).split(/\r?\n/).filter(Boolean).slice(-5).join("\n");
+  return new Error(`${binary} exited with code ${result.code}${tail ? `: ${tail}` : ""}`);
+}
+
+async function extractAudioFromVideoBytes(input: { mimeType: string; bytes: Buffer; fileName?: string }): Promise<{
+  bytes: Buffer;
+  fileName: string;
+  metadata: Record<string, string>;
+}> {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-video-"));
+  const inputExtension = path.extname(input.fileName ?? "") || ".video";
+  const inputPath = path.join(tmpDir, `input${inputExtension}`);
+  const outputPath = path.join(tmpDir, "audio.wav");
+  const ffmpeg = videoBinary("SWARMVAULT_FFMPEG_BINARY", "ffmpeg");
+
+  try {
+    await fs.writeFile(inputPath, input.bytes);
+    const result = await runTool(ffmpeg, ["-y", "-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", outputPath]);
+    if (result.code !== 0) {
+      throw toolFailure(ffmpeg, result);
+    }
+    return {
+      bytes: await fs.readFile(outputPath),
+      fileName: `${path.basename(input.fileName ?? "video", path.extname(input.fileName ?? "")) || "video"}.wav`,
+      metadata: {
+        video_file: input.fileName ? path.basename(input.fileName) : "video",
+        ffmpeg: ffmpeg === "ffmpeg" ? "path" : ffmpeg
+      }
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function downloadPublicVideoAudio(input: {
+  url: string;
+}): Promise<{ bytes: Buffer; fileName: string; metadata: Record<string, string> }> {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-video-url-"));
+  const outputTemplate = path.join(tmpDir, "download.%(ext)s");
+  const ytdlp = videoBinary("SWARMVAULT_YTDLP_BINARY", "yt-dlp");
+  try {
+    const result = await runTool(ytdlp, ["-x", "--audio-format", "wav", "--no-playlist", "-o", outputTemplate, input.url], {
+      cwd: tmpDir
+    });
+    if (result.code !== 0) {
+      throw toolFailure(ytdlp, result);
+    }
+    const entries = await fs.readdir(tmpDir);
+    const audioFile = entries.find((entry) => /^download\.(wav|mp3|m4a|webm|ogg|flac|aac)$/i.test(entry));
+    if (!audioFile) {
+      throw new Error(`${ytdlp} completed but did not produce an audio file.`);
+    }
+    return {
+      bytes: await fs.readFile(path.join(tmpDir, audioFile)),
+      fileName: audioFile,
+      metadata: {
+        url: input.url,
+        "yt-dlp": ytdlp === "yt-dlp" ? "path" : ytdlp
+      }
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function audioMimeForFile(fileName: string): string {
+  const extension = path.extname(fileName).toLowerCase();
+  switch (extension) {
+    case ".mp3":
+      return "audio/mpeg";
+    case ".m4a":
+      return "audio/mp4";
+    case ".webm":
+      return "audio/webm";
+    case ".ogg":
+      return "audio/ogg";
+    case ".flac":
+      return "audio/flac";
+    case ".aac":
+      return "audio/aac";
+    default:
+      return "audio/wav";
+  }
+}
+
+function videoArtifactFromAudio(
+  mimeType: string,
+  audioArtifact: SourceExtractionArtifact,
+  metadata: Record<string, string>
+): SourceExtractionArtifact {
+  return {
+    ...audioArtifact,
+    ...extractionMetadata("video", mimeType, "video_transcription"),
+    providerId: audioArtifact.providerId,
+    providerModel: audioArtifact.providerModel,
+    warnings: audioArtifact.warnings,
+    metadata: {
+      ...(audioArtifact.metadata ?? {}),
+      ...metadata
+    }
+  };
+}
+
+export async function extractVideoTranscription(
+  rootDir: string,
+  input: { mimeType: string; bytes: Buffer; fileName?: string }
+): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const extractedAudio = await extractAudioFromVideoBytes(input);
+    const audio = await extractAudioTranscription(rootDir, {
+      mimeType: "audio/wav",
+      bytes: extractedAudio.bytes,
+      fileName: extractedAudio.fileName
+    });
+    return {
+      title: input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined,
+      extractedText: audio.extractedText,
+      artifact: videoArtifactFromAudio(input.mimeType, audio.artifact, extractedAudio.metadata)
+    };
+  } catch (error) {
+    return {
+      title: input.fileName ? path.basename(input.fileName, path.extname(input.fileName)) : undefined,
+      artifact: {
+        ...extractionMetadata("video", input.mimeType, "video_transcription"),
+        warnings: [`Video transcription unavailable: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
+      }
+    };
+  }
+}
+
+export async function extractPublicVideoTranscription(
+  rootDir: string,
+  input: { url: string }
+): Promise<{ title?: string; extractedText?: string; artifact: SourceExtractionArtifact }> {
+  try {
+    const extractedAudio = await downloadPublicVideoAudio(input);
+    const audio = await extractAudioTranscription(rootDir, {
+      mimeType: audioMimeForFile(extractedAudio.fileName),
+      bytes: extractedAudio.bytes,
+      fileName: extractedAudio.fileName
+    });
+    return {
+      extractedText: audio.extractedText,
+      artifact: videoArtifactFromAudio("video/url", audio.artifact, extractedAudio.metadata)
+    };
+  } catch (error) {
+    return {
+      artifact: {
+        ...extractionMetadata("video", "video/url", "video_transcription"),
+        metadata: { url: input.url },
+        warnings: [`Public video transcription unavailable: ${error instanceof Error ? truncate(error.message, 240) : "unknown error"}`]
       }
     };
   }
