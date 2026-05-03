@@ -15,6 +15,7 @@ type WorkbenchDashboardProps = {
     title?: string;
     markdown?: string;
     selectionText?: string;
+    tags?: string[];
     sourceMode?: CaptureMode;
   }) => Promise<WorkbenchActionResult>;
   onBuildContext: (payload: { goal: string; target?: string; budgetTokens?: number }) => Promise<WorkbenchActionResult>;
@@ -78,6 +79,17 @@ function parseBudget(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function parseTags(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter((tag) => tag.length > 0)
+    )
+  ];
+}
+
 export function WorkbenchDashboard({
   doctorReport,
   doctorError,
@@ -89,7 +101,9 @@ export function WorkbenchDashboard({
   onStartTask
 }: WorkbenchDashboardProps) {
   const [captureUrl, setCaptureUrl] = useState("");
+  const [captureTitle, setCaptureTitle] = useState("");
   const [captureText, setCaptureText] = useState("");
+  const [captureTags, setCaptureTags] = useState("");
   const [captureMode, setCaptureMode] = useState<CaptureMode>("ingest");
   const [goal, setGoal] = useState("");
   const [target, setTarget] = useState("");
@@ -99,6 +113,7 @@ export function WorkbenchDashboard({
   const canCapture = captureUrl.trim().length > 0 || captureText.trim().length > 0;
   const canUseGoal = goal.trim().length > 0;
   const checks = [...(doctorReport?.checks ?? [])].sort((left, right) => statusRank(left.status) - statusRank(right.status));
+  const recommendations = doctorReport?.recommendations ?? [];
   const budgetTokens = parseBudget(budget);
 
   return (
@@ -131,6 +146,52 @@ export function WorkbenchDashboard({
       {actionError ? <p className="workbench-error">{actionError}</p> : null}
       {receipt ? <p className="workbench-receipt">{receipt}</p> : null}
 
+      {recommendations.length ? (
+        <section className="workbench-recommendations" aria-label="Recommended next actions">
+          <h2 className="workbench-card-title">Recommended Next Actions</h2>
+          <div className="workbench-recommendation-list">
+            {recommendations.map((recommendation) => (
+              <div key={recommendation.id} className={`workbench-recommendation recommendation-${recommendation.priority}`}>
+                <div className="workbench-recommendation-main">
+                  <div className="workbench-recommendation-header">
+                    <span>{recommendation.label}</span>
+                    <span>{recommendation.priority}</span>
+                  </div>
+                  <p>{recommendation.summary}</p>
+                  {recommendation.description ? <p className="workbench-check-detail">{recommendation.description}</p> : null}
+                  {recommendation.command ? <code>{recommendation.command}</code> : null}
+                </div>
+                {recommendation.safeAction === "doctor:repair" ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busyAction === "doctor:repair"}
+                    onClick={() =>
+                      void onRepair().then((result) => {
+                        setReceipt(actionReceipt("repair", result));
+                      })
+                    }
+                  >
+                    {busyAction === "doctor:repair" ? "Repairing" : "Run Repair"}
+                  </button>
+                ) : recommendation.command ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(recommendation.command ?? "");
+                      setReceipt(`Copied ${recommendation.command}`);
+                    }}
+                  >
+                    Copy
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <div className="workbench-grid">
         <div className="workbench-card">
           <h2 className="workbench-card-title">Capture</h2>
@@ -151,12 +212,26 @@ export function WorkbenchDashboard({
             value={captureUrl}
             onChange={(event) => setCaptureUrl(event.target.value)}
           />
+          <input
+            className="input"
+            aria-label="Capture title"
+            placeholder="Title"
+            value={captureTitle}
+            onChange={(event) => setCaptureTitle(event.target.value)}
+          />
           <textarea
             className="input workbench-textarea"
             aria-label="Capture text"
             placeholder="Selected text or notes"
             value={captureText}
             onChange={(event) => setCaptureText(event.target.value)}
+          />
+          <input
+            className="input"
+            aria-label="Capture tags"
+            placeholder="Tags, comma separated"
+            value={captureTags}
+            onChange={(event) => setCaptureTags(event.target.value)}
           />
           <div className="action-row">
             <button
@@ -166,12 +241,16 @@ export function WorkbenchDashboard({
               onClick={() =>
                 void onCapture({
                   url: captureUrl.trim() || undefined,
+                  title: captureTitle.trim() || undefined,
                   selectionText: captureText.trim() || undefined,
+                  tags: parseTags(captureTags),
                   sourceMode: captureMode
                 }).then((result) => {
                   setReceipt(actionReceipt("capture", result));
                   setCaptureUrl("");
+                  setCaptureTitle("");
                   setCaptureText("");
+                  setCaptureTags("");
                 })
               }
             >

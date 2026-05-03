@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4.0
+
+- Added prioritized vault doctor recommendations to `swarmvault doctor`, MCP `doctor_vault`, and the graph viewer workbench, including safe direct repair metadata for retrieval rebuilds and copy-only commands for broader follow-up actions.
+- Polished workbench and bookmarklet capture so clips can carry titles and tags, selected browser text is imported through the inbox path, and URL-only bookmarklet captures use the normalized `add` flow.
+- Added release-preflight summary artifacts under `.release-preflight/` with JSON and Markdown evidence for gates, tarball smoke inputs, browser smoke status, OSS corpus status, and artifact roots.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.4.0`.
+
 ## 3.3.0
 
 - Polished the graph viewer workbench so `graph serve` now shows every vault doctor check with detail text and copyable suggested commands, keeps warnings ahead of passing checks, and reports action receipts after repair, capture, context-pack, and task-start actions.

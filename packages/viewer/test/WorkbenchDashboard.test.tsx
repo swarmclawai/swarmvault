@@ -10,7 +10,7 @@ const report: ViewerDoctorReport = {
   status: "warning",
   generatedAt: "2026-04-29T20:00:00.000Z",
   rootDir: "/tmp/vault",
-  version: "3.3.0",
+  version: "3.4.0",
   counts: {
     sources: 2,
     managedSources: 1,
@@ -22,6 +22,29 @@ const report: ViewerDoctorReport = {
     tasks: 1,
     pendingSemanticRefresh: 0
   },
+  recommendations: [
+    {
+      id: "graph:swarmvault compile",
+      label: "Fix Graph",
+      summary: "Graph artifact is missing.",
+      priority: "high",
+      status: "error",
+      sourceCheckId: "graph",
+      command: "swarmvault compile",
+      description: "Compile sources into graph and wiki artifacts."
+    },
+    {
+      id: "retrieval:swarmvault retrieval doctor --repair",
+      label: "Fix Retrieval",
+      summary: "Retrieval stale.",
+      priority: "medium",
+      status: "warning",
+      sourceCheckId: "retrieval",
+      command: "swarmvault retrieval doctor --repair",
+      description: "Rebuild retrieval artifacts.",
+      safeAction: "doctor:repair"
+    }
+  ],
   checks: [
     { id: "workspace", label: "Workspace", status: "ok", summary: "Workspace ready." },
     { id: "graph", label: "Graph", status: "ok", summary: "Graph present." },
@@ -103,6 +126,9 @@ describe("WorkbenchDashboard", () => {
     expect(text).toContain("Sources 2");
     expect(text).toContain("Managed 1");
     expect(text).toContain("Review 1");
+    expect(text).toContain("Recommended Next Actions");
+    expect(text).toContain("Fix Graph");
+    expect(text).toContain("Fix Retrieval");
     expect(text).toContain("Manifest is older than graph.");
     expect(text).toContain("swarmvault retrieval doctor --repair");
     expect(text).toContain("swarmvault migrate --dry-run");
@@ -110,13 +136,17 @@ describe("WorkbenchDashboard", () => {
     expect(text).toContain("Watch");
 
     const captureUrl = handle.container.querySelector<HTMLInputElement>('input[aria-label="Capture URL"]');
+    const captureTitle = handle.container.querySelector<HTMLInputElement>('input[aria-label="Capture title"]');
     const captureText = handle.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Capture text"]');
+    const captureTags = handle.container.querySelector<HTMLInputElement>('input[aria-label="Capture tags"]');
     const captureMode = handle.container.querySelector<HTMLSelectElement>('select[aria-label="Capture mode"]');
     const goal = handle.container.querySelector<HTMLInputElement>('input[aria-label="Agent goal"]');
     const target = handle.container.querySelector<HTMLInputElement>('input[aria-label="Agent target"]');
     const budget = handle.container.querySelector<HTMLInputElement>('input[aria-label="Token budget"]');
     expect(captureUrl).toBeTruthy();
+    expect(captureTitle).toBeTruthy();
     expect(captureText).toBeTruthy();
+    expect(captureTags).toBeTruthy();
     expect(captureMode).toBeTruthy();
     expect(goal).toBeTruthy();
     expect(target).toBeTruthy();
@@ -124,7 +154,9 @@ describe("WorkbenchDashboard", () => {
 
     await act(async () => {
       fireEvent.input(captureUrl!, { target: { value: "https://example.com/article" } });
+      fireEvent.input(captureTitle!, { target: { value: "Example Article" } });
       fireEvent.input(captureText!, { target: { value: "important excerpt" } });
+      fireEvent.input(captureTags!, { target: { value: "research, launch" } });
       fireEvent.change(captureMode!, { target: { value: "inbox" } });
     });
     const captureButton = Array.from(handle.container.querySelectorAll<HTMLButtonElement>("button")).find(
@@ -135,7 +167,9 @@ describe("WorkbenchDashboard", () => {
     });
     expect(handle.onCapture).toHaveBeenCalledWith({
       url: "https://example.com/article",
+      title: "Example Article",
       selectionText: "important excerpt",
+      tags: ["research", "launch"],
       sourceMode: "inbox"
     });
     expect(handle.container.textContent ?? "").toContain("Captured Example Article");

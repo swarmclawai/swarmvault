@@ -695,7 +695,7 @@ export async function startGraphServer(
       }
 
       if (url.pathname === "/api/bookmarklet") {
-        const script = `javascript:void(fetch('http://localhost:${effectivePort}/api/clip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:location.href})}).then(r=>r.json()).then(d=>alert('Clipped: '+(d.title||d.sourceId))).catch(e=>alert('Clip failed: '+e.message)))`;
+        const script = `javascript:void((async()=>{const selection=String(getSelection()||'').trim();const payload={url:location.href,title:document.title,sourceMode:selection?'inbox':'add'};if(selection)payload.selectionText=selection;const response=await fetch('http://localhost:${effectivePort}/api/clip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();if(!response.ok)throw new Error(data.error||response.statusText);alert('Clipped: '+(data.title||data.sourceId));})().catch(e=>alert('Clip failed: '+e.message)))`;
         response.writeHead(200, { "content-type": "text/html" });
         response.end(
           [

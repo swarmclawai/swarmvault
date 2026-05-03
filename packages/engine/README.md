@@ -31,6 +31,7 @@ import {
   defaultVaultConfig,
   defaultVaultSchema,
   doctorRetrieval,
+  doctorVault,
   exploreVault,
   exportGraphFormat,
   exportGraphHtml,
@@ -77,7 +78,7 @@ import {
 } from "@swarmvaultai/engine";
 ```
 
-The engine also exports the main runtime types for providers, graph artifacts, pages, manifests, query results, task records, retrieval status, lint findings, and watch records.
+The engine also exports the main runtime types for providers, graph artifacts, pages, manifests, query results, task records, vault doctor reports with prioritized recommendations, retrieval status, lint findings, and watch records.
 
 ## Example
 
@@ -89,6 +90,7 @@ import {
   buildContextPack,
   compileVault,
   doctorRetrieval,
+  doctorVault,
   exploreVault,
   exportGraphHtml,
   exportGraphFormat,
@@ -153,6 +155,7 @@ await finishMemoryTask(rootDir, memory.task.id, {
 console.log((await readMemoryTask(rootDir, memory.task.id)).status);
 console.log((await listMemoryTasks(rootDir)).length);
 console.log((await resumeMemoryTask(rootDir, memory.task.id)).content);
+console.log((await doctorVault(rootDir)).recommendations);
 console.log(await doctorRetrieval(rootDir));
 
 const graphQuery = await queryGraphVault(rootDir, "Which nodes bridge the biggest communities?");

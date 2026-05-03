@@ -53,7 +53,7 @@ swarmvault demo
 - **Share kit** —— `wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/`、`swarmvault graph share --post`、`swarmvault graph share --svg`、`swarmvault graph share --bundle` によるコピー可能、視覚的、HTML preview 付きの初回サマリー
 - **Context packs** —— 目的、対象、token 予算に合わせた agent-ready な evidence bundle を `wiki/context/` と `state/context-packs/` に保存
 - **Agent task ledger** —— `swarmvault task start|update|finish|resume` がローカルで git-friendly な task history を `wiki/memory/` と `state/memory/` に保存します。`memory` は互換 alias として残ります
-- **Vault doctor とワークベンチ** —— `swarmvault doctor [--repair]`、MCP `doctor_vault`、グラフビューアのワークベンチが graph、retrieval、review、watch、migration、managed sources、task state をまとめて確認し、詳細な checks、推奨コマンド、安全な repair、明示的な capture mode、budget 付き agent handoff を表示します
+- **Vault doctor とワークベンチ** —— `swarmvault doctor [--repair]`、MCP `doctor_vault`、グラフビューアのワークベンチが graph、retrieval、review、watch、migration、managed sources、task state をまとめて確認し、優先度付き next action、詳細な checks、コピー可能なコマンド、安全な repair、明示的な capture mode、budget 付き agent handoff を表示します
 
 ### 三層アーキテクチャ
 
@@ -183,7 +183,7 @@ swarmvault graph push neo4j --dry-run
 
 `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>` は、次の agent 作業に必要なページ、ノード、エッジ、根拠を token 予算内にまとめます。出力形式は `--format markdown|json|llms` で選べ、保存済み bundle は `swarmvault context list` と `swarmvault context show <id>` で再利用できます。長めの作業では `swarmvault task start "<goal>" --target <path-or-node>` で永続 task ledger を作成し、`task update` で notes、decisions、changed paths、linked packs を記録し、`task resume <id>` で次の agent 向け handoff を出力します。既存の `memory` commands と `--memory <id>` flags は同じ task ledger の互換 alias として残ります。
 
-agent に渡す前や viewer を開く前に素早く状態を見るには、`swarmvault doctor` を使います。graph、retrieval、review queue、watch status、migration state、managed sources、task ledger を確認し、`--repair` では安全に再生成できる retrieval artifacts を rebuild します。`swarmvault graph serve` のワークベンチは全 doctor check、詳細、コピー可能な推奨コマンドを表示し、明示的な capture mode、context-pack 作成、token budget 付き task-start actions を実行できます。
+agent に渡す前や viewer を開く前に素早く状態を見るには、`swarmvault doctor` を使います。graph、retrieval、review queue、watch status、migration state、managed sources、task ledger を確認し、`--repair` では安全に再生成できる retrieval artifacts を rebuild します。`swarmvault graph serve` のワークベンチは優先度付き next action、全 doctor check、詳細、コピー可能な推奨コマンドを表示し、安全な直接 repair、明示的な capture mode、title/tag capture fields、context-pack 作成、token budget 付き task-start actions を実行できます。
 
 実データを入れる前にゼロ設定の体験をしたい場合は、`swarmvault demo --no-serve` も使えます。内蔵ソースを持つ一時的な sample vault を作成し、そのまま compile します。
 
@@ -393,7 +393,7 @@ clawhub install swarmvault
 
 **Agent task ledger** - `swarmvault task start|update|finish|resume` は、task goal、linked context packs、decisions、graph evidence、touched paths、outcomes、follow-ups を git-friendly な JSON と Markdown として `state/memory/tasks/` と `wiki/memory/tasks/` に保存します。Compile は task と decision をグラフに含めます。既存の `memory` commands は互換 alias として残ります。
 
-**Vault doctor とワークベンチ** - `swarmvault doctor [--repair]` は graph artifacts、retrieval、review queue、watch state、migration、managed sources、source/page counts、task state を確認します。グラフビューアのワークベンチは全 check と詳細、コピー可能な推奨コマンド、安全な repair、明示的な capture mode、budget 付き context-pack 作成、task-start actions を表示します。
+**Vault doctor とワークベンチ** - `swarmvault doctor [--repair]` は graph artifacts、retrieval、review queue、watch state、migration、managed sources、source/page counts、task state を確認します。グラフビューアのワークベンチは優先度付き next action、全 check と詳細、コピー可能な推奨コマンド、安全な repair、明示的な capture mode、title/tag capture fields、budget 付き context-pack 作成、task-start actions を表示します。
 
 **レビュー可能な変更** - `compile --approve` は変更を approval bundles として段階化します。新しい concepts と entities はまず `wiki/candidates/` に入るため、黙って変更されません。
 
@@ -429,7 +429,7 @@ clawhub install swarmvault
 
 **MCP server** - `swarmvault mcp` は context-pack、task-ledger、互換 memory-task、vault doctor、retrieval health tools を含むボルト操作を stdio 経由で互換エージェントクライアントへ公開します。
 
-**組み込みブラウザ clipper** - `graph serve` はローカルの `/api/bookmarklet` ページと `/api/clip` エンドポイントを公開し、workbench または bookmarklet から現在のブラウザ URL、選択テキスト、Markdown、HTML excerpt、tags を実行中の vault に取り込めます。
+**組み込みブラウザ clipper** - `graph serve` はローカルの `/api/bookmarklet` ページと `/api/clip` エンドポイントを公開し、workbench または bookmarklet から現在のブラウザ URL、ページタイトル、選択テキスト、Markdown、HTML excerpt、tags を実行中の vault に取り込めます。URL-only bookmarklet clip は normalized `add` を使い、選択テキストは inbox import path で取り込みます。
 
 **Automation** - watch mode、git hooks、定期実行、inbox import により、ボルトを手動更新なしで最新に保てます。
 

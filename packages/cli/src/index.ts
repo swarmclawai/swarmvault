@@ -116,9 +116,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.3.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.4.0";
   } catch {
-    return "3.3.0";
+    return "3.4.0";
   }
 }
 
@@ -2597,6 +2597,16 @@ program
     log(
       `Sources ${report.counts.sources} | Managed ${report.counts.managedSources} | Pages ${report.counts.pages} | Nodes ${report.counts.nodes} | Edges ${report.counts.edges}`
     );
+    if (report.recommendations.length) {
+      log("Recommended next actions:");
+      for (const recommendation of report.recommendations) {
+        const action = recommendation.command ? ` ${recommendation.command}` : "";
+        log(`  [${recommendation.priority}] ${recommendation.label}:${action}`);
+        if (recommendation.description) {
+          log(`    ${recommendation.description}`);
+        }
+      }
+    }
     for (const check of report.checks) {
       log(`[${check.status}] ${check.label}: ${check.summary}`);
       if (check.detail) {

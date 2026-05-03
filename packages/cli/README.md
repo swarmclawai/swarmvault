@@ -122,10 +122,11 @@ Run a whole-vault health check before handing the workspace to an agent or openi
 
 - checks workspace config and schema presence
 - reports graph, page, source, review, candidate, task, watch, migration, and retrieval state
+- emits prioritized recommended next actions before the full check list
 - emits suggested follow-up commands for warnings and errors
 - supports `--json` for structured automation output
 - add `--repair` to rebuild safe derived retrieval artifacts
-- the live viewer workbench shows the same checks with details and copyable suggested commands
+- the live viewer workbench shows the same recommendations and checks with details, copyable suggested commands, and safe direct repair
 
 ### `swarmvault source add|list|reload|review|guide|session|delete`
 
@@ -422,9 +423,9 @@ The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `sw
 
 Start the local graph workspace backed by `state/graph.json`, `/api/search`, `/api/page`, local graph query/path/explain endpoints, and the workbench APIs for doctor, retrieval repair, capture, context packs, task start, and source reload.
 
-The workbench renders every vault doctor check with details, suggested commands that can be copied back to a terminal, safe one-click retrieval repair through `doctor --repair`, selectable capture modes (`ingest`, normalized `add`, or `inbox`), editable token budgets for context packs and task starts, and action receipts after workbench operations complete.
+The workbench renders prioritized vault doctor recommendations, every check with details, suggested commands that can be copied back to a terminal, safe one-click retrieval repair through `doctor --repair`, selectable capture modes (`ingest`, normalized `add`, or `inbox`), title/tag capture fields, editable token budgets for context packs and task starts, and action receipts after workbench operations complete.
 
-It also exposes `/api/bookmarklet` and `/api/clip`, so a running local viewer can capture the current browser URL, selected text, markdown, HTML excerpts, and tags through the workbench or bookmarklet without leaving the browser.
+It also exposes `/api/bookmarklet` and `/api/clip`, so a running local viewer can capture the current browser URL, page title, selected text, markdown, HTML excerpts, and tags through the workbench or bookmarklet without leaving the browser. URL-only bookmarklet clips use normalized `add`; selected text is imported through the inbox path.
 
 ### `swarmvault graph query "<question>" [--dfs] [--budget <n>]`
 

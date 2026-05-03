@@ -29,6 +29,19 @@ describe("vault doctor", () => {
     expect(report.checks.some((check) => check.id === "graph" && check.status === "error")).toBe(true);
     expect(report.checks.some((check) => check.id === "retrieval" && check.status === "warning")).toBe(true);
     expect(report.checks.flatMap((check) => check.actions ?? []).some((action) => action.command === "swarmvault compile")).toBe(true);
+    expect(report.recommendations[0]).toMatchObject({
+      id: "graph:swarmvault compile",
+      priority: "high",
+      command: "swarmvault compile",
+      sourceCheckId: "graph"
+    });
+    expect(report.recommendations).toContainEqual(
+      expect.objectContaining({
+        id: "retrieval:swarmvault retrieval doctor --repair",
+        safeAction: "doctor:repair",
+        command: "swarmvault retrieval doctor --repair"
+      })
+    );
   });
 
   it("summarizes a healthy compiled vault", async () => {
@@ -48,6 +61,7 @@ describe("vault doctor", () => {
     expect(report.counts.nodes).toBeGreaterThan(0);
     expect(report.checks.find((check) => check.id === "graph")?.status).toBe("ok");
     expect(report.checks.find((check) => check.id === "retrieval")?.status).toBe("ok");
+    expect(report.recommendations).toEqual([]);
   });
 
   it("repairs missing retrieval artifacts when requested", async () => {

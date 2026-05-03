@@ -452,7 +452,12 @@ textarea:focus-visible,
   padding: var(--sp-3) var(--sp-4);
   display: grid;
   gap: var(--sp-3);
-  flex-shrink: 0;
+  flex: 0 1 260px;
+  min-height: 0;
+  max-height: clamp(180px, 30vh, 320px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-text-muted) transparent;
 }
 
 .workbench-strip {
@@ -535,6 +540,74 @@ textarea:focus-visible,
   font-size: var(--text-xs);
 }
 
+.workbench-recommendations {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-bg-inset);
+  padding: var(--sp-3);
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.workbench-recommendation-list {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.workbench-recommendation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+  border-top: 1px solid var(--c-border-subtle);
+  padding-top: var(--sp-2);
+  font-size: var(--text-xs);
+  color: var(--c-text-secondary);
+}
+
+.workbench-recommendation:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.workbench-recommendation-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workbench-recommendation-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-weight: 700;
+  color: var(--c-text-primary);
+}
+
+.workbench-recommendation p {
+  margin: 0;
+}
+
+.workbench-recommendation code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--c-text-accent);
+}
+
+.recommendation-high {
+  border-left: 2px solid var(--c-text-error);
+  padding-left: var(--sp-2);
+}
+
+.recommendation-medium {
+  border-left: 2px solid var(--c-text-warning);
+  padding-left: var(--sp-2);
+}
+
 .workbench-checks {
   align-content: start;
   max-height: 220px;
@@ -604,15 +677,19 @@ textarea:focus-visible,
   .workbench-grid {
     grid-template-columns: 1fr;
   }
+
+  .workbench-recommendation {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* --- Graph Canvas --- */
 .canvas-wrap {
   position: relative;
-  min-height: 0;
+  min-height: clamp(260px, 38vh, 480px);
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 0 clamp(260px, 38vh, 480px);
 }
 
 .canvas {
@@ -810,9 +887,10 @@ textarea:focus-visible,
 .report-tabs {
   border-top: 1px solid var(--c-border);
   background: var(--c-bg-surface);
-  max-height: 360px;
+  flex: 0 1 clamp(140px, 24vh, 300px);
+  min-height: 140px;
+  max-height: clamp(160px, 26vh, 300px);
   overflow: hidden;
-  flex-shrink: 0;
 }
 
 .report-tabs .tabs {

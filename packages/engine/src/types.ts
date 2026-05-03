@@ -1469,6 +1469,21 @@ export interface VaultDoctorAction {
   destructive?: boolean;
 }
 
+export type VaultDoctorRecommendationPriority = "high" | "medium" | "low";
+export type VaultDoctorSafeAction = "doctor:repair";
+
+export interface VaultDoctorRecommendation {
+  id: string;
+  label: string;
+  summary: string;
+  priority: VaultDoctorRecommendationPriority;
+  status: VaultDoctorStatus;
+  sourceCheckId: string;
+  command?: string;
+  description?: string;
+  safeAction?: VaultDoctorSafeAction;
+}
+
 export interface VaultDoctorCheck {
   id: string;
   label: string;
@@ -1498,6 +1513,7 @@ export interface VaultDoctorReport {
   version: string;
   counts: VaultDoctorCounts;
   checks: VaultDoctorCheck[];
+  recommendations: VaultDoctorRecommendation[];
   repaired: string[];
 }
 

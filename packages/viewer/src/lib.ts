@@ -293,6 +293,18 @@ export type ViewerDoctorCheck = {
   actions?: ViewerDoctorAction[];
 };
 
+export type ViewerDoctorRecommendation = {
+  id: string;
+  label: string;
+  summary: string;
+  priority: "high" | "medium" | "low";
+  status: ViewerDoctorStatus;
+  sourceCheckId: string;
+  command?: string;
+  description?: string;
+  safeAction?: "doctor:repair";
+};
+
 export type ViewerDoctorReport = {
   ok: boolean;
   status: ViewerDoctorStatus;
@@ -311,6 +323,7 @@ export type ViewerDoctorReport = {
     pendingSemanticRefresh: number;
   };
   checks: ViewerDoctorCheck[];
+  recommendations: ViewerDoctorRecommendation[];
   repaired: string[];
 };
 

@@ -5,7 +5,14 @@ import { listManifests } from "./ingest.js";
 import { listMemoryTasks } from "./memory.js";
 import { planMigration } from "./migrate.js";
 import { doctorRetrieval } from "./retrieval.js";
-import type { GraphArtifact, ManagedSourcesArtifact, VaultDoctorCheck, VaultDoctorReport, VaultDoctorStatus } from "./types.js";
+import type {
+  GraphArtifact,
+  ManagedSourcesArtifact,
+  VaultDoctorCheck,
+  VaultDoctorRecommendation,
+  VaultDoctorReport,
+  VaultDoctorStatus
+} from "./types.js";
 import { fileExists, readJsonFile } from "./utils.js";
 import { listApprovals, listCandidates } from "./vault.js";
 import { getWatchStatus } from "./watch.js";
@@ -18,6 +25,39 @@ function worstStatus(checks: VaultDoctorCheck[]): VaultDoctorStatus {
   if (checks.some((check) => check.status === "error")) return "error";
   if (checks.some((check) => check.status === "warning")) return "warning";
   return "ok";
+}
+
+function recommendationPriority(status: VaultDoctorStatus): VaultDoctorRecommendation["priority"] {
+  if (status === "error") return "high";
+  if (status === "warning") return "medium";
+  return "low";
+}
+
+function safeActionFor(checkId: string, command: string): VaultDoctorRecommendation["safeAction"] | undefined {
+  if (checkId === "retrieval" && command === "swarmvault retrieval doctor --repair") {
+    return "doctor:repair";
+  }
+  return undefined;
+}
+
+function buildRecommendations(checks: VaultDoctorCheck[]): VaultDoctorRecommendation[] {
+  const rank = { high: 0, medium: 1, low: 2 } as const;
+  return checks
+    .filter((check) => check.status !== "ok")
+    .flatMap((check) =>
+      (check.actions ?? []).map((action) => ({
+        id: `${check.id}:${action.command}`,
+        label: `Fix ${check.label}`,
+        summary: check.summary,
+        priority: recommendationPriority(check.status),
+        status: check.status,
+        sourceCheckId: check.id,
+        command: action.command,
+        description: action.description,
+        safeAction: safeActionFor(check.id, action.command)
+      }))
+    )
+    .sort((left, right) => rank[left.priority] - rank[right.priority] || left.label.localeCompare(right.label));
 }
 
 async function currentPackageVersion(): Promise<string> {
@@ -224,6 +264,7 @@ export async function doctorVault(rootDir: string, options: DoctorVaultOptions =
   });
 
   const status = worstStatus(checks);
+  const recommendations = buildRecommendations(checks);
   return {
     ok: status === "ok",
     status,
@@ -242,6 +283,7 @@ export async function doctorVault(rootDir: string, options: DoctorVaultOptions =
       pendingSemanticRefresh: watchStatus.pendingSemanticRefresh.length
     },
     checks,
+    recommendations,
     repaired
   };
 }

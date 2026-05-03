@@ -53,7 +53,7 @@ swarmvault demo
 - **Share kit** —— `wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/`、`swarmvault graph share --post`、`swarmvault graph share --svg` 和 `swarmvault graph share --bundle`，用于复制、可视化和 HTML 预览式首轮扫描摘要
 - **Context packs** —— `swarmvault context build "<goal>"` 会在 `wiki/context/` 与 `state/context-packs/` 写入带引用、受 token 预算约束的 agent handoff
 - **Agent task ledger** —— `swarmvault task start|update|finish|resume` 会在 `wiki/memory/` 与 `state/memory/` 写入本地、可进 git 的任务记录；`memory` 仍是兼容别名
-- **Vault doctor 和工作台** —— `swarmvault doctor [--repair]`、MCP `doctor_vault` 与图谱查看器工作台可从一个入口检查 graph、retrieval、review、watch、migration、managed sources 和 task 状态，并显示详细检查、建议命令、安全修复、明确的 capture mode 与带预算的 agent handoff
+- **Vault doctor 和工作台** —— `swarmvault doctor [--repair]`、MCP `doctor_vault` 与图谱查看器工作台可从一个入口检查 graph、retrieval、review、watch、migration、managed sources 和 task 状态，并显示优先级 next action、详细检查、可复制命令、安全修复、明确的 capture mode 与带预算的 agent handoff
 
 ### 三层架构
 
@@ -183,7 +183,7 @@ swarmvault graph push neo4j --dry-run
 
 需要把有边界的上下文交给 agent？`swarmvault context build "Ship this feature safely" --target ./src --budget 8000` 会把图谱遍历、本地搜索命中、freshness、evidence class 和引用合成为保存下来的 context pack。`--format llms` 会输出类似 `llms.txt` 的 handoff，`context list` 可查看历史 pack，`context show <id>` 可重新打印。对于持续更久的工作，`swarmvault task start "<goal>" --target <path-or-node>` 会创建持久任务账本，`task update` 记录 note、decision、changed path 和关联 pack，`task resume <id>` 输出下一个 agent 可接手的 handoff。既有的 `memory` 命令和 `--memory <id>` 仍作为兼容别名可用。
 
-需要在交给 agent 或打开 viewer 前做一次快速健康检查？`swarmvault doctor` 会检查 graph、retrieval、review queue、watch status、migration state、managed sources 和 task ledger。加上 `--repair` 可重建安全的派生 retrieval artifact。`swarmvault graph serve` 会在工作台里显示每一项 doctor check、详情和可复制的建议命令，并提供明确的 capture mode、context-pack 创建和带 token budget 的 task-start 操作。
+需要在交给 agent 或打开 viewer 前做一次快速健康检查？`swarmvault doctor` 会检查 graph、retrieval、review queue、watch status、migration state、managed sources 和 task ledger。加上 `--repair` 可重建安全的派生 retrieval artifact。`swarmvault graph serve` 会在工作台里显示优先级 next action、每一项 doctor check、详情和可复制的建议命令，并提供安全直接修复、明确的 capture mode、title/tag 捕获字段、context-pack 创建和带 token budget 的 task-start 操作。
 
 如果你想在还没准备真实素材前就先做一次零配置体验，也可以运行 `swarmvault demo --no-serve`。它会创建一个临时示例 vault，写入内置来源并立即完成编译。
 
@@ -391,7 +391,7 @@ clawhub install swarmvault
 
 **Agent task ledger** - `swarmvault task start|update|finish|resume` 会把任务目标、关联 context pack、decision、图谱证据、触达路径、结果和 follow-up 记录为 git-friendly JSON 与 Markdown，写入 `state/memory/tasks/` 和 `wiki/memory/tasks/`。Compile 会把 task 与 decision 纳入图谱；既有 `memory` 命令仍是兼容别名。
 
-**Vault doctor 与工作台** - `swarmvault doctor [--repair]` 会检查 graph artifact、retrieval、review queue、watch state、migration、managed sources、source/page count 和 task 状态。图谱查看器工作台会显示每一项检查及详情、可复制建议命令、安全 repair、明确 capture mode、带预算的 context-pack 创建和 task-start 操作。
+**Vault doctor 与工作台** - `swarmvault doctor [--repair]` 会检查 graph artifact、retrieval、review queue、watch state、migration、managed sources、source/page count 和 task 状态。图谱查看器工作台会显示优先级 next action、每一项检查及详情、可复制建议命令、安全 repair、明确 capture mode、title/tag 捕获字段、带预算的 context-pack 创建和 task-start 操作。
 
 **可审查的变更流** - `compile --approve` 会把变更先写入 approval bundles。新概念和实体会先进入 `wiki/candidates/`，不会静默修改。
 
@@ -427,7 +427,7 @@ clawhub install swarmvault
 
 **MCP server** - `swarmvault mcp` 通过 stdio 把知识库暴露给任意兼容的代理客户端，包括 context-pack、task ledger、兼容 memory-task、vault doctor 与 retrieval health 工具。
 
-**内置浏览器剪藏器** - `graph serve` 会暴露本地 `/api/bookmarklet` 页面和 `/api/clip` 接口，让正在运行的 vault 可以从工作台或 bookmarklet 收录当前浏览器 URL、选中文本、Markdown、HTML 片段和标签。
+**内置浏览器剪藏器** - `graph serve` 会暴露本地 `/api/bookmarklet` 页面和 `/api/clip` 接口，让正在运行的 vault 可以从工作台或 bookmarklet 收录当前浏览器 URL、页面标题、选中文本、Markdown、HTML 片段和标签。URL-only bookmarklet 剪藏会使用 normalized `add`，选中文本会走 inbox 导入路径。
 
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 

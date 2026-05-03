@@ -14,7 +14,7 @@ The viewer loads graph data from `/api/graph` and renders:
 - agent task and decision nodes
 - extracted, inferred, conflicted, and stale edge states
 - the workflow rail for approvals, candidates, refresh state, lint findings, activity, and the Memory dashboard
-- the vault workbench for full doctor checks, copyable suggested commands, safe repair, capture mode selection, budgeted context-pack creation, and task starts
+- the vault workbench for prioritized doctor recommendations, full doctor checks, copyable suggested commands, safe repair, title/tag capture mode selection, budgeted context-pack creation, and task starts
 
 Its main purpose is to support the SwarmVault runtime, but the package also exports lightweight types and helpers for custom integrations.
 

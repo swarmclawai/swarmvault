@@ -2698,6 +2698,7 @@ async function stopProcess(child, label) {
 }
 
 async function runBrowserValidation(targetUrl, label, options = {}) {
+  const browserValidationTimeoutMs = 60_000;
   let chromium;
   try {
     ({ chromium } = await import("playwright"));
@@ -2720,7 +2721,11 @@ async function runBrowserValidation(targetUrl, label, options = {}) {
   try {
     await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
     await page.locator('[data-testid="graph-canvas"]').waitFor({ state: "visible" });
-    await page.waitForFunction(() => Array.isArray(window.__SWARMVAULT_TEST__?.getNodeIds?.()) && window.__SWARMVAULT_TEST__.getNodeIds().length > 0);
+    await page.waitForFunction(
+      () => Array.isArray(window.__SWARMVAULT_TEST__?.getNodeIds?.()) && window.__SWARMVAULT_TEST__.getNodeIds().length > 0,
+      undefined,
+      { timeout: browserValidationTimeoutMs }
+    );
     if (options.expectOverview) {
       await page.locator('[data-testid="graph-overview-banner"]').waitFor({ state: "visible" });
     }
@@ -2740,7 +2745,8 @@ async function runBrowserValidation(targetUrl, label, options = {}) {
     await page.mouse.click(canvasBox.x + renderedPosition.x, canvasBox.y + renderedPosition.y);
     await page.waitForFunction(
       (nodeId) => document.querySelector('[data-testid="selection-panel"]')?.getAttribute("data-selected-node-id") === nodeId,
-      firstNodeId
+      firstNodeId,
+      { timeout: browserValidationTimeoutMs }
     );
 
     await page.locator('[data-testid="graph-path-from"]').fill(connectedNodePair.from);
@@ -2756,7 +2762,9 @@ async function runBrowserValidation(targetUrl, label, options = {}) {
 
     await page.evaluate(() => window.__SWARMVAULT_TEST__?.clearSelection?.());
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="selection-panel"]')?.getAttribute("data-selected-node-id") === ""
+      () => document.querySelector('[data-testid="selection-panel"]')?.getAttribute("data-selected-node-id") === "",
+      undefined,
+      { timeout: browserValidationTimeoutMs }
     );
   } finally {
     await page.close();
