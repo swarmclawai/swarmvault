@@ -316,7 +316,7 @@ swarmvault source reload --all
 
 ```bash
 swarmvault install --agent claude --hook    # Claude Code + graph-first hook
-swarmvault install --agent codex            # Codex
+swarmvault install --agent codex --hook     # Codex + graph-first hook
 swarmvault install --agent cursor           # Cursor
 swarmvault install --agent copilot --hook   # GitHub Copilot CLI + hook
 swarmvault install --agent gemini --hook    # Gemini CLI + hook
@@ -415,7 +415,7 @@ clawhub install swarmvault
 
 **ビジュアル + 投稿しやすい share kit** - すべての compile が `wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` を生成します。`swarmvault graph share --post` は短いテキストを出力し、`swarmvault graph share --svg [path]` は 1200x630 のビジュアルカードを書き出し、`swarmvault graph share --bundle [dir]` は markdown、投稿テキスト、SVG、HTML preview、JSON metadata を書き出して、投稿、リンク共有、スクリーンショットに使いやすくします。
 
-**graph blast radius と report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
+**graph blast radius、refresh、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
 
 **グラフ diff** - `swarmvault diff` は現在のナレッジグラフを最後にコミットされたバージョンと比較し、追加/削除されたノード、エッジ、ページを表示して、compile で何が変わったかを正確に確認できます。
 
@@ -425,9 +425,9 @@ clawhub install swarmvault
 
 **任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 
-**16 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid、Kiro、Hermes、Google Antigravity、VS Code Copilot Chat 用のインストール規則があります。任意の graph-first hooks により、対応エージェントは広い検索の前に wiki を優先します。
+**16 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid、Kiro、Hermes、Google Antigravity、VS Code Copilot Chat 用のインストール規則があります。任意の graph-first hooks により、Codex を含む対応エージェントは広い検索の前に wiki を優先します。
 
-**MCP server** - `swarmvault mcp` は context-pack、task-ledger、互換 memory-task、vault doctor、retrieval health tools を含むボルト操作を stdio 経由で互換エージェントクライアントへ公開します。
+**MCP server** - `swarmvault mcp` は graph stats、community lookup、hyperedges、context-pack、task-ledger、互換 memory-task、vault doctor、retrieval health tools を含むボルト操作を stdio 経由で互換エージェントクライアントへ公開します。
 
 **組み込みブラウザ clipper** - `graph serve` はローカルの `/api/bookmarklet` ページと `/api/clip` エンドポイントを公開し、workbench または bookmarklet から現在のブラウザ URL、ページタイトル、選択テキスト、Markdown、HTML excerpt、tags を実行中の vault に取り込めます。URL-only bookmarklet clip は normalized `add` を使い、選択テキストは inbox import path で取り込みます。
 
@@ -455,7 +455,7 @@ clawhub install swarmvault
 
 | Agent | インストールコマンド |
 |-------|----------------------|
-| Codex | `swarmvault install --agent codex` |
+| Codex | `swarmvault install --agent codex --hook` |
 | Claude Code | `swarmvault install --agent claude` |
 | Cursor | `swarmvault install --agent cursor` |
 | Goose | `swarmvault install --agent goose` |
@@ -504,7 +504,7 @@ clawhub install swarmvault
 | Windsurf | `swarmvault install --agent windsurf` |
 | Zencoder | `swarmvault install --agent zencoder` |
 
-Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応しており、graph-first の文脈注入ができます。拡張ロスターのエージェントは、対象ツールが規定する skills ディレクトリにプロジェクト単位の skill バンドルを書き込みます（例: `.cline/skills/swarmvault/SKILL.md`、`.codeium/windsurf/skills/swarmvault/SKILL.md`）。
+Codex、Claude Code、OpenCode、Gemini CLI、Copilot は `--hook` にも対応しており、graph-first の文脈注入ができます。拡張ロスターのエージェントは、対象ツールが規定する skills ディレクトリにプロジェクト単位の skill バンドルを書き込みます（例: `.cline/skills/swarmvault/SKILL.md`、`.codeium/windsurf/skills/swarmvault/SKILL.md`）。
 
 <!-- readme-section:worked-examples -->
 ## 実例

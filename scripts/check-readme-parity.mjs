@@ -49,7 +49,7 @@ const requiredSubstrings = [
   "swarmvault graph serve",
   "swarmvault graph push neo4j --dry-run",
   "swarmvault install --agent claude --hook",
-  "swarmvault install --agent codex",
+  "swarmvault install --agent codex --hook",
   "swarmvault install --agent copilot --hook",
   "swarmvault install --agent gemini --hook",
   "swarmvault install --agent kiro",

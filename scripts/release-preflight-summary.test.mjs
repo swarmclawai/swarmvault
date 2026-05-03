@@ -9,7 +9,7 @@ test("formats and writes release preflight summaries", async () => {
   const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), "swarmvault-preflight-summary-"));
   try {
     const summary = createPreflightSummary({
-      version: "3.4.0",
+      version: "3.5.0",
       repoRoot: "/repo/opensource",
       webRoot: "/repo/web",
       startedAt: "2026-05-03T10:00:00.000Z",
@@ -32,14 +32,14 @@ test("formats and writes release preflight summaries", async () => {
 
     assert.equal(summary.status, "passed");
     const markdown = formatPreflightSummaryMarkdown(summary);
-    assert.match(markdown, /SwarmVault 3\.4\.0 Release Preflight/);
+    assert.match(markdown, /SwarmVault 3\.5\.0 Release Preflight/);
     assert.match(markdown, /pnpm check/);
     assert.match(markdown, /browser smoke/);
     assert.match(markdown, /\/tmp\/engine\.tgz/);
 
     const written = await writePreflightSummary(summary, outputDir);
     const saved = JSON.parse(await fs.readFile(written.jsonPath, "utf8"));
-    assert.equal(saved.version, "3.4.0");
+    assert.equal(saved.version, "3.5.0");
     assert.match(await fs.readFile(written.markdownPath, "utf8"), /OSS corpus: passed/);
   } finally {
     await fs.rm(outputDir, { recursive: true, force: true });

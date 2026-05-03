@@ -142,9 +142,9 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
 - start `graph serve` and verify HTML plus `/api/graph`, `/api/search`, `/api/page`, `/api/asset`, `/api/candidates`, and `/api/reviews`
 - promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
-- run `watch --lint` and `watch --repo --code-only --once` against the published install and verify `state/jobs.ndjson`, watch sessions, and the code-only refresh path
+- run `watch --lint`, `watch --repo --code-only --once`, and `graph update .` against the published install and verify `state/jobs.ndjson`, watch sessions, and the code-only refresh path
 - start `mcp` and call tools over stdio, including `search_pages` and chart-format `query_vault`
-- run `install --agent codex`
+- run `install --agent codex --hook`
 - run `install --agent claude`
 - run `install --agent opencode --hook`
 - run `install --agent gemini --hook`

@@ -72,6 +72,7 @@ const claudeSessionMatchers = ["startup", "resume", "clear", "compact"] as const
 const geminiSessionMatcher = "startup";
 const geminiSearchMatcher = "glob|grep|search|find";
 const copilotHookVersion = 1;
+const codexSearchMatcher = "Bash";
 
 type JsonWarningResult<T> = {
   data: T;
@@ -100,6 +101,19 @@ type GeminiSettings = {
     BeforeTool?: Array<{
       matcher?: string;
       hooks?: Array<{ name?: string; type?: string; command?: string }>;
+    }>;
+  };
+};
+
+type CodexSettings = {
+  hooks?: {
+    SessionStart?: Array<{
+      matcher?: string;
+      hooks?: Array<{ type?: string; command?: string }>;
+    }>;
+    PreToolUse?: Array<{
+      matcher?: string;
+      hooks?: Array<{ type?: string; command?: string }>;
     }>;
   };
 };
@@ -324,7 +338,7 @@ function buildCursorRule(): string {
 }
 
 function supportsAgentHook(agent: AgentType): boolean {
-  return agent === "claude" || agent === "opencode" || agent === "gemini" || agent === "copilot";
+  return agent === "codex" || agent === "claude" || agent === "opencode" || agent === "gemini" || agent === "copilot";
 }
 
 function primaryTargetPathForAgent(rootDir: string, agent: AgentType): string {
@@ -368,6 +382,8 @@ function primaryTargetPathForAgent(rootDir: string, agent: AgentType): string {
 
 function hookScriptPathForAgent(rootDir: string, agent: AgentType): string | null {
   switch (agent) {
+    case "codex":
+      return path.join(rootDir, ".codex", "hooks", "swarmvault-graph-first.js");
     case "claude":
       return path.join(rootDir, ".claude", "hooks", "swarmvault-graph-first.js");
     case "opencode":
@@ -383,6 +399,8 @@ function hookScriptPathForAgent(rootDir: string, agent: AgentType): string | nul
 
 function hookConfigPathForAgent(rootDir: string, agent: AgentType): string | null {
   switch (agent) {
+    case "codex":
+      return path.join(rootDir, ".codex", "hooks.json");
     case "claude":
       return path.join(rootDir, ".claude", "settings.json");
     case "gemini":
@@ -556,6 +574,45 @@ async function installGeminiHook(rootDir: string): Promise<{ paths: string[]; wa
   return { paths: [settingsPath, scriptPath], warnings: [] };
 }
 
+async function installCodexHook(rootDir: string): Promise<{ paths: string[]; warnings: string[] }> {
+  const settingsPath = path.join(rootDir, ".codex", "hooks.json");
+  const scriptPath = path.join(rootDir, ".codex", "hooks", "swarmvault-graph-first.js");
+  await writeOwnedFile(scriptPath, await readBuiltHook("codex.js"), true);
+
+  const { data: settings, warnings } = await readJsonWithWarnings<CodexSettings>(settingsPath, {}, ".codex/hooks.json");
+  if (warnings.length > 0 && (await fileExists(settingsPath))) {
+    return { paths: [settingsPath, scriptPath], warnings };
+  }
+
+  const hooks = settings.hooks ?? {};
+  const sessionStart = hooks.SessionStart ?? [];
+  const preToolUse = hooks.PreToolUse ?? [];
+  const sessionCommand = "node .codex/hooks/swarmvault-graph-first.js session-start";
+  const preToolUseCommand = "node .codex/hooks/swarmvault-graph-first.js pre-tool-use";
+
+  if (!sessionStart.some((entry) => JSON.stringify(entry).includes("swarmvault-graph-first.js"))) {
+    sessionStart.push({
+      hooks: [{ type: "command", command: sessionCommand }]
+    });
+  }
+
+  if (!preToolUse.some((entry) => entry.matcher === codexSearchMatcher && JSON.stringify(entry).includes("swarmvault-graph-first.js"))) {
+    preToolUse.push({
+      matcher: codexSearchMatcher,
+      hooks: [{ type: "command", command: preToolUseCommand }]
+    });
+  }
+
+  settings.hooks = {
+    ...hooks,
+    SessionStart: sessionStart,
+    PreToolUse: preToolUse
+  };
+
+  await writeOwnedFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  return { paths: [settingsPath, scriptPath], warnings: [] };
+}
+
 async function mergeAiderConfig(rootDir: string): Promise<{ path: string; warnings: string[] }> {
   const configPath = path.join(rootDir, ".aider.conf.yml");
   const readTarget = "CONVENTIONS.md";
@@ -713,6 +770,10 @@ export async function installAgent(rootDir: string, agent: AgentType, options: I
   }
 
   if (options.hook && supportsAgentHook(agent)) {
+    if (agent === "codex") {
+      const result = await installCodexHook(rootDir);
+      warnings.push(...result.warnings);
+    }
     if (agent === "claude") {
       const result = await installClaudeHook(rootDir);
       warnings.push(...result.warnings);

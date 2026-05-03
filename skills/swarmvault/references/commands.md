@@ -72,6 +72,8 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph update ./src
+swarmvault graph refresh
 swarmvault graph export --html ./graph.html
 swarmvault graph export --report ./graph-report.html
 swarmvault graph export --html ./graph.html --full
@@ -87,6 +89,7 @@ swarmvault mcp
 ```bash
 swarmvault watch --lint --repo
 swarmvault watch --repo --code-only --once
+swarmvault graph update .
 swarmvault watch status
 swarmvault hook install
 swarmvault schedule list
@@ -96,7 +99,7 @@ swarmvault schedule run <job-id>
 ## Agent Installs
 
 ```bash
-swarmvault install --agent codex
+swarmvault install --agent codex --hook
 swarmvault install --agent claude --hook
 swarmvault install --agent gemini --hook
 swarmvault install --agent opencode --hook

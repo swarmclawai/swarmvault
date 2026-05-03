@@ -21,7 +21,9 @@ import {
   compileVault,
   consolidateVault,
   explainGraphVault,
+  getGraphCommunityVault,
   getWorkspaceInfo,
+  graphStatsVault,
   lintVault,
   listApprovals,
   listGodNodes,
@@ -41,7 +43,7 @@ import {
 } from "./vault.js";
 import { getWatchStatus } from "./watch.js";
 
-const SERVER_VERSION = "3.4.0";
+const SERVER_VERSION = "3.5.0";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -184,6 +186,16 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
   );
 
   server.registerTool(
+    "graph_stats",
+    {
+      description: "Return lightweight counts for graph nodes, evidence classes, source classes, communities, pages, and edges."
+    },
+    safeHandler(async () => {
+      return asToolText(await graphStatsVault(rootDir));
+    })
+  );
+
+  server.registerTool(
     "get_node",
     {
       description: "Explain a graph node, its page, community, neighbors, and group patterns.",
@@ -193,6 +205,20 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
     },
     safeHandler(async ({ target }) => {
       return asToolText(await explainGraphVault(rootDir, target));
+    })
+  );
+
+  server.registerTool(
+    "get_community",
+    {
+      description: "Return members, pages, and top evidence edges for a graph community by id or label.",
+      inputSchema: {
+        target: z.string().min(1).describe("Community id or label"),
+        limit: z.number().int().min(1).max(100).optional().describe("Maximum evidence edges to return")
+      }
+    },
+    safeHandler(async ({ target, limit }) => {
+      return asToolText(await getGraphCommunityVault(rootDir, target, limit ?? 25));
     })
   );
 

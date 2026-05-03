@@ -116,9 +116,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.4.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.5.0";
   } catch {
-    return "3.4.0";
+    return "3.5.0";
   }
 }
 
@@ -1389,6 +1389,29 @@ program
 const graph = program.command("graph").description("Graph-related commands.").enablePositionalOptions();
 const graphPush = graph.command("push").description("Push the compiled graph into external sinks.");
 
+graph
+  .command("update")
+  .alias("refresh")
+  .description("Refresh code-derived graph artifacts from tracked repo roots or one explicit repo path.")
+  .argument("[path]", "Optional repo root to refresh instead of configured/tracked roots")
+  .option("--lint", "Run lint after the refresh cycle", false)
+  .action(async (targetPath: string | undefined, options: { lint?: boolean }) => {
+    const overrideRoots = targetPath ? [path.resolve(process.cwd(), targetPath)] : undefined;
+    const result = await runWatchCycle(process.cwd(), {
+      repo: true,
+      codeOnly: true,
+      lint: options.lint ?? false,
+      overrideRoots
+    });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(
+      `Updated graph from ${result.watchedRepoRoots.length} repo root${result.watchedRepoRoots.length === 1 ? "" : "s"}. Imported ${result.repoImportedCount}, updated ${result.repoUpdatedCount}, removed ${result.repoRemovedCount}, pending semantic refresh ${result.pendingSemanticRefreshCount}.`
+    );
+  });
+
 graphPush
   .command("neo4j")
   .description("Push the compiled graph directly into Neo4j over Bolt/Aura.")
@@ -2252,9 +2275,9 @@ program
         | "zencoder";
       hook?: boolean;
     }) => {
-      const hookCapableAgents = new Set(["claude", "opencode", "gemini", "copilot"]);
+      const hookCapableAgents = new Set(["codex", "claude", "opencode", "gemini", "copilot"]);
       if (options.hook && !hookCapableAgents.has(options.agent)) {
-        throw new Error("--hook is only supported for --agent claude, opencode, gemini, or copilot");
+        throw new Error("--hook is only supported for --agent codex, claude, opencode, gemini, or copilot");
       }
       const result = await installAgent(process.cwd(), options.agent, { hook: options.hook ?? false });
       if (isJson()) {

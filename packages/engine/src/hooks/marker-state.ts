@@ -124,6 +124,52 @@ export function isBroadSearchTool(toolName: string): boolean {
   return /grep|glob|search|find/i.test(toolName);
 }
 
+function collectCommandCandidates(node: unknown, acc: string[] = []): string[] {
+  if (!node || typeof node !== "object") {
+    return acc;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      collectCommandCandidates(item, acc);
+    }
+    return acc;
+  }
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (["command", "cmd", "script", "bash", "shell"].includes(key) && typeof value === "string") {
+      acc.push(value);
+      continue;
+    }
+    collectCommandCandidates(value, acc);
+  }
+  return acc;
+}
+
+function commandLooksLikeBroadSearch(command: string): boolean {
+  const tokens = command
+    .replace(/[;&|()]/g, " ")
+    .split(/\s+/)
+    .map((token) => path.basename(token.replace(/^['"]|['"]$/g, "")))
+    .filter(Boolean);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (["rg", "grep", "find", "fd", "ag", "ack"].includes(token)) {
+      return true;
+    }
+    if (token === "git" && tokens[index + 1] === "grep") {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isBroadSearchInput(input: unknown): boolean {
+  const toolName = resolveToolName(input);
+  if (isBroadSearchTool(toolName)) {
+    return true;
+  }
+  return collectCommandCandidates(input).some(commandLooksLikeBroadSearch);
+}
+
 export async function readHookInput(): Promise<unknown> {
   let body = "";
   for await (const chunk of process.stdin) {

@@ -166,7 +166,7 @@ Generated guided artifacts and dashboards also carry Dataview-friendly fields su
 
 Supported agent installs:
 
-- `swarmvault install --agent codex`
+- `swarmvault install --agent codex --hook`
 - `swarmvault install --agent claude --hook`
 - `swarmvault install --agent cursor`
 - `swarmvault install --agent gemini --hook`
@@ -219,7 +219,7 @@ Expose the vault over MCP with:
 swarmvault mcp
 ```
 
-The MCP surface includes context-pack build/read/list, task start/update/finish/list/read/resume, compatibility memory task, `doctor_vault`, and retrieval status/rebuild/doctor tools so host agents can request bounded evidence, keep a durable task ledger, and inspect vault health without shelling out to the CLI.
+The MCP surface includes graph stats, community lookup, hyperedges, context-pack build/read/list, task start/update/finish/list/read/resume, compatibility memory task, `doctor_vault`, and retrieval status/rebuild/doctor tools so host agents can request bounded evidence, keep a durable task ledger, and inspect vault health without shelling out to the CLI.
 
 ## Links
 

@@ -1628,6 +1628,38 @@ try {
       );
     });
 
+    await runStep("graph-update", async () => {
+      await fs.writeFile(
+        path.join(workspaceDir, "apps", "alpha", "src", "widget.ts"),
+        [
+          "import { formatLabel } from './util';",
+          "",
+          "export function renderWidget(name: string): string {",
+          "  return `<strong>${formatLabel(name)}</strong>`;",
+          "}",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+      const result = await runCliJson(["graph", "update", "."]);
+      assert.ok(result.watchedRepoRoots.some((entry) => path.resolve(entry) === path.resolve(workspaceDir)), "graph update did not use the explicit repo root");
+      assert.ok(result.repoUpdatedCount > 0, "graph update did not report updated code sources");
+      assert.equal(
+        result.pendingSemanticRefreshCount,
+        (result.pendingSemanticRefreshPaths ?? []).length,
+        "graph update pending semantic refresh count should match returned paths"
+      );
+      assert.ok(
+        (result.pendingSemanticRefreshPaths ?? []).some((entry) => entry.endsWith("managed/repo/guide.md")),
+        "graph update should preserve the pending non-code semantic refresh entry"
+      );
+      const codeIndex = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "code-index.json"), "utf8"));
+      const updatedWidget = codeIndex.entries?.find((entry) => entry.repoRelativePath === "apps/alpha/src/widget.ts");
+      assert.ok(updatedWidget?.sourceId, "graph update did not refresh the widget code-index entry");
+      widgetModulePath = `code/${updatedWidget.sourceId}.md`;
+      await assertExists(path.join(workspaceDir, "wiki", widgetModulePath));
+    });
+
     await runStep("mcp", async () => {
       const { Client, StdioClientTransport } = await loadMcpClient();
       assert.ok(installedCli, "installed CLI has not been resolved yet");
@@ -1652,12 +1684,25 @@ try {
         const tools = await client.listTools();
         assert.ok(tools.tools.some((tool) => tool.name === "workspace_info"), "workspace_info MCP tool missing");
         assert.ok(tools.tools.some((tool) => tool.name === "query_vault"), "query_vault MCP tool missing");
+        assert.ok(tools.tools.some((tool) => tool.name === "graph_stats"), "graph_stats MCP tool missing");
+        assert.ok(tools.tools.some((tool) => tool.name === "get_community"), "get_community MCP tool missing");
 
         const workspaceInfo = await client.callTool({ name: "workspace_info", arguments: {} });
         const workspaceJson = JSON.parse(readToolText(workspaceInfo));
         assert.equal(await fs.realpath(workspaceJson.rootDir), await fs.realpath(workspaceDir), "workspace_info rootDir mismatch");
 
-        const searchResults = await client.callTool({ name: "search_pages", arguments: { query: "renderWidget", limit: 5 } });
+        const graphStats = await client.callTool({ name: "graph_stats", arguments: {} });
+        const graphStatsJson = JSON.parse(readToolText(graphStats));
+        assert.ok(graphStatsJson.counts.nodes > 0, "MCP graph_stats returned no graph nodes");
+
+        const graphArtifact = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "graph.json"), "utf8"));
+        const firstCommunity = graphArtifact.communities?.[0];
+        assert.ok(firstCommunity?.id, "compiled graph did not include a community for MCP get_community smoke");
+        const community = await client.callTool({ name: "get_community", arguments: { target: firstCommunity.id, limit: 5 } });
+        const communityJson = JSON.parse(readToolText(community));
+        assert.ok(Array.isArray(communityJson.nodes) && communityJson.nodes.length > 0, "MCP get_community returned no members");
+
+        const searchResults = await client.callTool({ name: "search_pages", arguments: { query: "renderWidget", limit: 25 } });
         const searchJson = JSON.parse(readToolText(searchResults));
         assert.ok(Array.isArray(searchJson) && searchJson.some((entry) => entry.path === widgetModulePath), "MCP search_pages did not return the module page");
 
@@ -1682,7 +1727,7 @@ try {
     });
 
     await runStep("install-agent", async () => {
-      const codex = await runCliJson(["install", "--agent", "codex"]);
+      const codex = await runCliJson(["install", "--agent", "codex", "--hook"]);
       const claude = await runCliJson(["install", "--agent", "claude", "--hook"]);
       const opencode = await runCliJson(["install", "--agent", "opencode", "--hook"]);
       const gemini = await runCliJson(["install", "--agent", "gemini", "--hook"]);
@@ -1711,6 +1756,8 @@ try {
       await assertSamePath(aider.target, path.join(workspaceDir, "CONVENTIONS.md"), "aider target path mismatch");
 
       await assertExists(path.join(workspaceDir, "AGENTS.md"));
+      await assertExists(path.join(workspaceDir, ".codex", "hooks.json"));
+      await assertExists(path.join(workspaceDir, ".codex", "hooks", "swarmvault-graph-first.js"));
       await assertExists(path.join(workspaceDir, "CLAUDE.md"));
       await assertExists(path.join(workspaceDir, ".claude", "settings.json"));
       await assertExists(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js"));
@@ -1725,6 +1772,8 @@ try {
       await assertExists(path.join(workspaceDir, ".github", "hooks", "swarmvault-graph-first.js"));
       await assertExists(path.join(workspaceDir, ".aider.conf.yml"));
       const agentsContent = await fs.readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
+      const codexHooksContent = await fs.readFile(path.join(workspaceDir, ".codex", "hooks.json"), "utf8");
+      const codexHookContent = await fs.readFile(path.join(workspaceDir, ".codex", "hooks", "swarmvault-graph-first.js"), "utf8");
       const claudeContent = await fs.readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
       const claudeSettingsContent = await fs.readFile(path.join(workspaceDir, ".claude", "settings.json"), "utf8");
       const claudeHookContent = await fs.readFile(path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js"), "utf8");
@@ -1733,6 +1782,9 @@ try {
       const copilotContent = await fs.readFile(path.join(workspaceDir, ".github", "copilot-instructions.md"), "utf8");
       const conventionsContent = await fs.readFile(path.join(workspaceDir, "CONVENTIONS.md"), "utf8");
       assert.ok(agentsContent.includes("# SwarmVault Rules"), "AGENTS.md missing managed rules");
+      assert.ok(codexHooksContent.includes("swarmvault-graph-first.js"), "codex hooks config missing hook helper");
+      assert.ok(codexHooksContent.includes('"Bash"'), "codex hooks config missing Bash matcher");
+      assert.ok(codexHookContent.includes("wiki/graph/report.md"), "codex hook helper missing graph report notice");
       assert.ok(claudeContent.includes("# SwarmVault Rules"), "CLAUDE.md missing managed rules");
       assert.ok(claudeSettingsContent.includes("swarmvault-graph-first.js"), "claude settings missing hook helper");
       assert.ok(claudeHookContent.includes("additionalContext"), "claude hook helper missing additionalContext output");
@@ -1742,6 +1794,9 @@ try {
       assert.ok(cursorContent.includes("# SwarmVault Rules"), "cursor rule missing managed rules");
       assert.ok(copilotContent.includes("# SwarmVault Repository Instructions"), "copilot instructions missing managed rules");
       assert.ok(conventionsContent.includes("# SwarmVault Conventions"), "CONVENTIONS.md missing managed rules");
+      assert.ok(
+        Array.isArray(codex.targets) && (await targetListIncludesPath(codex.targets, path.join(workspaceDir, ".codex", "hooks", "swarmvault-graph-first.js")))
+      );
       assert.ok(
         Array.isArray(claude.targets) && (await targetListIncludesPath(claude.targets, path.join(workspaceDir, ".claude", "hooks", "swarmvault-graph-first.js")))
       );

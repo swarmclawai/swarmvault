@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.5.0
+
+- Added `swarmvault install --agent codex --hook`, which writes `.codex/hooks.json` plus `.codex/hooks/swarmvault-graph-first.js` so Codex sessions are reminded to read `wiki/graph/report.md` before broad shell search.
+- Added `swarmvault graph update [path]` with `graph refresh` as an alias, wrapping the repo watch refresh path as a code-only graph update and preserving the same JSON shape as `watch --repo --code-only --once`.
+- Added MCP `graph_stats` and `get_community` helpers for lightweight graph counts and community member/page/evidence inspection.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.5.0`.
+
 ## 3.4.0
 
 - Added prioritized vault doctor recommendations to `swarmvault doctor`, MCP `doctor_vault`, and the graph viewer workbench, including safe direct repair metadata for retrieval rebuilds and copy-only commands for broader follow-up actions.

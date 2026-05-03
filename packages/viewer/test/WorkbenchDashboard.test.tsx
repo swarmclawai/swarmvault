@@ -10,7 +10,7 @@ const report: ViewerDoctorReport = {
   status: "warning",
   generatedAt: "2026-04-29T20:00:00.000Z",
   rootDir: "/tmp/vault",
-  version: "3.4.0",
+  version: "3.5.0",
   counts: {
     sources: 2,
     managedSources: 1,

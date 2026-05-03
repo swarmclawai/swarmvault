@@ -33,6 +33,11 @@ export default defineConfig([
   },
   {
     ...commonOptions,
+    entry: { codex: "src/hooks/codex.ts" },
+    banner: { js: "#!/usr/bin/env node" }
+  },
+  {
+    ...commonOptions,
     entry: { opencode: "src/hooks/opencode.ts" }
   }
 ]);

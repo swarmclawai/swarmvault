@@ -314,7 +314,7 @@ swarmvault source reload --all
 
 ```bash
 swarmvault install --agent claude --hook    # Claude Code + graph-first hook
-swarmvault install --agent codex            # Codex
+swarmvault install --agent codex --hook     # Codex + graph-first hook
 swarmvault install --agent cursor           # Cursor
 swarmvault install --agent copilot --hook   # GitHub Copilot CLI + hook
 swarmvault install --agent gemini --hook    # Gemini CLI + hook
@@ -413,7 +413,7 @@ clawhub install swarmvault
 
 **可视化 + 可直接发布的 share kit** - 每次 compile 都会写入 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`；`swarmvault graph share --post` 会打印简短文本，`swarmvault graph share --svg [path]` 会写出 1200x630 的可视化卡片，`swarmvault graph share --bundle [dir]` 会写出 markdown、发布文本、SVG、HTML 预览和 JSON 元数据，便于发布、链接或截图。
 
-**图谱 blast radius 与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
+**图谱 blast radius、refresh 与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
 
 **图谱 diff** - `swarmvault diff` 将当前知识图谱与上次提交的版本进行对比，显示新增/移除的节点、边和页面，让你清楚看到每次 compile 改变了什么。
 
@@ -423,9 +423,9 @@ clawhub install swarmvault
 
 **可选模型提供方** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、通用 OpenAI-compatible、自定义适配器，以及适合离线/本地默认流程的 heuristic。
 
-**16 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid、Kiro、Hermes、Google Antigravity 和 VS Code Copilot Chat。可选 graph-first hooks 会先引导支持的 agent 读取 wiki，再进行大范围搜索。
+**16 种 agent 集成** - 支持 Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid、Kiro、Hermes、Google Antigravity 和 VS Code Copilot Chat。可选 graph-first hooks 会先引导包括 Codex 在内的支持 agent 读取 wiki，再进行大范围搜索。
 
-**MCP server** - `swarmvault mcp` 通过 stdio 把知识库暴露给任意兼容的代理客户端，包括 context-pack、task ledger、兼容 memory-task、vault doctor 与 retrieval health 工具。
+**MCP server** - `swarmvault mcp` 通过 stdio 把知识库暴露给任意兼容的代理客户端，包括 graph stats、community lookup、hyperedges、context-pack、task ledger、兼容 memory-task、vault doctor 与 retrieval health 工具。
 
 **内置浏览器剪藏器** - `graph serve` 会暴露本地 `/api/bookmarklet` 页面和 `/api/clip` 接口，让正在运行的 vault 可以从工作台或 bookmarklet 收录当前浏览器 URL、页面标题、选中文本、Markdown、HTML 片段和标签。URL-only bookmarklet 剪藏会使用 normalized `add`，选中文本会走 inbox 导入路径。
 
@@ -453,7 +453,7 @@ clawhub install swarmvault
 
 | Agent | 安装命令 |
 |-------|----------|
-| Codex | `swarmvault install --agent codex` |
+| Codex | `swarmvault install --agent codex --hook` |
 | Claude Code | `swarmvault install --agent claude` |
 | Cursor | `swarmvault install --agent cursor` |
 | Goose | `swarmvault install --agent goose` |
@@ -502,7 +502,7 @@ clawhub install swarmvault
 | Windsurf | `swarmvault install --agent windsurf` |
 | Zencoder | `swarmvault install --agent zencoder` |
 
-Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用于 graph-first 上下文注入。扩展代理列表会在该工具默认的 skills 目录写入项目级 skill 包（例如 `.cline/skills/swarmvault/SKILL.md`、`.codeium/windsurf/skills/swarmvault/SKILL.md`）。
+Codex、Claude Code、OpenCode、Gemini CLI 和 Copilot 还支持 `--hook`，用于 graph-first 上下文注入。扩展代理列表会在该工具默认的 skills 目录写入项目级 skill 包（例如 `.cline/skills/swarmvault/SKILL.md`、`.codeium/windsurf/skills/swarmvault/SKILL.md`）。
 
 <!-- readme-section:worked-examples -->
 ## 示例项目

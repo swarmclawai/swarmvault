@@ -18,7 +18,9 @@ import {
   explainGraphVault,
   exportGraphFormat,
   getGitHookStatus,
+  getGraphCommunityVault,
   getWatchStatus,
+  graphStatsVault,
   importInbox,
   ingestDirectory,
   ingestInput,
@@ -680,6 +682,74 @@ describe("swarmvault workflow", () => {
     const settingsAgain = await fs.readFile(settingsPath, "utf8");
     expect(settingsAgain.match(/Glob\|Grep/g)?.length ?? 0).toBe(1);
     expect(settingsAgain.match(/swarmvault-graph-first\.js/g)?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("installs Codex rules with an optional graph-first pre-search hook", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    const codexTarget = await installAgent(rootDir, "codex", { hook: true });
+    expect(codexTarget.target).toBe(path.join(rootDir, "AGENTS.md"));
+    expect(codexTarget.targets).toContain(path.join(rootDir, ".codex", "hooks.json"));
+    expect(codexTarget.targets).toContain(path.join(rootDir, ".codex", "hooks", "swarmvault-graph-first.js"));
+
+    const hooksPath = path.join(rootDir, ".codex", "hooks.json");
+    const scriptPath = path.join(rootDir, ".codex", "hooks", "swarmvault-graph-first.js");
+    const hooks = JSON.parse(await fs.readFile(hooksPath, "utf8")) as {
+      hooks?: {
+        SessionStart?: Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>;
+        PreToolUse?: Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>;
+      };
+    };
+    expect(hooks.hooks?.SessionStart?.some((entry) => JSON.stringify(entry).includes("swarmvault-graph-first.js"))).toBe(true);
+    expect(hooks.hooks?.PreToolUse?.some((entry) => entry.matcher === "Bash")).toBe(true);
+    expect(await fs.readFile(scriptPath, "utf8")).toContain("REPORT_NOTE");
+
+    await fs.mkdir(path.join(rootDir, "wiki", "graph"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "wiki", "graph", "report.md"), "# Graph report\n", "utf8");
+
+    const sessionStart = JSON.parse(await runNodeScript(scriptPath, ["session-start"], JSON.stringify({ cwd: rootDir }), rootDir)) as {
+      priority?: string;
+      message?: string;
+    };
+    expect(sessionStart.priority).toBe("IMPORTANT");
+    expect(sessionStart.message).toContain("wiki/graph/report.md");
+
+    const firstSearch = JSON.parse(
+      await runNodeScript(
+        scriptPath,
+        ["pre-tool-use"],
+        JSON.stringify({ cwd: rootDir, tool_name: "Bash", tool_input: { command: "rg Widget ." } }),
+        rootDir
+      )
+    ) as { priority?: string; message?: string };
+    expect(firstSearch.priority).toBe("IMPORTANT");
+    expect(firstSearch.message).toContain("wiki/graph/report.md");
+
+    const reportRead = JSON.parse(
+      await runNodeScript(
+        scriptPath,
+        ["pre-tool-use"],
+        JSON.stringify({ cwd: rootDir, tool_name: "Read", tool_input: { file_path: "wiki/graph/report.md" } }),
+        rootDir
+      )
+    ) as Record<string, never>;
+    expect(reportRead).toEqual({});
+
+    const secondSearch = JSON.parse(
+      await runNodeScript(
+        scriptPath,
+        ["pre-tool-use"],
+        JSON.stringify({ cwd: rootDir, tool_name: "Bash", tool_input: { command: "grep Widget -R ." } }),
+        rootDir
+      )
+    ) as Record<string, never>;
+    expect(secondSearch).toEqual({});
+
+    await installAgent(rootDir, "codex", { hook: true });
+    const hooksAgain = await fs.readFile(hooksPath, "utf8");
+    expect(hooksAgain.match(/"Bash"/g)?.length ?? 0).toBe(1);
+    expect(hooksAgain.match(/swarmvault-graph-first\.js/g)?.length ?? 0).toBe(2);
   });
 
   it("installs gemini and opencode graph-first hook artifacts when requested", async () => {
@@ -1803,6 +1873,19 @@ describe("swarmvault workflow", () => {
     const explainResult = await explainGraphVault(rootDir, similarityEdges[0]?.source ?? "");
     expect(explainResult.hyperedges.length).toBeGreaterThan(0);
 
+    const stats = await graphStatsVault(rootDir);
+    expect(stats.counts.nodes).toBe(graph.nodes.length);
+    expect(stats.counts.pages).toBe(graph.pages.length);
+    expect(stats.nodeTypes.source).toBeGreaterThan(0);
+    expect(stats.evidenceClasses.inferred).toBeGreaterThan(0);
+
+    const firstCommunity = graph.communities?.[0];
+    expect(firstCommunity).toBeTruthy();
+    const community = await getGraphCommunityVault(rootDir, firstCommunity?.id ?? "");
+    expect(community.id).toBe(firstCommunity?.id);
+    expect(community.nodes.length).toBeGreaterThan(0);
+    expect(community.pages.length).toBeGreaterThan(0);
+
     const exportsDir = path.join(rootDir, "exports");
     const graphml = await exportGraphFormat(rootDir, "graphml", path.join(exportsDir, "graph.graphml"));
     const cypher = await exportGraphFormat(rootDir, "cypher", path.join(exportsDir, "graph.cypher"));
@@ -1819,6 +1902,8 @@ describe("swarmvault workflow", () => {
     const tools = await client.listTools();
     expect(tools.tools.some((tool) => tool.name === "graph_report")).toBe(true);
     expect(tools.tools.some((tool) => tool.name === "get_hyperedges")).toBe(true);
+    expect(tools.tools.some((tool) => tool.name === "graph_stats")).toBe(true);
+    expect(tools.tools.some((tool) => tool.name === "get_community")).toBe(true);
 
     const graphReport = await client.callTool({ name: "graph_report", arguments: {} });
     const graphReportContent = graphReport.content as ToolContent;
@@ -1827,6 +1912,14 @@ describe("swarmvault workflow", () => {
     const hyperedgeTool = await client.callTool({ name: "get_hyperedges", arguments: { limit: 5 } });
     const hyperedgeContent = hyperedgeTool.content as ToolContent;
     expect(JSON.parse(hyperedgeContent[0]?.text ?? "[]").length).toBeGreaterThan(0);
+
+    const graphStatsTool = await client.callTool({ name: "graph_stats", arguments: {} });
+    const graphStatsContent = graphStatsTool.content as ToolContent;
+    expect(JSON.parse(graphStatsContent[0]?.text ?? "{}").counts.nodes).toBe(graph.nodes.length);
+
+    const communityTool = await client.callTool({ name: "get_community", arguments: { target: firstCommunity?.label, limit: 5 } });
+    const communityContent = communityTool.content as ToolContent;
+    expect(JSON.parse(communityContent[0]?.text ?? "{}").nodes.length).toBeGreaterThan(0);
 
     await client.close();
     await server.close();

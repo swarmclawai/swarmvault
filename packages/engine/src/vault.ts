@@ -113,6 +113,7 @@ import type {
   ExploreResult,
   ExploreStepResult,
   GraphArtifact,
+  GraphCommunityResult,
   GraphEdge,
   GraphExplainResult,
   GraphHyperedge,
@@ -122,6 +123,7 @@ import type {
   GraphQueryResult,
   GraphReportArtifact,
   GraphShareBundleFile,
+  GraphStatsResult,
   InitOptions,
   LintFinding,
   LintOptions,
@@ -6132,6 +6134,125 @@ export async function explainGraphVault(rootDir: string, target: string): Promis
 export async function listGraphHyperedges(rootDir: string, target?: string, limit = 25): Promise<GraphHyperedge[]> {
   const graph = await ensureCompiledGraph(rootDir);
   return listHyperedges(graph, target, limit);
+}
+
+function incrementCount(record: Record<string, number>, key: string | undefined): void {
+  if (!key) {
+    return;
+  }
+  record[key] = (record[key] ?? 0) + 1;
+}
+
+export async function graphStatsVault(rootDir: string): Promise<GraphStatsResult> {
+  const graph = await ensureCompiledGraph(rootDir);
+  const sourceClasses = Object.fromEntries(
+    ALL_SOURCE_CLASSES.map((sourceClass) => [sourceClass, { sources: 0, pages: 0, nodes: 0 }])
+  ) as GraphStatsResult["sourceClasses"];
+  const nodeTypes: GraphStatsResult["nodeTypes"] = {};
+  const evidenceClasses: GraphStatsResult["evidenceClasses"] = {};
+  const edgeRelations: Record<string, number> = {};
+  const hyperedgeRelations: Record<string, number> = {};
+
+  for (const source of graph.sources) {
+    sourceClasses[source.sourceClass ?? "first_party"].sources += 1;
+  }
+  for (const page of graph.pages) {
+    sourceClasses[page.sourceClass ?? "first_party"].pages += 1;
+  }
+  for (const node of graph.nodes) {
+    nodeTypes[node.type] = (nodeTypes[node.type] ?? 0) + 1;
+    sourceClasses[node.sourceClass ?? "first_party"].nodes += 1;
+  }
+  for (const edge of graph.edges) {
+    incrementCount(edgeRelations, edge.relation);
+    evidenceClasses[edge.evidenceClass] = (evidenceClasses[edge.evidenceClass] ?? 0) + 1;
+  }
+  for (const hyperedge of graph.hyperedges) {
+    incrementCount(hyperedgeRelations, hyperedge.relation);
+    evidenceClasses[hyperedge.evidenceClass] = (evidenceClasses[hyperedge.evidenceClass] ?? 0) + 1;
+  }
+
+  return {
+    generatedAt: graph.generatedAt,
+    counts: {
+      sources: graph.sources.length,
+      pages: graph.pages.length,
+      nodes: graph.nodes.length,
+      edges: graph.edges.length,
+      hyperedges: graph.hyperedges.length,
+      communities: graph.communities?.length ?? 0
+    },
+    nodeTypes,
+    evidenceClasses,
+    sourceClasses,
+    edgeRelations,
+    hyperedgeRelations
+  };
+}
+
+export async function getGraphCommunityVault(rootDir: string, target: string, limit = 25): Promise<GraphCommunityResult> {
+  const graph = await ensureCompiledGraph(rootDir);
+  const communities = graph.communities ?? [];
+  const normalizedTarget = computeNormLabel(target);
+  const community = communities.find(
+    (entry) => entry.id === target || computeNormLabel(entry.id) === normalizedTarget || computeNormLabel(entry.label) === normalizedTarget
+  );
+  if (!community) {
+    throw new Error(`Could not resolve graph community: ${target}`);
+  }
+
+  const edgeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  const nodeIds = new Set(community.nodeIds);
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const pages = graph.pages
+    .filter((page) => page.nodeIds.some((nodeId) => nodeIds.has(nodeId)))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const edges = graph.edges
+    .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+    .sort(
+      (left, right) => right.confidence - left.confidence || left.relation.localeCompare(right.relation) || left.id.localeCompare(right.id)
+    );
+  const nodes = community.nodeIds
+    .map((nodeId) => nodeById.get(nodeId))
+    .filter((node): node is GraphNode => Boolean(node))
+    .sort((left, right) => (right.degree ?? 0) - (left.degree ?? 0) || left.label.localeCompare(right.label));
+
+  return {
+    generatedAt: graph.generatedAt,
+    id: community.id,
+    label: community.label,
+    nodeCount: nodes.length,
+    pageCount: pages.length,
+    edgeCount: edges.length,
+    nodes: nodes.map((node) => ({
+      id: node.id,
+      type: node.type,
+      label: node.label,
+      pageId: node.pageId,
+      sourceClass: node.sourceClass,
+      degree: node.degree,
+      bridgeScore: node.bridgeScore,
+      confidence: node.confidence
+    })),
+    pages: pages.map((page) => ({
+      id: page.id,
+      path: page.path,
+      title: page.title,
+      kind: page.kind,
+      sourceClass: page.sourceClass,
+      freshness: page.freshness
+    })),
+    edges: edges.slice(0, edgeLimit).map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceLabel: nodeById.get(edge.source)?.label,
+      targetLabel: nodeById.get(edge.target)?.label,
+      relation: edge.relation,
+      evidenceClass: edge.evidenceClass,
+      confidence: edge.confidence
+    }))
+  };
 }
 
 export async function readGraphReport(rootDir: string): Promise<GraphReportArtifact | null> {

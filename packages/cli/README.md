@@ -52,6 +52,7 @@ swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph blast ./src/index.ts
+swarmvault graph update .
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
 swarmvault watch status
@@ -372,6 +373,16 @@ When `--repo` sees only code-file changes under tracked repo roots, SwarmVault t
 
 Show watched repo roots, the latest watch run, and any pending semantic refresh entries for tracked non-code repo changes.
 
+### `swarmvault graph update [path]`
+
+Refresh code-derived graph artifacts from tracked repo roots or one explicit repo path.
+
+- aliases to `swarmvault graph refresh [path]`
+- runs the same code-only repo refresh path as `swarmvault watch --repo --code-only --once`
+- without `path`, uses configured or auto-discovered watched repo roots
+- with `path`, refreshes that repo root instead of the tracked set
+- `--json` returns the same one-shot watch result shape, including repo import/update/remove counts and pending semantic refresh entries
+
 ### `swarmvault hook install|uninstall|status`
 
 Manage SwarmVault's local git hook blocks for the nearest git repository.
@@ -414,8 +425,17 @@ Run SwarmVault as a local MCP server over stdio. This exposes the vault to compa
 - `rebuild_retrieval`
 - `doctor_retrieval`
 - `doctor_vault`
+- `query_graph`
+- `graph_report`
+- `graph_stats`
+- `get_node`
+- `get_community`
+- `get_neighbors`
+- `get_hyperedges`
+- `shortest_path`
+- `god_nodes`
 
-`compile_vault` also accepts `maxTokens` for bounded wiki output, `blast_radius` traces reverse import impact for a file or module target, `build_context_pack` creates the same bounded agent evidence bundles as `swarmvault context build`, the task tools mirror `swarmvault task`, the memory tools mirror the compatibility command group, `doctor_vault` mirrors `swarmvault doctor`, and retrieval tools inspect or repair the local index.
+`compile_vault` also accepts `maxTokens` for bounded wiki output, `graph_stats` returns lightweight graph counts, `get_community` resolves community members and pages, `blast_radius` traces reverse import impact for a file or module target, `build_context_pack` creates the same bounded agent evidence bundles as `swarmvault context build`, the task tools mirror `swarmvault task`, the memory tools mirror the compatibility command group, `doctor_vault` mirrors `swarmvault doctor`, and retrieval tools inspect or repair the local index.
 
 The MCP surface also exposes `swarmvault://schema`, `swarmvault://sessions`, `swarmvault://sessions/{path}`, `swarmvault://context-packs`, `swarmvault://tasks`, `swarmvault://memory-tasks`, and includes `schemaPath` in `workspace_info`.
 
@@ -510,6 +530,7 @@ Install agent-specific rules into the current project so an agent understands th
 Hook-capable installs:
 
 ```bash
+swarmvault install --agent codex --hook
 swarmvault install --agent claude --hook
 swarmvault install --agent gemini --hook
 swarmvault install --agent opencode --hook
@@ -530,6 +551,7 @@ Agent target mapping:
 
 Hook semantics:
 
+- `codex --hook` writes `.codex/hooks.json` plus `.codex/hooks/swarmvault-graph-first.js` and emits model-visible guidance before broad shell search
 - `claude --hook` writes `.claude/settings.json` plus `.claude/hooks/swarmvault-graph-first.js` and adds model-visible advisory context through structured hook JSON
 - `gemini --hook` writes `.gemini/settings.json` plus `.gemini/hooks/swarmvault-graph-first.js` and stays advisory/model-visible
 - `opencode --hook` writes `.opencode/plugins/swarmvault-graph-first.js` and stays advisory/log-only

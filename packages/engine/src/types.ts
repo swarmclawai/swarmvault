@@ -1028,6 +1028,60 @@ export interface GraphArtifact {
   pages: GraphPage[];
 }
 
+export interface GraphStatsResult {
+  generatedAt: string;
+  counts: {
+    sources: number;
+    pages: number;
+    nodes: number;
+    edges: number;
+    hyperedges: number;
+    communities: number;
+  };
+  nodeTypes: Partial<Record<GraphNode["type"], number>>;
+  evidenceClasses: Partial<Record<EvidenceClass, number>>;
+  sourceClasses: Record<SourceClass, { sources: number; pages: number; nodes: number }>;
+  edgeRelations: Record<string, number>;
+  hyperedgeRelations: Record<string, number>;
+}
+
+export interface GraphCommunityResult {
+  generatedAt: string;
+  id: string;
+  label: string;
+  nodeCount: number;
+  pageCount: number;
+  edgeCount: number;
+  nodes: Array<{
+    id: string;
+    type: GraphNode["type"];
+    label: string;
+    pageId?: string;
+    sourceClass?: SourceClass;
+    degree?: number;
+    bridgeScore?: number;
+    confidence?: number;
+  }>;
+  pages: Array<{
+    id: string;
+    path: string;
+    title: string;
+    kind: PageKind;
+    sourceClass?: SourceClass;
+    freshness: Freshness;
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    sourceLabel?: string;
+    targetLabel?: string;
+    relation: string;
+    evidenceClass: EvidenceClass;
+    confidence: number;
+  }>;
+}
+
 export interface GraphQueryMatch {
   type: "node" | "page" | "hyperedge";
   id: string;

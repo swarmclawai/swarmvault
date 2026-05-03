@@ -314,7 +314,7 @@ Set up your coding agent so it knows about the vault:
 
 ```bash
 swarmvault install --agent claude --hook    # Claude Code + graph-first hook
-swarmvault install --agent codex            # Codex
+swarmvault install --agent codex --hook     # Codex + graph-first hook
 swarmvault install --agent cursor           # Cursor
 swarmvault install --agent copilot --hook   # GitHub Copilot CLI + hook
 swarmvault install --agent gemini --hook    # Gemini CLI + hook
@@ -415,7 +415,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Visual + post-ready share kit** - every compile writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`; `swarmvault graph share --post` prints concise text, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, and `swarmvault graph share --bundle [dir]` writes markdown, post text, SVG, HTML preview, and JSON metadata for easy posting, linking, or screenshotting.
 
-**Graph blast radius and report export** - `graph blast <target>` traces reverse import impact through module dependencies, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
+**Graph blast radius, refresh, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 
 **Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
 
@@ -425,9 +425,9 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
-**16 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, GitHub Copilot CLI, Trae, Claw/OpenClaw, Droid, Kiro, Hermes, Google Antigravity, and VS Code Copilot Chat. Optional graph-first hooks bias supported agents toward the wiki before broad search.
+**16 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, GitHub Copilot CLI, Trae, Claw/OpenClaw, Droid, Kiro, Hermes, Google Antigravity, and VS Code Copilot Chat. Optional graph-first hooks bias supported agents, including Codex, toward the wiki before broad search.
 
-**MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio, including context-pack, task-ledger, compatibility memory-task, vault doctor, and retrieval health tools.
+**MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio, including graph stats, community lookup, hyperedges, context-pack, task-ledger, compatibility memory-task, vault doctor, and retrieval health tools.
 
 **Built-in browser clipper** - `graph serve` exposes a local `/api/bookmarklet` page and `/api/clip` endpoint so a running vault can capture the current browser URL, page title, selected text, markdown, HTML excerpts, and tags from the workbench or bookmarklet. URL-only bookmarklet clips use normalized `add`; selected text is imported through the inbox path.
 
@@ -455,7 +455,7 @@ Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know w
 
 | Agent | Install command |
 |-------|----------------|
-| Codex | `swarmvault install --agent codex` |
+| Codex | `swarmvault install --agent codex --hook` |
 | Claude Code | `swarmvault install --agent claude` |
 | Cursor | `swarmvault install --agent cursor` |
 | Goose | `swarmvault install --agent goose` |
@@ -504,7 +504,7 @@ Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know w
 | Windsurf | `swarmvault install --agent windsurf` |
 | Zencoder | `swarmvault install --agent zencoder` |
 
-Claude Code, OpenCode, Gemini CLI, and Copilot also support `--hook` for graph-first context injection. Agents in the extended roster install a project-level skill bundle at the tool's conventional skills directory (e.g. `.cline/skills/swarmvault/SKILL.md`, `.codeium/windsurf/skills/swarmvault/SKILL.md`).
+Codex, Claude Code, OpenCode, Gemini CLI, and Copilot also support `--hook` for graph-first context injection. Agents in the extended roster install a project-level skill bundle at the tool's conventional skills directory (e.g. `.cline/skills/swarmvault/SKILL.md`, `.codeium/windsurf/skills/swarmvault/SKILL.md`).
 
 <!-- readme-section:worked-examples -->
 ## Worked Examples
