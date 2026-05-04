@@ -5602,7 +5602,12 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
   };
 }
 
-export async function queryVault(rootDir: string, options: QueryOptions): Promise<QueryResult> {
+export async function queryVault(rootDir: string, rawOptions: QueryOptions): Promise<QueryResult> {
+  const question = normalizeWhitespace(rawOptions.question);
+  if (!question) {
+    throw new Error("Query question is required.");
+  }
+  const options: QueryOptions = { ...rawOptions, question };
   const startedAt = new Date().toISOString();
   const save = options.save ?? true;
   const review = options.review ?? false;
@@ -5721,7 +5726,12 @@ export async function queryVault(rootDir: string, options: QueryOptions): Promis
   };
 }
 
-export async function exploreVault(rootDir: string, options: ExploreOptions): Promise<ExploreResult> {
+export async function exploreVault(rootDir: string, rawOptions: ExploreOptions): Promise<ExploreResult> {
+  const question = normalizeWhitespace(rawOptions.question);
+  if (!question) {
+    throw new Error("Explore question is required.");
+  }
+  const options: ExploreOptions = { ...rawOptions, question };
   const startedAt = new Date().toISOString();
   const stepLimit = Math.max(1, options.steps ?? 3);
   const outputFormat = normalizeOutputFormat(options.format);
@@ -6087,12 +6097,16 @@ async function runResolvedGraphQuery(
 
 export async function queryGraphVault(
   rootDir: string,
-  question: string,
+  rawQuestion: string,
   options: {
     traversal?: "bfs" | "dfs";
     budget?: number;
   } = {}
 ): Promise<GraphQueryResult> {
+  const question = normalizeWhitespace(rawQuestion);
+  if (!question) {
+    throw new Error("Graph query question is required.");
+  }
   const graph = await ensureCompiledGraph(rootDir);
   return runResolvedGraphQuery(rootDir, graph, question, options);
 }

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.7.3
+
+- Made the `viewer` config block optional with a default port of `4123`. `swarmvault init` (and any other command that loads the workspace config) used to fail with a raw Zod error against partial or hand-edited `swarmvault.config.json` files that omitted the `viewer` block; older configs now load cleanly.
+- `swarmvault query`, `swarmvault explore`, and `swarmvault graph query` now reject empty or whitespace-only questions at the engine boundary with a clean error, instead of silently saving an empty answer page. The MCP `query_vault`, `explore_vault`, and `query_graph` tools inherit the same guard.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.7.3`.
+
 ## 3.7.2
 
 - Fixed `swarmvault context build`, `swarmvault task start`, and `swarmvault memory start` failing with `unacceptable kind of an object to dump [object Undefined]` when invoked without `--target` or `--agent`. The generated context-pack and memory-task markdown frontmatter now drops undefined values before js-yaml serialization, so optional fields no longer crash the dump. The MCP `build_context_pack`, `start_task`, and `start_memory_task` tools inherit the same fix.

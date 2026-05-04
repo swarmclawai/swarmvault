@@ -44,7 +44,7 @@ import {
 } from "./vault.js";
 import { getWatchStatus } from "./watch.js";
 
-const SERVER_VERSION = "3.7.2";
+const SERVER_VERSION = "3.7.3";
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({

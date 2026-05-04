@@ -161,9 +161,11 @@ const vaultConfigSchema = z.object({
     embeddingProvider: z.string().min(1).optional(),
     audioProvider: z.string().min(1).optional()
   }),
-  viewer: z.object({
-    port: z.number().int().positive()
-  }),
+  viewer: z
+    .object({
+      port: z.number().int().positive().default(4123)
+    })
+    .default({ port: 4123 }),
   profile: vaultProfileConfigSchema.default({
     presets: [],
     dashboardPack: "default",

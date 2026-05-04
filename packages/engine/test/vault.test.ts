@@ -16,6 +16,7 @@ import {
   compileVault,
   createMcpServer,
   explainGraphVault,
+  exploreVault,
   exportGraphFormat,
   getGitHookStatus,
   getGraphCommunityVault,
@@ -3036,5 +3037,66 @@ describe("swarmvault workflow", () => {
     // and surface EISDIR when trying to read it.
     expect(await readPage(rootDir, "")).toBeNull();
     expect(await readPage(rootDir, "sources")).toBeNull();
+  });
+
+  it("rejects empty or whitespace-only query questions", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await expect(queryVault(rootDir, { question: "" })).rejects.toThrow(/Query question is required/);
+    await expect(queryVault(rootDir, { question: "   \t\n " })).rejects.toThrow(/Query question is required/);
+  });
+
+  it("rejects empty or whitespace-only exploration questions", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await expect(exploreVault(rootDir, { question: "" })).rejects.toThrow(/Explore question is required/);
+    await expect(exploreVault(rootDir, { question: "   " })).rejects.toThrow(/Explore question is required/);
+  });
+
+  it("rejects empty or whitespace-only graph query questions", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await compileVault(rootDir);
+    await expect(queryGraphVault(rootDir, "")).rejects.toThrow(/Graph query question is required/);
+    await expect(queryGraphVault(rootDir, "   ")).rejects.toThrow(/Graph query question is required/);
+  });
+
+  it("loads a swarmvault.config.json that omits the viewer block by defaulting to port 4123", async () => {
+    const rootDir = await createTempWorkspace();
+    await fs.writeFile(
+      path.join(rootDir, "swarmvault.config.json"),
+      JSON.stringify(
+        {
+          workspace: {
+            rawDir: "raw",
+            wikiDir: "wiki",
+            stateDir: "state",
+            agentDir: "agent",
+            inboxDir: "inbox"
+          },
+          providers: {
+            local: {
+              type: "heuristic",
+              model: "heuristic-v1",
+              capabilities: ["chat", "structured", "vision", "local"]
+            }
+          },
+          tasks: {
+            compileProvider: "local",
+            queryProvider: "local",
+            lintProvider: "local",
+            visionProvider: "local",
+            imageProvider: "local"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await fs.writeFile(path.join(rootDir, "swarmvault.schema.md"), "# Schema\n", "utf8");
+
+    const { config } = await loadVaultConfig(rootDir);
+    expect(config.viewer.port).toBe(4123);
   });
 });
