@@ -26,6 +26,7 @@ swarmvault init --obsidian --profile personal-research
 swarmvault init --obsidian --profile reader,timeline
 swarmvault demo
 swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://github.com/owner/repo --branch main --checkout-dir .swarmvault-checkouts/repo
 swarmvault source add https://example.com/docs/getting-started
 swarmvault source add ./exports/customer-call.srt --guide
 swarmvault source session file-customer-call-srt-12345678
@@ -56,6 +57,7 @@ swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph update .
 swarmvault graph cluster
+swarmvault graph tree --output ./exports/tree.html
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
 swarmvault watch status
@@ -65,6 +67,7 @@ swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
 swarmvault graph export --html ./exports/graph.html
 swarmvault graph export --cypher ./exports/graph.cypher
+swarmvault graph merge ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
 swarmvault graph push neo4j --dry-run
 ```
 
@@ -91,16 +94,17 @@ Set `SWARMVAULT_OUT=<dir>` when generated artifacts should be isolated from the 
 
 `--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` preset also sets `profile.guidedIngestDefault: true` and `profile.deepLintDefault: true`, so guided ingest/source and lint flows are on by default until you override them with `--no-guide` or `--no-deep`.
 
-### `swarmvault scan <directory> [--port <port>] [--no-serve]`
+### `swarmvault scan <directory|github-url> [--port <port>] [--no-serve] [--branch <name>] [--ref <ref>] [--checkout-dir <path>]`
 
-Quick-start a scratch vault from a local directory in one command.
+Quick-start a scratch vault from a local directory or public GitHub repo root URL in one command.
 
 - initializes the current directory as a SwarmVault workspace
-- ingests the supplied directory as local sources
+- ingests the supplied directory as local sources, or registers/syncs the supplied public GitHub repo root URL
 - compiles the vault immediately
 - writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`, then prints the paths
 - starts `graph serve` unless you pass `--no-serve`
 - respects `--port` when you want a specific viewer port
+- for GitHub repo URLs, supports `--branch`, `--ref`, and `--checkout-dir`
 
 Use this when you want the fastest repo or docs-tree walkthrough without first deciding on managed-source registration.
 
@@ -139,6 +143,7 @@ Run a whole-vault health check before handing the workspace to an agent or openi
 Manage recurring source roots through a registry-backed workflow.
 
 - `source add <input>` supports local files, local directories, public GitHub repo root URLs such as `https://github.com/karpathy/micrograd`, and docs/wiki/help/reference/tutorial hubs
+- for public GitHub repo roots, `source add` supports `--branch <name>`, `--ref <ref>`, and `--checkout-dir <path>` so recurring sources can pin a branch, tag, commit, or reusable checkout directory
 - by default `source add` registers the source, syncs it into the vault, runs one compile, and writes a source brief to `wiki/outputs/source-briefs/<source-id>.md`
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
 - set `profile.guidedIngestDefault: true` when guided mode should be the default for `source add` and `source reload`, and use `--no-guide` for individual light-path runs
@@ -185,7 +190,7 @@ Ingest a local file path, directory path, or URL into immutable source storage a
 - local file and archive ingest supports markdown, text, reStructuredText, HTML, PDF, Word, RTF, OpenDocument, EPUB, CSV/TSV, Excel, PowerPoint, Jupyter notebooks, BibTeX, Org-mode, AsciiDoc, transcripts, Slack exports, email, calendar, audio, video, structured config/data, developer manifests, images, and code
 - add `--guide` when you want a resumable source session, source brief, source review, source guide, and approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`, with `wiki/insights/` fallback for `insights_only`
 - set `profile.guidedIngestDefault: true` when guided mode should be the default for `ingest`, and use `--no-guide` to force a plain ingest for one run
-- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, Vue single-file components, and SQL files with table/view graph relations
+- code-aware directory ingest currently covers JavaScript, JSX, TypeScript, TSX, Bash/shell scripts, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, Vue single-file components, Svelte single-file components, and SQL files with table/view graph relations. Julia, Verilog/SystemVerilog, and R files are detected as code sources and emit explicit parser-asset diagnostics until packaged WASM grammars are available.
 
 Useful flags:
 
@@ -390,7 +395,28 @@ Refresh code-derived graph artifacts from tracked repo roots or one explicit rep
 - runs the same code-only repo refresh path as `swarmvault watch --repo --code-only --once`
 - without `path`, uses configured or auto-discovered watched repo roots
 - with `path`, refreshes that repo root instead of the tracked set
+- aborts if nodes or edges drop by more than 25% compared with the existing graph; pass `--force` or set `SWARMVAULT_FORCE_UPDATE=1` when the shrink is expected
 - `--json` returns the same one-shot watch result shape, including repo import/update/remove counts and pending semantic refresh entries
+
+### `swarmvault graph tree [--output <html>] [--root <path>] [--label <name>] [--max-children <n>]`
+
+Write a collapsible HTML source tree for the current `state/graph.json`.
+
+- groups sources by path, then shows module, symbol, and rationale nodes underneath each source
+- defaults to `wiki/graph/tree.html`
+- `--root` reads a different vault root without changing directories
+- `--max-children` caps very wide folders or modules with a `+N more` row
+- `--json` returns the output path, source count, node count, and tree payload
+
+### `swarmvault graph merge <graph...> --out <path> [--label <name>]`
+
+Merge multiple graph JSON files into one namespaced graph artifact.
+
+- accepts native SwarmVault `state/graph.json` payloads
+- accepts NetworkX/node-link style JSON with `nodes` plus `links` or `edges`
+- prefixes ids from every input to avoid collisions
+- maps explicit extracted/inferred/ambiguous edge evidence into SwarmVault edge semantics
+- `--json` returns the merged graph, input summaries, and warnings
 
 ### `swarmvault graph status [path]`
 

@@ -157,6 +157,7 @@ Set `SWARMVAULT_OUT=.swarmvault-out` when generated vault artifacts should live 
 # Full workflow — step by step
 swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://github.com/owner/repo --branch main --checkout-dir .swarmvault-checkouts/repo
 swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./customer-call.mp3
@@ -173,6 +174,7 @@ swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph cluster
+swarmvault graph tree --output ./exports/tree.html
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
@@ -181,10 +183,11 @@ swarmvault doctor --repair
 swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
 swarmvault graph export --obsidian ./exports/graph-vault
+swarmvault graph merge ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
 swarmvault graph push neo4j --dry-run
 ```
 
-Need the fastest first pass over a local repo or docs tree? `swarmvault scan ./path --no-serve` initializes the current directory as a vault, ingests that directory, compiles it, and skips opening the graph viewer when you only want the artifacts. It also leaves `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` behind so you can run `swarmvault graph share --post` for compact text, `swarmvault graph share --svg ./share-card.svg` for a visual card, or `swarmvault graph share --bundle ./share-kit` for a portable folder with markdown, post text, SVG, a self-contained HTML preview, and JSON metadata.
+Need the fastest first pass over a local repo, public GitHub repo, or docs tree? `swarmvault scan ./path --no-serve` or `swarmvault scan https://github.com/owner/repo --branch main --no-serve` initializes the current directory as a vault, ingests that input, compiles it, and skips opening the graph viewer when you only want the artifacts. It also leaves `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` behind so you can run `swarmvault graph share --post` for compact text, `swarmvault graph share --svg ./share-card.svg` for a visual card, or `swarmvault graph share --bundle ./share-kit` for a portable folder with markdown, post text, SVG, a self-contained HTML preview, and JSON metadata.
 
 Need to hand bounded context to an agent? `swarmvault context build "Ship this feature safely" --target ./src --budget 8000` combines graph traversal, local search hits, freshness, evidence classes, and citations into a saved context pack. Use `--format llms` for an `llms.txt`-style handoff, `context list` to find prior packs, and `context show <id>` to replay one. For longer-running work, `swarmvault task start "<goal>" --target <path-or-node>` creates a durable task ledger, `task update` records notes, decisions, changed paths, and linked packs, and `task resume <id>` prints the next-agent handoff. Existing `memory` commands and `--memory <id>` flags remain supported as compatibility aliases for the same task ledger.
 
@@ -376,7 +379,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
 | Config / data | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | Structured preview with key/value schema hints |
 | Developer manifests | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` (and similar) | Content-sniffed text ingest — no plaintext dev files are silently dropped |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm .sql`, plus extensionless scripts with `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebangs | AST/parser-backed analysis + module resolution (including `tsconfig.json` path aliases); SQL adds table/view nodes plus read/write/join/reference edges |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`, plus extensionless scripts with `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebangs | AST/parser-backed analysis + module resolution where a packaged parser exists; Svelte nest-parses script blocks through the TypeScript analyzer; Julia, Verilog/SystemVerilog, and R are detected with explicit parser-asset diagnostics until packaged WASM grammars are available; SQL adds table/view nodes plus read/write/join/reference edges |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 | Managed sources | local directories, public GitHub repo roots, docs hubs | Registry-backed sync via `swarmvault source add` |
 
@@ -421,7 +424,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Visual + post-ready share kit** - every compile writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`; `swarmvault graph share --post` prints concise text, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, and `swarmvault graph share --bundle [dir]` writes markdown, post text, SVG, HTML preview, and JSON metadata for easy posting, linking, or screenshotting.
 
-**Graph blast radius, status, refresh, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph status [path]` performs a read-only stale check over graph/report artifacts and tracked repo changes, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
+**Graph blast radius, status, refresh, tree, merge, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph status [path]` performs a read-only stale check over graph/report artifacts and tracked repo changes, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts with a 25% shrink guard unless `--force` is explicit, `graph tree` writes a collapsible source/module/symbol HTML tree, `graph merge` combines SwarmVault or node-link JSON graphs into one namespaced artifact, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 
 **Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
 
@@ -441,7 +444,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Automation** - watch mode, git hooks, recurring schedules, and inbox import keep the vault current without manual intervention.
 
-**Managed sources** - `swarmvault source add|list|reload|review|guide|session|delete` turns recurring files, directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json`, source briefs under `wiki/outputs/source-briefs/`, resumable session anchors under `wiki/outputs/source-sessions/`, and guided integration artifacts under `wiki/outputs/source-guides/`.
+**Managed sources** - `swarmvault source add|list|reload|review|guide|session|delete` turns recurring files, directories, public GitHub repos, and docs hubs into named synced sources with registry state under `state/sources.json`, source briefs under `wiki/outputs/source-briefs/`, resumable session anchors under `wiki/outputs/source-sessions/`, and guided integration artifacts under `wiki/outputs/source-guides/`. Public GitHub repo sources support `--branch`, `--ref`, and `--checkout-dir` for pinned branch/tag/commit scans and reusable checkouts.
 
 **Source artifact types:**
 

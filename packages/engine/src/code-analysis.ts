@@ -2280,6 +2280,21 @@ export function inferCodeLanguage(filePath: string, mimeType = "", options: Code
   if (extension === ".vue") {
     return "vue";
   }
+  if (extension === ".svelte") {
+    return "svelte";
+  }
+  if (extension === ".jl") {
+    return "julia";
+  }
+  if (extension === ".sv" || extension === ".svh") {
+    return "systemverilog";
+  }
+  if (extension === ".v" || extension === ".vh") {
+    return "verilog";
+  }
+  if (extension === ".r") {
+    return "r";
+  }
   if (extension === ".c") {
     return "c";
   }
@@ -2592,7 +2607,9 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       // Vue SFCs import sibling JS/TS modules and other .vue components; treat
       // the candidate set identically to TypeScript so nested-parsed imports
       // resolve to real sibling files.
-      return [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".vue"];
+      return [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".vue", ".svelte"];
+    case "svelte":
+      return [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".svelte", ".vue"];
     case "bash":
       return [".sh", ".bash", ".zsh"];
     case "python":
@@ -2649,6 +2666,14 @@ function candidateExtensionsFor(language: CodeLanguage): string[] {
       return [".css", ".js", ".mjs", ".cjs", ".html", ".htm"];
     case "css":
       return [".css"];
+    case "julia":
+      return [".jl"];
+    case "verilog":
+      return [".v", ".vh"];
+    case "systemverilog":
+      return [".sv", ".svh", ".v", ".vh"];
+    case "r":
+      return [".r", ".R"];
     default:
       return [];
   }
@@ -3081,6 +3106,7 @@ function findImportCandidates(manifest: SourceManifest, codeImport: CodeImport, 
     case "typescript":
     case "tsx":
     case "vue":
+    case "svelte":
       return repoRelativePath && isRelativeSpecifier(codeImport.specifier)
         ? repoPathMatches(lookup, ...importResolutionCandidates(repoRelativePath, codeImport.specifier, candidateExtensionsFor(language)))
         : aliasMatches(lookup, codeImport.specifier);
@@ -3239,19 +3265,18 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Vue single-file components place TypeScript/JavaScript inside a
-// <script> (or <script setup>) block. The outer .vue parse only
-// covers SFC structure (template/script/style boundaries, PascalCase tag
-// references, element ids). To expose the real JS/TS symbols and imports
-// from the script portion we run the existing TypeScript analyzer over
-// each script block's inner text and merge the resulting imports,
-// symbols, exports, diagnostics, and rationales back into the Vue
-// analysis. The script text is located with a narrow markup-level
-// regex (SFC boundary extraction, not code analysis); the JS/TS
-// inside is still parsed by the real TypeScript AST.
+// Vue and Svelte single-file components place TypeScript/JavaScript inside a
+// <script> (or <script setup>) block. The outer markup parse covers SFC
+// structure, template/style boundaries, custom elements, and ids. To expose
+// real JS/TS symbols and imports from the script portion we run the existing
+// TypeScript analyzer over each script block's inner text and merge the
+// resulting imports, symbols, exports, diagnostics, and rationales back into
+// the SFC analysis. The script text is located with a narrow markup-level
+// regex (SFC boundary extraction, not code analysis); the JS/TS inside is
+// still parsed by the real TypeScript AST.
 const VUE_SCRIPT_BLOCK_REGEX = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 
-type VueScriptBlock = {
+type SfcScriptBlock = {
   content: string;
   lineOffset: number;
   language: "typescript" | "tsx" | "javascript" | "jsx";
@@ -3276,8 +3301,8 @@ function vueScriptLanguageFromAttributes(attributes: string): "typescript" | "ts
   return "typescript";
 }
 
-function extractVueScriptBlocks(source: string): VueScriptBlock[] {
-  const blocks: VueScriptBlock[] = [];
+function extractSfcScriptBlocks(source: string): SfcScriptBlock[] {
+  const blocks: SfcScriptBlock[] = [];
   VUE_SCRIPT_BLOCK_REGEX.lastIndex = 0;
   let match: RegExpExecArray | null = VUE_SCRIPT_BLOCK_REGEX.exec(source);
   while (match !== null) {
@@ -3301,7 +3326,7 @@ function extractVueScriptBlocks(source: string): VueScriptBlock[] {
   return blocks;
 }
 
-function mergeVueScriptAnalyses(
+function mergeSfcScriptAnalyses(
   outer: { code: CodeAnalysis; rationales: SourceRationale[] },
   inners: Array<{ code: CodeAnalysis; rationales: SourceRationale[]; lineOffset: number }>
 ): { code: CodeAnalysis; rationales: SourceRationale[] } {
@@ -3388,7 +3413,7 @@ async function analyzeVueSource(
   extractedText: string
 ): Promise<{ code: CodeAnalysis; rationales: SourceRationale[] }> {
   const outer = await analyzeTreeSitterCode(manifest, extractedText, "vue");
-  const scriptBlocks = extractVueScriptBlocks(extractedText);
+  const scriptBlocks = extractSfcScriptBlocks(extractedText);
   if (scriptBlocks.length === 0) {
     return outer;
   }
@@ -3410,7 +3435,33 @@ async function analyzeVueSource(
     innerResults.push({ code: analyzed.code, rationales: analyzed.rationales, lineOffset: block.lineOffset });
   }
 
-  return mergeVueScriptAnalyses(outer, innerResults);
+  return mergeSfcScriptAnalyses(outer, innerResults);
+}
+
+async function analyzeSvelteSource(
+  manifest: SourceManifest,
+  extractedText: string
+): Promise<{ code: CodeAnalysis; rationales: SourceRationale[] }> {
+  const outer = await analyzeTreeSitterCode(manifest, extractedText, "svelte");
+  const scriptBlocks = extractSfcScriptBlocks(extractedText);
+  if (scriptBlocks.length === 0) {
+    return outer;
+  }
+
+  const innerResults: Array<{ code: CodeAnalysis; rationales: SourceRationale[]; lineOffset: number }> = [];
+  for (const block of scriptBlocks) {
+    if (!block.content.trim()) {
+      continue;
+    }
+    const innerManifest: SourceManifest = {
+      ...manifest,
+      language: block.language
+    };
+    const analyzed = analyzeTypeScriptLikeCode(innerManifest, block.content);
+    innerResults.push({ code: analyzed.code, rationales: analyzed.rationales, lineOffset: block.lineOffset });
+  }
+
+  return mergeSfcScriptAnalyses(outer, innerResults);
 }
 
 export async function analyzeCodeSource(manifest: SourceManifest, extractedText: string, schemaHash: string): Promise<SourceAnalysis> {
@@ -3422,7 +3473,9 @@ export async function analyzeCodeSource(manifest: SourceManifest, extractedText:
         ? analyzeSqlCode(manifest, extractedText)
         : language === "vue"
           ? await analyzeVueSource(manifest, extractedText)
-          : await analyzeTreeSitterCode(manifest, extractedText, language);
+          : language === "svelte"
+            ? await analyzeSvelteSource(manifest, extractedText)
+            : await analyzeTreeSitterCode(manifest, extractedText, language);
 
   return {
     analysisVersion: 8,

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileVault, getGraphStatus, ingestDirectory, initVault, loadVaultConfig } from "../src/index.js";
+import { compileVault, evaluateGraphShrinkGuard, getGraphStatus, ingestDirectory, initVault, loadVaultConfig } from "../src/index.js";
 
 const tempDirs: string[] = [];
 
@@ -17,6 +17,39 @@ afterEach(async () => {
 });
 
 describe("graph status", () => {
+  it("flags sharp graph shrinkage before a refresh is accepted", () => {
+    const previous = {
+      generatedAt: "2026-05-04T12:00:00.000Z",
+      nodes: Array.from({ length: 12 }, (_, index) => ({
+        id: `node:${index}`,
+        type: "concept" as const,
+        label: `Node ${index}`,
+        sourceIds: [],
+        projectIds: []
+      })),
+      edges: Array.from({ length: 8 }, (_, index) => ({
+        id: `edge:${index}`,
+        source: "node:0",
+        target: `node:${index + 1}`,
+        relation: "mentions",
+        status: "extracted" as const,
+        evidenceClass: "extracted" as const,
+        confidence: 1,
+        provenance: []
+      })),
+      hyperedges: [],
+      sources: [],
+      pages: []
+    };
+    const next = { ...previous, nodes: previous.nodes.slice(0, 8), edges: previous.edges.slice(0, 5) };
+
+    const guard = evaluateGraphShrinkGuard(previous, next, { threshold: 0.25 });
+
+    expect(guard.blocked).toBe(true);
+    expect(guard.nodes.dropped).toBe(4);
+    expect(guard.edges.dropped).toBe(3);
+  });
+
   it("does not initialize a workspace when graph artifacts are missing", async () => {
     const rootDir = await createTempWorkspace();
 

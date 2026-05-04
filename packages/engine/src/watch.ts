@@ -5,8 +5,17 @@ import chokidar from "chokidar";
 import { initWorkspace, loadVaultConfig } from "./config.js";
 import { importInbox, listTrackedRepoRoots, syncTrackedReposForWatch } from "./ingest.js";
 import { appendWatchRun, recordSession } from "./logs.js";
-import type { VaultConfig, WatchConfig, WatchController, WatchOptions, WatchStatusResult } from "./types.js";
-import { isPathWithin } from "./utils.js";
+import type {
+  GraphArtifact,
+  GraphShrinkDimension,
+  GraphShrinkGuardResult,
+  VaultConfig,
+  WatchConfig,
+  WatchController,
+  WatchOptions,
+  WatchStatusResult
+} from "./types.js";
+import { isPathWithin, readJsonFile, writeJsonFile } from "./utils.js";
 import { compileVault, lintVault } from "./vault.js";
 import {
   markPagesStaleForSources,
@@ -19,6 +28,7 @@ import {
 const MAX_BACKOFF_MS = 30_000;
 const BACKOFF_THRESHOLD = 3;
 const CRITICAL_THRESHOLD = 10;
+const DEFAULT_MAX_GRAPH_SHRINK_RATIO = 0.25;
 const REPO_WATCH_IGNORES = new Set([".git", ".venv"]);
 
 const CODE_EXTENSIONS = new Set([
@@ -59,7 +69,12 @@ const CODE_EXTENSIONS = new Set([
   ".psm1",
   ".ex",
   ".exs",
+  ".svelte",
   ".jl",
+  ".v",
+  ".vh",
+  ".sv",
+  ".svh",
   ".r",
   ".R"
 ]);
@@ -98,6 +113,44 @@ function collectNonCodePaths(reasons: Set<string>): string[] {
     if (!ext || !CODE_EXTENSIONS.has(ext)) result.push(match[1]);
   }
   return result;
+}
+
+function shrinkDimension(before: number, after: number): GraphShrinkDimension {
+  const dropped = Math.max(0, before - after);
+  return {
+    before,
+    after,
+    dropped,
+    dropRatio: before > 0 ? dropped / before : 0
+  };
+}
+
+export function evaluateGraphShrinkGuard(
+  previousGraph: GraphArtifact | null | undefined,
+  nextGraph: GraphArtifact | null | undefined,
+  options: { threshold?: number } = {}
+): GraphShrinkGuardResult {
+  const threshold = options.threshold ?? DEFAULT_MAX_GRAPH_SHRINK_RATIO;
+  const nodes = shrinkDimension(previousGraph?.nodes.length ?? 0, nextGraph?.nodes.length ?? 0);
+  const edges = shrinkDimension(previousGraph?.edges.length ?? 0, nextGraph?.edges.length ?? 0);
+  const blocked = nodes.dropRatio > threshold || edges.dropRatio > threshold;
+  return {
+    blocked,
+    threshold,
+    nodes,
+    edges,
+    message: blocked
+      ? `Graph update aborted: node count changed ${nodes.before} -> ${nodes.after} (${Math.round(
+          nodes.dropRatio * 100
+        )}% drop) and edge count changed ${edges.before} -> ${edges.after} (${Math.round(
+          edges.dropRatio * 100
+        )}% drop). Re-run with --force or SWARMVAULT_FORCE_UPDATE=1 if this shrink is expected.`
+      : undefined
+  };
+}
+
+function forceGraphUpdateEnabled(options: WatchOptions): boolean {
+  return options.force === true || process.env.SWARMVAULT_FORCE_UPDATE === "1" || process.env.SWARMVAULT_FORCE_UPDATE === "true";
 }
 
 type WatchCycleResult = {
@@ -303,6 +356,7 @@ async function performWatchCycle(
 
 export async function runWatchCycle(rootDir: string, options: WatchOptions = {}): Promise<WatchCycleResult> {
   const { paths } = await initWorkspace(rootDir);
+  const previousGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
   const startedAt = new Date();
   let success = true;
   let error: string | undefined;
@@ -322,6 +376,12 @@ export async function runWatchCycle(rootDir: string, options: WatchOptions = {})
 
   try {
     result = await performWatchCycle(rootDir, paths, options, options.codeOnly ?? false);
+    const nextGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
+    const guard = evaluateGraphShrinkGuard(previousGraph, nextGraph, { threshold: options.maxGraphShrinkRatio });
+    if (previousGraph && nextGraph && guard.blocked && !forceGraphUpdateEnabled(options)) {
+      await writeJsonFile(paths.graphPath, previousGraph);
+      throw new Error(guard.message ?? "Graph update aborted because the graph shrank unexpectedly.");
+    }
     return result;
   } catch (caught) {
     success = false;

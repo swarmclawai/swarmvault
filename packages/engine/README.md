@@ -235,7 +235,7 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 
 ### Ingest
 
-- `addManagedSource(rootDir, input, { compile, brief, maxPages, maxDepth })` registers and syncs a recurring source, then optionally compiles and writes a source brief
+- `addManagedSource(rootDir, input, { compile, brief, maxPages, maxDepth, branch, ref, checkoutDir })` registers and syncs a recurring source, then optionally compiles and writes a source brief
 - `listManagedSourceRecords(rootDir)` lists registry-backed managed sources from `state/sources.json`
 - `reloadManagedSources(rootDir, { id, all, compile, brief, maxPages, maxDepth })` re-syncs one managed source or the full registry
 - `deleteManagedSource(rootDir, id)` removes a managed-source registry entry and transient sync state without deleting canonical vault artifacts
@@ -244,12 +244,12 @@ This matters because many "OpenAI-compatible" backends only implement part of th
 - `addInput(rootDir, input, { author, contributor })` captures supported URLs into normalized markdown before ingesting them, or falls back to generic URL ingest
 - `ingestDirectory(rootDir, inputDir, { repoRoot, include, exclude, maxFiles, gitignore, extractClasses })` recursively ingests a local directory as a repo-aware code/content source tree
 - `importInbox(rootDir, inputDir?)` recursively imports supported inbox files plus markdown and HTML browser-clipper style bundles
-- managed sources support local directories, public GitHub repo root URLs, and bounded same-domain docs hubs
+- managed sources support local directories, public GitHub repo root URLs, and bounded same-domain docs hubs; GitHub repo sources can pin `branch`, `ref`, and `checkoutDir`
 - registry data lives in `state/sources.json`, working state lives under `state/sources/<id>/`, and source briefs are written to `wiki/outputs/source-briefs/<id>.md`
 - EPUB inputs split into chapter-level manifests with shared group metadata so books stay navigable instead of becoming one giant source
 - CSV and TSV inputs produce bounded tabular summaries with delimiter-aware previews and compact column hints
 - XLSX inputs extract workbook-level and sheet-level previews, while PPTX inputs extract slide text plus speaker notes when present
-- JavaScript, JSX, TypeScript, TSX, Bash/shell script, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, and PowerShell inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages
+- JavaScript, JSX, TypeScript, TSX, Bash/shell script, Python, Go, Rust, Java, Kotlin, Scala, Dart, Lua, Zig, C#, C, C++, PHP, Ruby, PowerShell, Elixir, OCaml, Objective-C, ReScript, Solidity, HTML, CSS, Vue, Svelte, Julia, Verilog/SystemVerilog, R, and SQL inputs are treated as code sources and compiled into both source pages and `wiki/code/` module pages where parser support exists. Julia, Verilog/SystemVerilog, and R currently emit explicit parser-asset diagnostics when no packaged WASM grammar is available.
 - `.rst` and `.rest` inputs are treated as first-class text sources with lightweight heading and directive normalization before analysis
 - code manifests can carry `repoRelativePath`, and compile writes `state/code-index.json` so local imports can resolve across an ingested repo tree
 - repo-aware manifests, graph nodes, and graph pages can also carry `sourceClass` so first-party, third-party, resource, and generated material can be filtered and reported separately
@@ -319,7 +319,7 @@ Running the engine produces a local workspace with these main areas:
 - `raw/sources/`: immutable source copies
 - `raw/assets/`: copied attachments referenced by ingested markdown bundles and remote URL ingests
 - `wiki/`: generated markdown pages, the append-only `log.md` activity trail, staged candidates, saved query outputs, exploration hub pages, and a human-only `insights/` area
-- `wiki/graph/`: generated graph report pages, markdown/SVG share cards, the portable `share-kit/`, and per-community summaries derived from `state/graph.json`
+- `wiki/graph/`: generated graph report pages, markdown/SVG share cards, the portable `share-kit/`, optional `tree.html`, and per-community summaries derived from `state/graph.json`
 - `wiki/context/`: markdown companions for saved context packs
 - `wiki/memory/`: markdown index and task pages for the agent task ledger
 - `wiki/graph/report.json`: machine-readable graph report data used by the viewer and export surfaces
@@ -335,6 +335,7 @@ Running the engine produces a local workspace with these main areas:
 - `state/code-index.json`: repo-aware code module aliases and local resolution data
 - `state/benchmark.json`: latest benchmark/trust summary for the current vault
 - `state/graph.json`: compiled graph, including semantic-similarity edges and hyperedge-style group patterns
+- graph helpers include tree export, graph merge for SwarmVault/node-link JSON, read-only status checks, shrink-guarded code refresh, community refresh, graph query/path/explain, blast radius, and file exports
 - `state/context-packs/`: JSON context-pack artifacts for agent kickoff, review, and handoff workflows
 - `state/memory/tasks/`: JSON task records for the agent task ledger
 - `state/retrieval/`: local retrieval index directory, including the SQLite FTS shard and manifest

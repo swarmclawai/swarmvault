@@ -191,6 +191,11 @@ export type CodeLanguage =
   | "html"
   | "css"
   | "vue"
+  | "svelte"
+  | "julia"
+  | "verilog"
+  | "systemverilog"
+  | "r"
   | "sql";
 export type CodeSymbolKind =
   | "function"
@@ -773,6 +778,9 @@ export interface ManagedSourceRecord {
   path?: string;
   repoRoot?: string;
   url?: string;
+  branch?: string;
+  ref?: string;
+  checkoutDir?: string;
   createdAt: string;
   updatedAt: string;
   status: ManagedSourceStatus;
@@ -1660,6 +1668,23 @@ export interface WatchOptions {
   repo?: boolean;
   codeOnly?: boolean;
   overrideRoots?: string[];
+  force?: boolean;
+  maxGraphShrinkRatio?: number;
+}
+
+export interface GraphShrinkDimension {
+  before: number;
+  after: number;
+  dropped: number;
+  dropRatio: number;
+}
+
+export interface GraphShrinkGuardResult {
+  blocked: boolean;
+  threshold: number;
+  nodes: GraphShrinkDimension;
+  edges: GraphShrinkDimension;
+  message?: string;
 }
 
 export interface PendingSemanticRefreshEntry {
@@ -1761,6 +1786,9 @@ export interface ManagedSourceAddOptions {
   guideAnswers?: GuidedSourceSessionAnswers;
   maxPages?: number;
   maxDepth?: number;
+  branch?: string;
+  ref?: string;
+  checkoutDir?: string;
 }
 
 export interface ManagedSourceReloadOptions extends ManagedSourceAddOptions {

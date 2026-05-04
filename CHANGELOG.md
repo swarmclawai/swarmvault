@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 3.7.0
+
+- Added `swarmvault graph tree` for a collapsible HTML source/module/symbol tree, defaulting to `wiki/graph/tree.html`.
+- Added `swarmvault graph merge <graph...> --out <path>` to combine SwarmVault and NetworkX/node-link JSON graphs into one namespaced graph artifact with explicit evidence-class mapping.
+- Extended public GitHub repo source handling with `--branch`, `--ref`, and `--checkout-dir` on `source add` and `scan`, and allowed `scan` to quick-start from a public GitHub repo URL.
+- Added a graph refresh shrink guard for `graph update` / one-shot watch refreshes; updates now abort when nodes or edges drop by more than 25% unless `--force` or `SWARMVAULT_FORCE_UPDATE=1` is explicit.
+- Added Svelte single-file component code coverage with nested TypeScript/JavaScript script parsing, plus detection and explicit parser-asset diagnostics for Julia, Verilog/SystemVerilog, and R sources.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, and ClawHub skill metadata to `3.7.0`.
+
 ## 3.6.0
 
 - Added local video and public video URL ingest: local `video/*` files extract audio with `ffmpeg`, `swarmvault ingest --video <url>` / `swarmvault add --video <url>` extract public video audio with `yt-dlp`, and both route transcripts through the configured `tasks.audioProvider` while preserving warning sidecars when a binary or provider is missing.

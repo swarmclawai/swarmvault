@@ -60,7 +60,7 @@ const DOCS_HINT_SEGMENTS = new Set([
 type ManagedSourceInput =
   | { kind: "directory"; path: string; repoRoot: string; title: string }
   | { kind: "file"; path: string; title: string }
-  | { kind: "github_repo"; url: string; cloneUrl: string; title: string }
+  | { kind: "github_repo"; url: string; cloneUrl: string; title: string; branch?: string; ref?: string; checkoutDir?: string }
   | { kind: "crawl_url"; url: string; title: string };
 
 type ManagedSourceSyncResult = {
@@ -313,12 +313,46 @@ function matchesManagedSourceSpec(existing: ManagedSourceRecord, input: ManagedS
   if (input.kind === "directory" || input.kind === "file") {
     return path.resolve(existing.path ?? "") === path.resolve(input.path);
   }
+  if (input.kind === "github_repo") {
+    return (
+      (existing.url ?? "") === input.url && (existing.branch ?? "") === (input.branch ?? "") && (existing.ref ?? "") === (input.ref ?? "")
+    );
+  }
   return (existing.url ?? "") === input.url;
 }
 
-async function resolveManagedSourceInput(rootDir: string, input: string): Promise<ManagedSourceInput> {
+function normalizeGitSelector(value: string | undefined, label: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.startsWith("-")) {
+    throw new Error(`Git ${label} must not start with "-".`);
+  }
+  if (/[\s\0]/.test(trimmed)) {
+    throw new Error(`Git ${label} must not contain whitespace or NUL bytes.`);
+  }
+  return trimmed;
+}
+
+function normalizeCheckoutDir(rootDir: string, value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return path.isAbsolute(trimmed) ? path.resolve(trimmed) : path.resolve(rootDir, trimmed);
+}
+
+async function resolveManagedSourceInput(
+  rootDir: string,
+  input: string,
+  options: Pick<ManagedSourceAddOptions, "branch" | "ref" | "checkoutDir"> = {}
+): Promise<ManagedSourceInput> {
   const absoluteInput = path.resolve(rootDir, input);
   if (!(input.startsWith("http://") || input.startsWith("https://"))) {
+    if (options.branch || options.ref || options.checkoutDir) {
+      throw new Error("Git branch/ref/checkout options are only supported for public GitHub repo root URLs.");
+    }
     const stat = await fs.stat(absoluteInput).catch(() => null);
     if (!stat) {
       throw new Error(`Source not found: ${input}`);
@@ -350,8 +384,15 @@ async function resolveManagedSourceInput(rootDir: string, input: string): Promis
   if (github) {
     return {
       kind: "github_repo",
-      ...github
+      ...github,
+      branch: normalizeGitSelector(options.branch, "branch"),
+      ref: normalizeGitSelector(options.ref, "ref"),
+      checkoutDir: normalizeCheckoutDir(rootDir, options.checkoutDir)
     };
+  }
+
+  if (options.branch || options.ref || options.checkoutDir) {
+    throw new Error("Git branch/ref/checkout options are only supported for public GitHub repo root URLs.");
   }
 
   const parsed = new URL(input);
@@ -456,8 +497,11 @@ async function runGitCommand(cwd: string, args: string[]): Promise<void> {
 
 async function syncGitHubRepoSource(rootDir: string, entry: ManagedSourceRecord): Promise<ManagedSourceSyncResult> {
   const workingDir = await managedSourceWorkingDir(rootDir, entry.id);
-  const checkoutDir = path.join(workingDir, "checkout");
-  await fs.rm(checkoutDir, { recursive: true, force: true });
+  const externalCheckoutDir = entry.checkoutDir ? path.resolve(entry.checkoutDir) : undefined;
+  const checkoutDir = externalCheckoutDir ?? path.join(workingDir, "checkout");
+  if (!externalCheckoutDir) {
+    await fs.rm(checkoutDir, { recursive: true, force: true });
+  }
   await ensureDir(workingDir);
   if (!entry.url) {
     throw new Error(`Managed source ${entry.id} is missing its repository URL.`);
@@ -466,7 +510,37 @@ async function syncGitHubRepoSource(rootDir: string, entry: ManagedSourceRecord)
   if (!github) {
     throw new Error(`Managed source ${entry.id} has an invalid GitHub repo URL.`);
   }
-  await runGitCommand(workingDir, ["clone", "--depth", "1", github.cloneUrl, "checkout"]);
+  const branch = normalizeGitSelector(entry.branch, "branch");
+  const ref = normalizeGitSelector(entry.ref, "ref");
+  const cloneArgs = ["clone", "--depth", "1"];
+  if (branch) {
+    cloneArgs.push("--branch", branch);
+  }
+  cloneArgs.push(github.cloneUrl, checkoutDir);
+
+  if (await fileExists(path.join(checkoutDir, ".git"))) {
+    await runGitCommand(checkoutDir, ["remote", "set-url", "origin", github.cloneUrl]);
+    if (branch) {
+      await runGitCommand(checkoutDir, ["fetch", "--depth", "1", "origin", branch]);
+    } else {
+      await runGitCommand(checkoutDir, ["fetch", "--depth", "1", "origin"]);
+    }
+    if (!ref) {
+      await runGitCommand(checkoutDir, ["checkout", "--detach", "FETCH_HEAD"]);
+    }
+  } else {
+    const existingEntries = await fs.readdir(checkoutDir).catch(() => []);
+    if (externalCheckoutDir && existingEntries.length > 0) {
+      throw new Error(`Checkout directory exists but is not a Git repository: ${checkoutDir}`);
+    }
+    await ensureDir(path.dirname(checkoutDir));
+    await runGitCommand(workingDir, cloneArgs);
+  }
+
+  if (ref) {
+    await runGitCommand(checkoutDir, ["fetch", "--depth", "1", "origin", ref]);
+    await runGitCommand(checkoutDir, ["checkout", "--detach", "FETCH_HEAD"]);
+  }
   return await syncDirectorySource(rootDir, checkoutDir, checkoutDir);
 }
 
@@ -2079,24 +2153,40 @@ export async function addManagedSource(
   const briefRequested = guideRequested ? true : (options.brief ?? true);
   const reviewRequested = guideRequested ? false : (options.review ?? false);
   const sources = await loadManagedSources(rootDir);
-  const resolved = await resolveManagedSourceInput(rootDir, input);
+  const resolved = await resolveManagedSourceInput(rootDir, input, options);
   const existing = sources.find((candidate) => matchesManagedSourceSpec(candidate, resolved));
   const now = new Date().toISOString();
-  const source: ManagedSourceRecord = existing ?? {
-    id:
-      resolved.kind === "directory" || resolved.kind === "file"
-        ? stableManagedSourceId(resolved.kind, path.resolve(resolved.path), resolved.title)
-        : stableManagedSourceId(resolved.kind, resolved.url, resolved.title),
-    kind: resolved.kind,
-    title: resolved.title,
-    path: resolved.kind === "directory" || resolved.kind === "file" ? resolved.path : undefined,
-    repoRoot: resolved.kind === "directory" ? resolved.repoRoot : undefined,
-    url: resolved.kind === "directory" || resolved.kind === "file" ? undefined : resolved.url,
-    createdAt: now,
-    updatedAt: now,
-    status: "ready",
-    sourceIds: []
-  };
+  const source: ManagedSourceRecord = existing
+    ? {
+        ...existing,
+        branch: resolved.kind === "github_repo" ? resolved.branch : existing.branch,
+        ref: resolved.kind === "github_repo" ? resolved.ref : existing.ref,
+        checkoutDir: resolved.kind === "github_repo" ? (resolved.checkoutDir ?? existing.checkoutDir) : existing.checkoutDir
+      }
+    : {
+        id:
+          resolved.kind === "directory" || resolved.kind === "file"
+            ? stableManagedSourceId(resolved.kind, path.resolve(resolved.path), resolved.title)
+            : stableManagedSourceId(
+                resolved.kind,
+                resolved.kind === "github_repo"
+                  ? `${resolved.url}#branch=${resolved.branch ?? ""}#ref=${resolved.ref ?? ""}`
+                  : resolved.url,
+                resolved.title
+              ),
+        kind: resolved.kind,
+        title: resolved.title,
+        path: resolved.kind === "directory" || resolved.kind === "file" ? resolved.path : undefined,
+        repoRoot: resolved.kind === "directory" ? resolved.repoRoot : undefined,
+        url: resolved.kind === "directory" || resolved.kind === "file" ? undefined : resolved.url,
+        branch: resolved.kind === "github_repo" ? resolved.branch : undefined,
+        ref: resolved.kind === "github_repo" ? resolved.ref : undefined,
+        checkoutDir: resolved.kind === "github_repo" ? resolved.checkoutDir : undefined,
+        createdAt: now,
+        updatedAt: now,
+        status: "ready",
+        sourceIds: []
+      };
 
   const synced = await syncManagedSource(rootDir, source, options);
   if (synced.lastSyncStatus === "error") {

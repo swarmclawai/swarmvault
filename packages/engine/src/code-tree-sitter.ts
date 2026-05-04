@@ -100,7 +100,7 @@ type TreeSitterGrammarAsset = {
 
 type TreeSitterCodeLanguage = Exclude<CodeLanguage, "javascript" | "jsx" | "typescript" | "tsx" | "sql">;
 
-const grammarAssetByLanguage: Record<TreeSitterCodeLanguage, TreeSitterGrammarAsset> = {
+const grammarAssetByLanguage: Partial<Record<TreeSitterCodeLanguage, TreeSitterGrammarAsset>> = {
   bash: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-bash.wasm" },
   python: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-python.wasm" },
   go: { packageName: TREE_SITTER_RUNTIME_PACKAGE, relativePath: "wasm/tree-sitter-go.wasm" },
@@ -125,7 +125,8 @@ const grammarAssetByLanguage: Record<TreeSitterCodeLanguage, TreeSitterGrammarAs
   solidity: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-solidity.wasm" },
   html: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-html.wasm" },
   css: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-css.wasm" },
-  vue: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-vue.wasm" }
+  vue: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-vue.wasm" },
+  svelte: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-html.wasm" }
 };
 
 function resolvePackageRoot(packageName: string): string {
@@ -145,6 +146,9 @@ function resolvePackageRoot(packageName: string): string {
 
 function grammarAssetPath(language: TreeSitterCodeLanguage): string {
   const asset = grammarAssetByLanguage[language];
+  if (!asset) {
+    throw new Error(`No packaged parser asset is available for ${language}.`);
+  }
   return path.join(resolvePackageRoot(asset.packageName), asset.relativePath);
 }
 
@@ -4225,7 +4229,12 @@ function htmlTagName(element: TreeNode): string | undefined {
   return findNamedChild(startTag, "tag_name")?.text.trim().toLowerCase();
 }
 
-function htmlCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+function htmlCodeAnalysis(
+  manifest: SourceManifest,
+  rootNode: TreeNode,
+  diagnostics: CodeDiagnostic[],
+  language: "html" | "svelte" = "html"
+): CodeAnalysis {
   const imports: CodeImport[] = [];
   const draftSymbols: DraftCodeSymbol[] = [];
   const exportLabels: string[] = [];
@@ -4322,7 +4331,7 @@ function htmlCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnost
     }
   }
 
-  return finalizeCodeAnalysis(manifest, "html", imports, draftSymbols, exportLabels, diagnostics);
+  return finalizeCodeAnalysis(manifest, language, imports, draftSymbols, exportLabels, diagnostics);
 }
 
 // tree-sitter-css top-level shape:
@@ -4764,6 +4773,8 @@ export async function analyzeTreeSitterCode(
         return { code: solidityCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "html":
         return { code: htmlCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "svelte":
+        return { code: htmlCodeAnalysis(manifest, tree.rootNode, diagnostics, "svelte"), rationales };
       case "css":
         return { code: cssCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "vue":

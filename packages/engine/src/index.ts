@@ -42,6 +42,7 @@ export {
   exportObsidianVault,
   synthesizeHyperedgeHubs
 } from "./graph-export.js";
+export { mergeGraphFiles } from "./graph-merge.js";
 export { pushGraphNeo4j } from "./graph-push.js";
 export {
   buildGraphShareArtifact,
@@ -52,6 +53,7 @@ export {
 } from "./graph-share.js";
 export { getGraphStatus } from "./graph-status.js";
 export { blastRadius, graphDiff } from "./graph-tools.js";
+export { buildGraphTree, exportGraphTree, renderGraphTreeHtml } from "./graph-tree.js";
 export { getGitHookStatus, installGitHooks, uninstallGitHooks } from "./hooks.js";
 export {
   addInput,
@@ -169,6 +171,7 @@ export {
 export { exportGraphHtml, startGraphServer } from "./viewer.js";
 export {
   addWatchedRoot,
+  evaluateGraphShrinkGuard,
   getWatchStatus,
   listWatchedRoots,
   removeWatchedRoot,

@@ -76,7 +76,10 @@ swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault graph update ./src
+swarmvault graph update ./src --force
 swarmvault graph refresh
+swarmvault graph tree --output ./tree.html
+swarmvault graph merge ./graph.json ./other-graph.json --out ./merged-graph.json
 swarmvault graph export --html ./graph.html
 swarmvault graph export --report ./graph-report.html
 swarmvault graph export --html ./graph.html --full
@@ -94,6 +97,7 @@ swarmvault watch --lint --repo
 swarmvault watch --repo --code-only --once
 swarmvault graph status .
 swarmvault graph update .
+swarmvault graph update . --force
 swarmvault watch status
 swarmvault hook install
 swarmvault schedule list

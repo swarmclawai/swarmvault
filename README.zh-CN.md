@@ -157,6 +157,7 @@ my-vault/
 # 完整工作流 —— 分步执行
 swarmvault init --obsidian --profile personal-research
 swarmvault source add https://github.com/karpathy/micrograd
+swarmvault source add https://github.com/owner/repo --branch main --checkout-dir .swarmvault-checkouts/repo
 swarmvault source add https://example.com/docs/getting-started
 swarmvault ingest ./meeting.srt --guide
 swarmvault ingest ./customer-call.mp3
@@ -173,6 +174,7 @@ swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph cluster
+swarmvault graph tree --output ./exports/tree.html
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
@@ -181,10 +183,11 @@ swarmvault doctor --repair
 swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
 swarmvault graph export --obsidian ./exports/graph-vault
+swarmvault graph merge ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
 swarmvault graph push neo4j --dry-run
 ```
 
-想要对本地仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve` 会将当前目录初始化为 vault，导入该目录并完成编译；加上 `--no-serve` 时不会启动图谱查看器。它还会留下 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`，之后运行 `swarmvault graph share --post` 可复制紧凑摘要，运行 `swarmvault graph share --svg ./share-card.svg` 可生成可视化卡片，或运行 `swarmvault graph share --bundle ./share-kit` 写出包含 markdown、发布文本、SVG、自包含 HTML 预览和 JSON 元数据的便携目录。
+想要对本地仓库、公开 GitHub 仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve` 或 `swarmvault scan https://github.com/owner/repo --branch main --no-serve` 会将当前目录初始化为 vault，导入该输入并完成编译；加上 `--no-serve` 时不会启动图谱查看器。它还会留下 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`，之后运行 `swarmvault graph share --post` 可复制紧凑摘要，运行 `swarmvault graph share --svg ./share-card.svg` 可生成可视化卡片，或运行 `swarmvault graph share --bundle ./share-kit` 写出包含 markdown、发布文本、SVG、自包含 HTML 预览和 JSON 元数据的便携目录。
 
 需要把有边界的上下文交给 agent？`swarmvault context build "Ship this feature safely" --target ./src --budget 8000` 会把图谱遍历、本地搜索命中、freshness、evidence class 和引用合成为保存下来的 context pack。`--format llms` 会输出类似 `llms.txt` 的 handoff，`context list` 可查看历史 pack，`context show <id>` 可重新打印。对于持续更久的工作，`swarmvault task start "<goal>" --target <path-or-node>` 会创建持久任务账本，`task update` 记录 note、decision、changed path 和关联 pack，`task resume <id>` 输出下一个 agent 可接手的 handoff。既有的 `memory` 命令和 `--memory <id>` 仍作为兼容别名可用。
 
@@ -378,7 +381,7 @@ clawhub install swarmvault
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
 | 配置 / 数据 | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | 结构化预览，带 key/value schema 提示 |
 | 开发清单文件 | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` 等 | 基于内容嗅探的文本 ingest —— 常见开发配置不会被静默丢弃 |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .css .html .htm .sql`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 基于 AST/parser 的分析与模块解析（包括 `tsconfig.json` 路径别名）；SQL 会生成 table/view 节点以及 read/write/join/reference 边 |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 有打包 parser 的语言使用 AST/parser-backed 分析与模块解析；Svelte 会通过 TypeScript 分析器解析 `<script>` 块；Julia、Verilog/SystemVerilog 和 R 会被识别，并在缺少打包 WASM grammar 时给出明确诊断；SQL 会生成 table/view 节点以及 read/write/join/reference 边 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 | Managed sources | 本地目录、公开 GitHub 仓库根 URL、文档中心 URL | 通过 `swarmvault source add` 的 registry 同步 |
 
@@ -419,7 +422,7 @@ clawhub install swarmvault
 
 **可视化 + 可直接发布的 share kit** - 每次 compile 都会写入 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`；`swarmvault graph share --post` 会打印简短文本，`swarmvault graph share --svg [path]` 会写出 1200x630 的可视化卡片，`swarmvault graph share --bundle [dir]` 会写出 markdown、发布文本、SVG、HTML 预览和 JSON 元数据，便于发布、链接或截图。
 
-**图谱 blast radius、status、refresh、聚类与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph status [path]` 会只读检查 graph/report artifacts 与已跟踪 repo 改动是否 stale，`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，`graph cluster [--resolution <n>]` 可以在不重新 ingest 的情况下基于现有 graph 重新计算 communities、degree、god-node 标记与 graph report 页面，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
+**图谱 blast radius、status、refresh、tree、merge、聚类与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph status [path]` 会只读检查 graph/report artifacts 与已跟踪 repo 改动是否 stale，`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，并默认阻止节点或边数下降超过 25% 的刷新，除非显式传入 `--force`；`graph tree` 会写出可折叠的 source/module/symbol HTML 树；`graph merge` 会把 SwarmVault 或 node-link JSON 图谱合并为带命名空间的单一 artifact；`graph cluster [--resolution <n>]` 可以在不重新 ingest 的情况下基于现有 graph 重新计算 communities、degree、god-node 标记与 graph report 页面，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
 
 **图谱 diff** - `swarmvault diff` 将当前知识图谱与上次提交的版本进行对比，显示新增/移除的节点、边和页面，让你清楚看到每次 compile 改变了什么。
 
@@ -439,7 +442,7 @@ clawhub install swarmvault
 
 **自动化** - watch 模式、git hooks、定时任务和 inbox import 让知识库持续保持最新状态。
 
-**托管来源** - `swarmvault source add|list|reload|review|guide|session|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，可恢复的 session 锚点写入 `wiki/outputs/source-sessions/`，引导式整合产物写入 `wiki/outputs/source-guides/`。
+**托管来源** - `swarmvault source add|list|reload|review|guide|session|delete` 可以把重复使用的本地文件、目录、公开 GitHub 仓库和文档站点变成有名字的同步来源，注册表保存在 `state/sources.json`，来源简报写入 `wiki/outputs/source-briefs/`，可恢复的 session 锚点写入 `wiki/outputs/source-sessions/`，引导式整合产物写入 `wiki/outputs/source-guides/`。公开 GitHub 仓库来源支持 `--branch`、`--ref` 和 `--checkout-dir`，用于固定分支、tag、commit 或复用 checkout。
 
 **Source artifact 类型：**
 

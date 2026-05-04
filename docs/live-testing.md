@@ -120,7 +120,9 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - install the published CLI from npm into an isolated temporary prefix
 - initialize a fresh workspace
 - run `scan <directory> --no-serve` against a small local directory fixture and verify the one-command init + ingest + compile path
+- run `scan <github-url> --branch <name> --no-serve` against a small public repo fixture when network validation is enabled
 - run `source add` against a small local directory fixture and verify `state/sources.json`
+- run `source add <github-url> --branch <name> --checkout-dir <tmpdir>` and verify the branch/ref metadata is persisted in `state/sources.json`
 - run `source add --guide` against a recurring local transcript file and verify managed file support plus guided-bundle staging
 - run `source list`, `source reload --all`, `source delete`, and `source add --no-brief`
 - run `source add` against a deterministic local docs fixture over HTTP and verify crawl sync plus source-brief output
@@ -136,13 +138,13 @@ Confirm the published skill includes `README.md` plus the expected examples, ref
 - run `explore`
 - run `lint` and `lint --deep`
 - run `graph export --html` and verify the self-contained HTML embeds local asset data
-- run `graph export --html-standalone`, `graph export --json`, `graph export --canvas`, and `graph export --obsidian` and verify the lighter/shareable outputs exist with the expected file counts or graph payloads
+- run `graph tree --output <path>`, `graph merge <graph...> --out <path>`, `graph export --html-standalone`, `graph export --json`, `graph export --canvas`, and `graph export --obsidian` and verify the lighter/shareable outputs exist with the expected file counts or graph payloads
 - run large-graph overview checks against both `graph serve` and `graph export --html`, and verify `--full` disables overview sampling for oversized graphs
 - when `--browser-check` is enabled, open both `graph serve` and the exported HTML in a real headless Chromium session, select a graph node, trigger path highlighting, and verify deselection
 - run `schedule list` and `schedule run` and verify scheduled saved outputs stage through approvals
 - start `graph serve` and verify HTML plus `/api/graph`, `/api/search`, `/api/page`, `/api/asset`, `/api/candidates`, and `/api/reviews`
 - promote a candidate through the viewer API and resolve a staged approval bundle through the CLI review commands
-- run `watch --lint`, `watch --repo --code-only --once`, and `graph update .` against the published install and verify `state/jobs.ndjson`, watch sessions, and the code-only refresh path
+- run `watch --lint`, `watch --repo --code-only --once`, and `graph update .` against the published install and verify `state/jobs.ndjson`, watch sessions, and the code-only refresh path; include one intentional shrink fixture that requires `graph update --force`
 - start `mcp` and call tools over stdio, including `search_pages` and chart-format `query_vault`
 - run `install --agent codex --hook`
 - run `install --agent claude`

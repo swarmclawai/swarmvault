@@ -36,6 +36,7 @@ import {
   exportGraphFormat,
   exportGraphHtml,
   exportGraphReportHtml,
+  exportGraphTree,
   exportObsidianCanvas,
   exportObsidianVault,
   finishMemoryTask,
@@ -63,6 +64,7 @@ import {
   listSchedules,
   listWatchedRoots,
   loadVaultConfig,
+  mergeGraphFiles,
   pathGraphVault,
   previewCandidatePromotions,
   promoteCandidate,
@@ -118,9 +120,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.6.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.7.0";
   } catch {
-    return "3.6.0";
+    return "3.7.0";
   }
 }
 
@@ -138,6 +140,10 @@ function parsePositiveNumber(value: string | undefined): number | undefined {
 
 function collectRepeated(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function isHttpUrlInput(input: string): boolean {
+  return input.startsWith("http://") || input.startsWith("https://");
 }
 
 function sourceScopeFromManifests(
@@ -626,6 +632,9 @@ source
   .option("--answers-file <path>", "JSON file with guided-session answers keyed by question id or listed in prompt order")
   .option("--max-pages <n>", "Maximum number of pages to crawl for docs sources")
   .option("--max-depth <n>", "Maximum crawl depth for docs sources")
+  .option("--branch <name>", "GitHub branch to clone for public repo sources")
+  .option("--ref <ref>", "Git ref, tag, or commit to check out after cloning a public repo source")
+  .option("--checkout-dir <path>", "Persistent checkout directory for a public GitHub repo source")
   .action(
     async (
       input: string,
@@ -637,6 +646,9 @@ source
         answersFile?: string;
         maxPages?: string;
         maxDepth?: string;
+        branch?: string;
+        ref?: string;
+        checkoutDir?: string;
       }
     ) => {
       const guideAnswers = readGuideAnswersFile(options.answersFile);
@@ -649,7 +661,10 @@ source
         guide: guideEnabled,
         guideAnswers,
         maxPages: options.maxPages ? parsePositiveInt(options.maxPages, 0) || undefined : undefined,
-        maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined
+        maxDepth: options.maxDepth ? parsePositiveInt(options.maxDepth, 0) || undefined : undefined,
+        branch: options.branch,
+        ref: options.ref,
+        checkoutDir: options.checkoutDir
       });
       if (result.guide && !options.answersFile) {
         result.guide = await completeGuideInteractively(result.guide, result.source.id);
@@ -1411,12 +1426,14 @@ graph
   .description("Refresh code-derived graph artifacts from tracked repo roots or one explicit repo path.")
   .argument("[path]", "Optional repo root to refresh instead of configured/tracked roots")
   .option("--lint", "Run lint after the refresh cycle", false)
-  .action(async (targetPath: string | undefined, options: { lint?: boolean }) => {
+  .option("--force", "Allow graph updates even when node or edge counts shrink sharply", false)
+  .action(async (targetPath: string | undefined, options: { lint?: boolean; force?: boolean }) => {
     const overrideRoots = targetPath ? [path.resolve(process.cwd(), targetPath)] : undefined;
     const result = await runWatchCycle(process.cwd(), {
       repo: true,
       codeOnly: true,
       lint: options.lint ?? false,
+      force: options.force ?? false,
       overrideRoots
     });
     if (isJson()) {
@@ -1426,6 +1443,51 @@ graph
     log(
       `Updated graph from ${result.watchedRepoRoots.length} repo root${result.watchedRepoRoots.length === 1 ? "" : "s"}. Imported ${result.repoImportedCount}, updated ${result.repoUpdatedCount}, removed ${result.repoRemovedCount}, pending semantic refresh ${result.pendingSemanticRefreshCount}.`
     );
+  });
+
+graph
+  .command("tree")
+  .description("Write a collapsible source/module/symbol tree for the compiled graph.")
+  .option("--output <html>", "Output HTML path (default: wiki/graph/tree.html)")
+  .option("--root <path>", "Vault root to read instead of the current directory")
+  .option("--label <name>", "Tree title")
+  .option("--max-children <n>", "Maximum children to render per tree node", "250")
+  .action(async (options: { output?: string; root?: string; label?: string; maxChildren?: string }) => {
+    const rootDir = options.root ? path.resolve(process.cwd(), options.root) : process.cwd();
+    const result = await exportGraphTree(rootDir, options.output, {
+      label: options.label,
+      maxChildren: parsePositiveInt(options.maxChildren, 250)
+    });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(`Graph tree: ${result.outputPath}`);
+    log(`Sources: ${result.sourceCount}; nodes: ${result.nodeCount}.`);
+  });
+
+graph
+  .command("merge")
+  .description("Merge SwarmVault or node-link JSON graph files into one namespaced graph artifact.")
+  .argument("<graphs...>", "Graph JSON files to merge")
+  .requiredOption("--out <path>", "Output graph JSON path")
+  .option("--label <name>", "Label/prefix to use when merging one graph")
+  .action(async (graphPaths: string[], options: { out: string; label?: string }) => {
+    const result = await mergeGraphFiles(
+      graphPaths.map((inputPath) => path.resolve(process.cwd(), inputPath)),
+      path.resolve(process.cwd(), options.out),
+      { label: options.label }
+    );
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(
+      `Merged ${result.inputGraphs.length} graph${result.inputGraphs.length === 1 ? "" : "s"} into ${result.outputPath}. Nodes ${result.graph.nodes.length}, edges ${result.graph.edges.length}.`
+    );
+    for (const warning of result.warnings) {
+      log(`Warning: ${warning}`);
+    }
   });
 
 graph
@@ -2040,46 +2102,59 @@ const watch = program
   .option("--code-only", "Only re-extract code sources (AST-only, no LLM re-analysis)", false)
   .option("--debounce <ms>", "Debounce window in milliseconds", "900")
   .option("--root <path>", "Watch this repo root instead of config/auto-discovery (repeat for multiple)", collectRepeated, [] as string[])
-  .action(async (options: { lint?: boolean; repo?: boolean; once?: boolean; codeOnly?: boolean; debounce?: string; root?: string[] }) => {
-    const debounceMs = parsePositiveInt(options.debounce, 900);
-    const overrideRoots = options.root && options.root.length > 0 ? options.root : undefined;
-    if (options.once) {
-      const result = await runWatchCycle(process.cwd(), {
+  .option("--force", "Allow graph updates even when node or edge counts shrink sharply", false)
+  .action(
+    async (options: {
+      lint?: boolean;
+      repo?: boolean;
+      once?: boolean;
+      codeOnly?: boolean;
+      debounce?: string;
+      root?: string[];
+      force?: boolean;
+    }) => {
+      const debounceMs = parsePositiveInt(options.debounce, 900);
+      const overrideRoots = options.root && options.root.length > 0 ? options.root : undefined;
+      if (options.once) {
+        const result = await runWatchCycle(process.cwd(), {
+          lint: options.lint ?? false,
+          repo: options.repo ?? false,
+          codeOnly: options.codeOnly ?? false,
+          debounceMs,
+          force: options.force ?? false,
+          overrideRoots
+        });
+        if (isJson()) {
+          emitJson(result);
+        } else {
+          log(
+            `Refreshed inbox${options.repo ? " and tracked repos" : ""}. Imported ${result.importedCount}, repo imported ${result.repoImportedCount}, repo updated ${result.repoUpdatedCount}, repo removed ${result.repoRemovedCount}.`
+          );
+        }
+        return;
+      }
+      const { paths } = await loadVaultConfig(process.cwd());
+      const controller = await watchVault(process.cwd(), {
         lint: options.lint ?? false,
         repo: options.repo ?? false,
         codeOnly: options.codeOnly ?? false,
         debounceMs,
+        force: options.force ?? false,
         overrideRoots
       });
       if (isJson()) {
-        emitJson(result);
+        emitJson({ status: "watching", inboxDir: paths.inboxDir, repo: options.repo ?? false });
       } else {
-        log(
-          `Refreshed inbox${options.repo ? " and tracked repos" : ""}. Imported ${result.importedCount}, repo imported ${result.repoImportedCount}, repo updated ${result.repoUpdatedCount}, repo removed ${result.repoRemovedCount}.`
-        );
+        log(`Watching inbox${options.repo ? " and tracked repos" : ""} for changes. Press Ctrl+C to stop.`);
       }
-      return;
+      process.on("SIGINT", async () => {
+        try {
+          await controller.close();
+        } catch {}
+        process.exit(0);
+      });
     }
-    const { paths } = await loadVaultConfig(process.cwd());
-    const controller = await watchVault(process.cwd(), {
-      lint: options.lint ?? false,
-      repo: options.repo ?? false,
-      codeOnly: options.codeOnly ?? false,
-      debounceMs,
-      overrideRoots
-    });
-    if (isJson()) {
-      emitJson({ status: "watching", inboxDir: paths.inboxDir, repo: options.repo ?? false });
-    } else {
-      log(`Watching inbox${options.repo ? " and tracked repos" : ""} for changes. Press Ctrl+C to stop.`);
-    }
-    process.on("SIGINT", async () => {
-      try {
-        await controller.close();
-      } catch {}
-      process.exit(0);
-    });
-  });
+  );
 
 watch
   .command("list-roots")
@@ -2768,22 +2843,39 @@ retrieval
 program
   .command("scan")
   .description("Quick-start: initialize, ingest, compile, and serve a graph viewer in one command.")
-  .argument("<directory>", "Directory to scan")
+  .argument("<input>", "Directory or public GitHub repo root URL to scan")
   .option("--port <port>", "Port for the graph viewer")
   .option("--no-serve", "Skip launching the graph viewer after compile")
-  .action(async (directory: string, options: { port?: string; serve?: boolean }) => {
+  .option("--branch <name>", "GitHub branch to clone when scanning a public repo URL")
+  .option("--ref <ref>", "Git ref, tag, or commit to check out when scanning a public repo URL")
+  .option("--checkout-dir <path>", "Persistent checkout directory for a public GitHub repo scan")
+  .action(async (input: string, options: { port?: string; serve?: boolean; branch?: string; ref?: string; checkoutDir?: string }) => {
     const rootDir = process.cwd();
     await initVault(rootDir, {});
     if (!isJson()) {
       log("Initialized workspace.");
     }
 
-    const result = await ingestDirectory(rootDir, directory, {});
+    const result = isHttpUrlInput(input)
+      ? await addManagedSource(rootDir, input, {
+          compile: true,
+          brief: false,
+          branch: options.branch,
+          ref: options.ref,
+          checkoutDir: options.checkoutDir
+        })
+      : await ingestDirectory(rootDir, input, {});
     if (!isJson()) {
-      log(`Ingested ${result.imported.length} file(s).`);
+      if ("source" in result) {
+        log(
+          `Registered ${result.source.kind} source ${result.source.id}. Imported ${result.source.lastSyncCounts?.importedCount ?? 0}, updated ${result.source.lastSyncCounts?.updatedCount ?? 0}.`
+        );
+      } else {
+        log(`Ingested ${result.imported.length} file(s).`);
+      }
     }
 
-    const compiled = await compileVault(rootDir, {});
+    const compiled = "compile" in result && result.compile ? result.compile : await compileVault(rootDir, {});
     const { paths } = await loadVaultConfig(rootDir);
     const shareCardPath = path.join(paths.wikiDir, "graph", "share-card.md");
     const shareCardSvgPath = path.join(paths.wikiDir, "graph", "share-card.svg");
