@@ -5,8 +5,12 @@
 - Added local video and public video URL ingest: local `video/*` files extract audio with `ffmpeg`, `swarmvault ingest --video <url>` / `swarmvault add --video <url>` extract public video audio with `yt-dlp`, and both route transcripts through the configured `tasks.audioProvider` while preserving warning sidecars when a binary or provider is missing.
 - Added `.swarmvaultignore` support for directory ingest, enabled by default alongside `.gitignore` and disableable with `--no-swarmvaultignore`.
 - Added parser-backed SQL code analysis for `.sql` sources, including table/view symbols plus extracted `reads`, `writes`, `joins`, and `references` graph edges.
+- Added `SWARMVAULT_OUT` so generated `raw/`, `wiki/`, `state/`, `agent/`, and `inbox/` artifacts can be isolated from the project root while config and schema stay at the source root.
+- Added `swarmvault graph status [path]` for read-only graph freshness checks that distinguish code-only updates from semantic refresh work and recommend `graph update` or `compile`.
 - Added `swarmvault graph cluster [--resolution <n>]`, engine `refreshGraphClusters`, and MCP `cluster_graph` to recompute communities, graph metrics, god-node flags, graph report pages, and share artifacts from an existing compiled graph without re-ingesting sources.
+- Improved graph community clustering by splitting oversized and low-cohesion communities after the initial Louvain pass so large-repo graph reports remain scannable.
 - Updated the VS Code installer path so `swarmvault install --agent vscode` writes both the chat mode and `.github/copilot-instructions.md`.
+- Updated Antigravity installation to write `.agents/rules/swarmvault.md` and `.agents/workflows/swarmvault.md`, with cleanup for older fully managed `.agent/` files.
 
 ## 3.5.0
 

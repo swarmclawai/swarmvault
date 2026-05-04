@@ -40,6 +40,7 @@ import {
   exportObsidianVault,
   finishMemoryTask,
   getGitHookStatus,
+  getGraphStatus,
   getRetrievalStatus,
   getWatchStatus,
   graphDiff,
@@ -1428,6 +1429,37 @@ graph
   });
 
 graph
+  .command("status")
+  .description("Read-only check for graph/report presence and tracked repo changes.")
+  .argument("[path]", "Optional repo root to check instead of configured/tracked roots")
+  .action(async (targetPath: string | undefined) => {
+    const overrideRoots = targetPath ? [path.resolve(process.cwd(), targetPath)] : undefined;
+    const status = await getGraphStatus(process.cwd(), { repoRoots: overrideRoots });
+    if (isJson()) {
+      emitJson(status);
+      return;
+    }
+    log(`Graph: ${status.graphExists ? status.graphPath : `missing (${status.graphPath})`}`);
+    log(`Report: ${status.reportExists ? status.reportPath : `missing (${status.reportPath})`}`);
+    log(`Tracked repo roots: ${status.trackedRepoRoots.length ? status.trackedRepoRoots.join(", ") : "none"}`);
+    log(`Code changes: ${status.codeChangeCount}`);
+    log(`Semantic changes: ${status.semanticChangeCount}`);
+    log(`Pending semantic refresh: ${status.pendingSemanticRefresh.length}`);
+    if (status.changes.length) {
+      for (const change of status.changes.slice(0, 20)) {
+        log(`- ${change.refreshType} ${change.changeType} ${change.path}`);
+      }
+      if (status.changes.length > 20) {
+        log(`... and ${status.changes.length - 20} more`);
+      }
+    }
+    log(`State: ${status.stale ? "stale" : "fresh"}`);
+    if (status.recommendedCommand) {
+      log(`Recommended: ${status.recommendedCommand}`);
+    }
+  });
+
+graph
   .command("cluster")
   .alias("clusters")
   .description("Recompute graph communities, degrees, god-node flags, and graph report artifacts without re-ingesting sources.")
@@ -2752,9 +2784,10 @@ program
     }
 
     const compiled = await compileVault(rootDir, {});
-    const shareCardPath = path.join(rootDir, "wiki", "graph", "share-card.md");
-    const shareCardSvgPath = path.join(rootDir, "wiki", "graph", "share-card.svg");
-    const shareKitPath = path.join(rootDir, "wiki", "graph", "share-kit");
+    const { paths } = await loadVaultConfig(rootDir);
+    const shareCardPath = path.join(paths.wikiDir, "graph", "share-card.md");
+    const shareCardSvgPath = path.join(paths.wikiDir, "graph", "share-card.svg");
+    const shareKitPath = path.join(paths.wikiDir, "graph", "share-kit");
     if (!isJson()) {
       log(`Compiled ${compiled.sourceCount} source(s), ${compiled.pageCount} page(s).`);
       log(`Share card: ${shareCardPath}`);

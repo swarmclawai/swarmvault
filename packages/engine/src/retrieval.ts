@@ -57,7 +57,7 @@ export async function rebuildRetrievalIndex(rootDir: string): Promise<RetrievalS
   if (!graph) {
     throw new Error("Graph artifact not found. Run `swarmvault compile` before rebuilding retrieval.");
   }
-  await rebuildSearchIndex(paths.searchDbPath, graph.pages, paths.wikiDir);
+  await rebuildSearchIndex(paths.searchDbPath, graph.pages, paths.wikiDir, { rootDir, stateDir: paths.stateDir });
   await writeRetrievalManifest(rootDir, graph);
   return getRetrievalStatus(rootDir);
 }

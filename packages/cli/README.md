@@ -53,6 +53,7 @@ swarmvault query "Turn this into slides" --format slides
 swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph blast ./src/index.ts
+swarmvault graph status ./src
 swarmvault graph update .
 swarmvault graph cluster
 swarmvault graph query "Which nodes bridge the biggest clusters?"
@@ -85,6 +86,8 @@ Create a workspace with:
 - optional `.obsidian/` workspace files when `--obsidian` is passed
 
 The schema file is the vault-specific instruction layer. Edit it to define naming rules, categories, grounding expectations, and exclusions before a serious compile.
+
+Set `SWARMVAULT_OUT=<dir>` when generated artifacts should be isolated from the project root. Config and schema files stay at the root; relative `raw/`, `wiki/`, `state/`, `agent/`, and `inbox/` workspace directories resolve under the output root.
 
 `--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` preset also sets `profile.guidedIngestDefault: true` and `profile.deepLintDefault: true`, so guided ingest/source and lint flows are on by default until you override them with `--no-guide` or `--no-deep`.
 
@@ -389,6 +392,17 @@ Refresh code-derived graph artifacts from tracked repo roots or one explicit rep
 - with `path`, refreshes that repo root instead of the tracked set
 - `--json` returns the same one-shot watch result shape, including repo import/update/remove counts and pending semantic refresh entries
 
+### `swarmvault graph status [path]`
+
+Read-only graph freshness check for tracked repo roots or one explicit repo path.
+
+- reports graph and graph-report presence
+- lists tracked repo roots and changed files without writing watch status
+- separates code-only changes from semantic refresh changes
+- recommends `swarmvault graph update` for code-only graph drift
+- recommends `swarmvault compile` when graph/report artifacts are missing, non-code files changed, or a semantic refresh is pending
+- supports global `--json` for automation
+
 ### `swarmvault graph cluster [--resolution <n>]`
 
 Recompute communities, node degrees, bridge scores, god-node flags, and graph report artifacts from the existing `state/graph.json` without re-ingesting or re-analyzing sources.
@@ -396,6 +410,7 @@ Recompute communities, node degrees, bridge scores, god-node flags, and graph re
 - writes refreshed graph metrics back to `state/graph.json`
 - updates `wiki/graph/report.md`, `wiki/graph/report.json`, share artifacts, and per-community graph pages
 - uses `graph.communityResolution` by default, or `--resolution <n>` for a one-off override
+- splits oversized or low-cohesion communities after the initial Louvain pass so large-repo reports stay scannable
 - `--json` returns counts plus the graph/report paths
 
 ### `swarmvault hook install|uninstall|status`
@@ -539,7 +554,7 @@ Defaults:
 - namespaces every remote record by `vaultId` so multiple vaults can safely share one Neo4j database
 - upserts current graph records and does not prune stale remote data yet
 
-### `swarmvault install --agent <codex|claude|cursor|goose|pi|gemini|opencode|aider|copilot|trae|claw|droid>`
+### `swarmvault install --agent <agent>`
 
 Install agent-specific rules into the current project so an agent understands the SwarmVault workspace contract and workflow.
 
@@ -564,6 +579,9 @@ Agent target mapping:
 - `trae` writes `.trae/rules/swarmvault.md`
 - `claw` writes `.claw/skills/swarmvault/SKILL.md`
 - `droid` writes `.factory/rules/swarmvault.md`
+- `kiro` writes `.kiro/skills/swarmvault/SKILL.md` and `.kiro/steering/swarmvault.md`
+- `hermes` writes `~/.hermes/skills/swarmvault/SKILL.md` plus `AGENTS.md`
+- `antigravity` writes `.agents/rules/swarmvault.md` and `.agents/workflows/swarmvault.md`, and removes older fully managed `.agent/` files during reinstall
 - `vscode` writes `.github/chatmodes/swarmvault.chatmode.md` plus `.github/copilot-instructions.md`
 
 Hook semantics:

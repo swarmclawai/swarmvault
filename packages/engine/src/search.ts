@@ -103,7 +103,12 @@ function normalizeSourceClass(value: unknown): SourceClass | undefined {
   return value === "first_party" || value === "third_party" || value === "resource" || value === "generated" ? value : undefined;
 }
 
-export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wikiDir: string): Promise<void> {
+export async function rebuildSearchIndex(
+  dbPath: string,
+  pages: GraphPage[],
+  wikiDir: string,
+  options: { rootDir?: string; stateDir?: string } = {}
+): Promise<void> {
   await ensureDir(path.dirname(dbPath));
   const DatabaseSync = getDatabaseSync();
   const db = withSuppressedSqliteExperimentalWarning(() => new DatabaseSync(dbPath));
@@ -136,7 +141,8 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
   const insertPage = db.prepare(
     "INSERT INTO pages (id, path, title, body, kind, status, source_type, source_class, project_ids, project_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
-  const rootDir = path.dirname(wikiDir);
+  const stateDir = options.stateDir ?? path.dirname(path.dirname(dbPath));
+  const rootDir = options.rootDir ?? path.dirname(wikiDir);
 
   for (const page of pages) {
     const absolutePath = path.join(wikiDir, page.path);
@@ -150,7 +156,7 @@ export async function rebuildSearchIndex(dbPath: string, pages: GraphPage[], wik
     if ((page.kind === "source" || page.kind === "module") && primarySourceId) {
       try {
         const manifest = JSON.parse(
-          await fs.readFile(path.join(rootDir, "state", "manifests", `${primarySourceId}.json`), "utf8")
+          await fs.readFile(path.join(stateDir, "manifests", `${primarySourceId}.json`), "utf8")
         ) as SourceManifest;
         const excerptPath = manifest.extractedTextPath ?? manifest.storedPath;
         if (excerptPath) {

@@ -78,7 +78,7 @@ If you liked Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf
 
 **"Does it scale past 100 pages?"** — Yes. Hybrid search merges SQLite full-text with semantic embeddings, so queries work without fitting every page into context. `compile --max-tokens` trims output to fit bounded windows. Graph navigation (`graph query`, `graph path`, `graph explain`) lets you traverse rather than search.
 
-**"Is it just for personal use?"** — Git-backed workflows (`--commit`), watch mode with git hooks, scheduled automation, and an MCP server make it usable for teams. Agent integrations cover 16 tools from Claude Code to VS Code Copilot Chat.
+**"Is it just for personal use?"** — Git-backed workflows (`--commit`), watch mode with git hooks, scheduled automation, and an MCP server make it usable for teams. Agent integrations cover direct-rule targets plus the extended skill-bundle roster.
 
 **"Do I need API keys?"** — No. The built-in `heuristic` provider is fully offline. For sharper extraction, pair with a free local LLM via [Ollama](https://ollama.com). Cloud providers are optional.
 
@@ -101,7 +101,7 @@ If you liked Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf
 | Offline / no API keys | — | **yes** |
 | Contradiction detection | mentioned | **automatic** |
 | Approval queues | — | **yes** |
-| 12 agent integrations | — | **yes** |
+| Agent integrations | — | **yes** |
 | Neo4j / graph export | — | **yes** |
 | MCP server | — | **yes** |
 | Watch mode + git hooks | — | **yes** |
@@ -151,6 +151,8 @@ my-vault/
 └── agent/                     generated agent-facing helpers
 ```
 
+Set `SWARMVAULT_OUT=.swarmvault-out` when generated vault artifacts should live outside the project root, such as in scratch worktrees or package smoke tests. `swarmvault.config.json` and `swarmvault.schema.md` stay in the project root; relative `raw/`, `wiki/`, `state/`, `agent/`, and `inbox/` paths resolve under the output directory.
+
 ```bash
 # Full workflow — step by step
 swarmvault init --obsidian --profile personal-research
@@ -169,6 +171,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
@@ -418,17 +421,19 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Visual + post-ready share kit** - every compile writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`; `swarmvault graph share --post` prints concise text, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, and `swarmvault graph share --bundle [dir]` writes markdown, post text, SVG, HTML preview, and JSON metadata for easy posting, linking, or screenshotting.
 
-**Graph blast radius, refresh, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
+**Graph blast radius, status, refresh, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph status [path]` performs a read-only stale check over graph/report artifacts and tracked repo changes, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 
 **Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
 
+**Worktree artifact roots** - `SWARMVAULT_OUT=<dir>` relocates generated `raw/`, `wiki/`, `state/`, `agent/`, and `inbox/` artifacts while keeping `swarmvault.config.json` and `swarmvault.schema.md` in the project root. Use it for isolated smoke tests, shared source trees, and repo worktrees where generated vault state should not sit beside source files.
+
 **Obsidian graph export** - `graph export --obsidian` writes an Obsidian-friendly bundle that preserves wiki folders, appends graph connections with typed link frontmatter for Breadcrumbs/Juggl, emits community notes and orphan-node stubs, copies assets, generates Dataview dashboard pages, and includes a full `.obsidian` config with `types.json`, node-type color groups, and `cssclasses` on every page.
 
-**Adaptive graph communities** - SwarmVault auto-tunes Louvain community resolution for very small or sparse graphs, and you can pin a specific value with `graph.communityResolution` in `swarmvault.config.json` or override one recompute with `swarmvault graph cluster --resolution <n>`.
+**Adaptive graph communities** - SwarmVault auto-tunes Louvain community resolution for very small or sparse graphs, then splits oversized or low-cohesion communities so graph reports stay scannable on larger repos. You can pin a specific value with `graph.communityResolution` in `swarmvault.config.json` or override one recompute with `swarmvault graph cluster --resolution <n>`.
 
 **Optional model providers** - OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Groq, Together, xAI, Cerebras, generic OpenAI-compatible, custom adapters, or the built-in heuristic for offline/local use.
 
-**16 agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, GitHub Copilot CLI, Trae, Claw/OpenClaw, Droid, Kiro, Hermes, Google Antigravity, and VS Code Copilot Chat. Optional graph-first hooks bias supported agents, including Codex, toward the wiki before broad search.
+**Agent integrations** - install rules for Codex, Claude Code, Cursor, Goose, Pi, Gemini CLI, OpenCode, Aider, GitHub Copilot CLI, Trae, Claw/OpenClaw, Droid, Kiro, Hermes, Google Antigravity, VS Code Copilot Chat, and the extended skill-bundle roster. Optional graph-first hooks bias supported agents, including Codex, toward the wiki before broad search. Antigravity installs under `.agents/rules/` and `.agents/workflows/`; older fully managed `.agent/` files are cleaned up during reinstall.
 
 **MCP server** - `swarmvault mcp` exposes the vault to any compatible agent client over stdio, including graph stats, graph clustering refresh, community lookup, hyperedges, context-pack, task-ledger, compatibility memory-task, vault doctor, and retrieval health tools.
 

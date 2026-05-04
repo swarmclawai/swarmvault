@@ -1694,6 +1694,58 @@ function describeGodNodeReason(degree: number, communityCount: number, degreeMea
   return parts.join(", ");
 }
 
+const COMMUNITY_MAX_FRACTION = 0.25;
+const COMMUNITY_MIN_SPLIT_SIZE = 10;
+const COMMUNITY_LOW_COHESION_THRESHOLD = 0.05;
+const COMMUNITY_LOW_COHESION_MIN_SIZE = 50;
+
+function communityCohesion(graph: Graph, memberIds: string[]): number {
+  const n = memberIds.length;
+  if (n <= 1) {
+    return 1;
+  }
+  const members = new Set(memberIds);
+  let internalEdges = 0;
+  graph.forEachEdge((_edge, _attributes, source, target) => {
+    if (members.has(String(source)) && members.has(String(target))) {
+      internalEdges++;
+    }
+  });
+  const possibleEdges = (n * (n - 1)) / 2;
+  return possibleEdges > 0 ? internalEdges / possibleEdges : 0;
+}
+
+function splitCommunityMembers(graph: Graph, memberIds: string[], resolution: number): string[][] {
+  if (memberIds.length <= 1) {
+    return [memberIds];
+  }
+  const memberSet = new Set(memberIds);
+  const subgraph = new Graph({ type: "undirected" });
+  for (const memberId of memberIds) {
+    subgraph.addNode(memberId);
+  }
+  graph.forEachEdge((_edge, _attributes, source, target) => {
+    const sourceId = String(source);
+    const targetId = String(target);
+    if (memberSet.has(sourceId) && memberSet.has(targetId) && !subgraph.hasEdge(sourceId, targetId)) {
+      subgraph.addEdge(sourceId, targetId);
+    }
+  });
+  if (subgraph.size === 0) {
+    return memberIds.map((memberId) => [memberId]);
+  }
+  const mapping: Record<string, number> = louvain(subgraph, { resolution });
+  const groups = new Map<number, string[]>();
+  for (const memberId of memberIds) {
+    const groupId = mapping[memberId] ?? -1;
+    const group = groups.get(groupId) ?? [];
+    group.push(memberId);
+    groups.set(groupId, group);
+  }
+  const split = [...groups.values()].filter((group) => group.length > 0);
+  return split.length > 1 ? split : [memberIds];
+}
+
 function deriveGraphMetrics(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -1764,8 +1816,30 @@ function deriveGraphMetrics(
     groupByCommunity.get(communityNumber)!.push(node.id);
   }
 
-  let communityIndex = 0;
+  const maxCommunitySize = Math.max(COMMUNITY_MIN_SPLIT_SIZE, Math.floor(Math.max(1, nonSourceNodes.length) * COMMUNITY_MAX_FRACTION));
+  let communityGroups: string[][] = [];
   for (const memberIds of groupByCommunity.values()) {
+    if (memberIds.length > maxCommunitySize) {
+      communityGroups.push(...splitCommunityMembers(louvainGraph, memberIds, effectiveResolution));
+    } else {
+      communityGroups.push(memberIds);
+    }
+  }
+
+  communityGroups = communityGroups.flatMap((memberIds) => {
+    if (
+      memberIds.length >= COMMUNITY_LOW_COHESION_MIN_SIZE &&
+      communityCohesion(louvainGraph, memberIds) < COMMUNITY_LOW_COHESION_THRESHOLD
+    ) {
+      const split = splitCommunityMembers(louvainGraph, memberIds, effectiveResolution);
+      return split.length > 1 ? split : [memberIds];
+    }
+    return [memberIds];
+  });
+  communityGroups.sort((left, right) => right.length - left.length || left[0]?.localeCompare(right[0] ?? "") || left.length - right.length);
+
+  let communityIndex = 0;
+  for (const memberIds of communityGroups) {
     const labelSeed = nodes.find((candidate) => candidate.id === memberIds[0])?.label ?? `cluster-${communityIndex + 1}`;
     const communityId = buildCommunityId(labelSeed, communityIndex);
     communities.push({
@@ -3384,7 +3458,7 @@ async function syncVaultArtifacts(
     memoryHashes: input.memoryHashes,
     candidateHistory
   } satisfies CompileState);
-  await rebuildSearchIndex(paths.searchDbPath, allPages, paths.wikiDir);
+  await rebuildSearchIndex(paths.searchDbPath, allPages, paths.wikiDir, { rootDir, stateDir: paths.stateDir });
   await writeRetrievalManifest(rootDir, graph);
 
   return {
@@ -3615,7 +3689,7 @@ async function refreshIndexesAndSearch(rootDir: string, pages: GraphPage[]): Pro
       .map((relativePath) => fs.rm(path.join(paths.wikiDir, relativePath), { force: true }))
   );
 
-  await rebuildSearchIndex(paths.searchDbPath, pagesWithGraph, paths.wikiDir);
+  await rebuildSearchIndex(paths.searchDbPath, pagesWithGraph, paths.wikiDir, { rootDir, stateDir: paths.stateDir });
   if (currentGraph) {
     await writeRetrievalManifest(rootDir, {
       ...currentGraph,

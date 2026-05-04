@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { initWorkspace } from "./config.js";
+import { initWorkspace, loadVaultConfig } from "./config.js";
 import type { ManagedSourceRecord, ManagedSourcesArtifact, ResolvedPaths, SourceManifest } from "./types.js";
 import { fileExists, readJsonFile, sha256, slugify, writeJsonFile } from "./utils.js";
 
@@ -109,7 +109,7 @@ export async function loadManagedSources(rootDir: string): Promise<ManagedSource
 }
 
 export async function readManagedSourcesIfPresent(rootDir: string): Promise<ManagedSourceRecord[] | null> {
-  const { paths } = await initWorkspace(rootDir);
+  const { paths } = await loadVaultConfig(rootDir);
   if (!(await fileExists(paths.managedSourcesPath))) {
     return null;
   }

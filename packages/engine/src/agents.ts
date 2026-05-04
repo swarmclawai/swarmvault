@@ -66,7 +66,7 @@ const managedEnd = "<!-- swarmvault:managed:end -->";
 const legacyManagedStart = "<!-- vault:managed:start -->";
 const legacyManagedEnd = "<!-- vault:managed:end -->";
 
-const claudeSearchMatcher = "Glob|Grep";
+const claudeSearchMatcher = "Bash";
 const claudeSessionMatchers = ["startup", "resume", "clear", "compact"] as const;
 
 const geminiSessionMatcher = "startup";
@@ -151,9 +151,14 @@ const agentFileKinds = {
   droid: ".factory/rules/swarmvault.md",
   kiro: ".kiro/skills/swarmvault/SKILL.md",
   kiroSteering: ".kiro/steering/swarmvault.md",
-  antigravityRules: ".agent/rules/swarmvault.md",
-  antigravityWorkflow: ".agent/workflows/swarmvault.md",
+  antigravityRules: ".agents/rules/swarmvault.md",
+  antigravityWorkflow: ".agents/workflows/swarmvault.md",
   vscode: ".github/chatmodes/swarmvault.chatmode.md"
+} as const;
+
+const legacyAntigravityFileKinds = {
+  antigravityRules: ".agent/rules/swarmvault.md",
+  antigravityWorkflow: ".agent/workflows/swarmvault.md"
 } as const;
 
 // Project-level skill bundle directories for agents that follow the
@@ -211,6 +216,7 @@ const SWARMVAULT_RULE_BULLETS = [
   "- Read `swarmvault.schema.md` before compile or query style work. It is the canonical schema path.",
   "- Treat `raw/` as immutable source input.",
   "- Treat `wiki/` as generated markdown owned by the agent and compiler workflow.",
+  "- If `SWARMVAULT_OUT` is set, resolve generated artifact paths like `raw/`, `wiki/`, and `state/` under that directory.",
   "- Read `wiki/graph/report.md` before broad file searching when it exists; otherwise start with `wiki/index.md`.",
   "- For graph questions, prefer `swarmvault graph query`, `swarmvault graph path`, and `swarmvault graph explain` before broad grep/glob searching.",
   "- Preserve frontmatter fields including `page_id`, `source_ids`, `node_ids`, `freshness`, and `source_hashes`.",
@@ -218,10 +224,19 @@ const SWARMVAULT_RULE_BULLETS = [
   "- Prefer `swarmvault ingest`, `swarmvault compile`, `swarmvault query`, and `swarmvault lint` for SwarmVault maintenance tasks."
 ];
 
+const LEGACY_SWARMVAULT_RULE_BULLETS = SWARMVAULT_RULE_BULLETS.filter((bullet) => !bullet.includes("SWARMVAULT_OUT"));
+
 function buildManagedBlock(target: keyof typeof agentFileKinds): string {
   const heading =
     target === "aider" ? "# SwarmVault Conventions" : target === "copilot" ? "# SwarmVault Repository Instructions" : "# SwarmVault Rules";
-  return [managedStart, heading, "", ...SWARMVAULT_RULE_BULLETS, managedEnd, ""].join("\n");
+  const extra =
+    target === "copilot"
+      ? [
+          "",
+          "For architecture, structure, relationship, add/modify/find, or component-location questions, read the graph report first when it exists. Use source files after that when the graph lacks detail, is stale, or you are making a specific edit."
+        ]
+      : [];
+  return [managedStart, heading, "", ...SWARMVAULT_RULE_BULLETS, ...extra, managedEnd, ""].join("\n");
 }
 
 function buildSkillFrontmatter(): string {
@@ -265,7 +280,7 @@ function buildKiroSteeringFile(): string {
   return ["---", frontmatter, "---", "", "# SwarmVault Rules", "", ...SWARMVAULT_RULE_BULLETS, ""].join("\n");
 }
 
-function buildAntigravityRulesFile(): string {
+function buildAntigravityRulesFile(ruleBullets = SWARMVAULT_RULE_BULLETS): string {
   const frontmatter = YAML.stringify({
     alwaysApply: true,
     description: "SwarmVault graph-first repository rules."
@@ -277,7 +292,7 @@ function buildAntigravityRulesFile(): string {
     "",
     "# SwarmVault Rules",
     "",
-    ...SWARMVAULT_RULE_BULLETS,
+    ...ruleBullets,
     "",
     "> MCP navigation hint: SwarmVault exposes a local MCP server via `swarmvault mcp`. Wire it into your Antigravity MCP config to query the graph without shelling out."
   ].join("\n");
@@ -322,9 +337,11 @@ function buildVscodeChatmodeFile(): string {
     "",
     "You are working inside a SwarmVault vault. Follow these rules before other actions:",
     "",
+    "For any question about this repo's architecture, structure, components, relationships, or where/how to add or modify code, first read `wiki/graph/report.md` when it exists. If `SWARMVAULT_OUT` is set, read `$SWARMVAULT_OUT/wiki/graph/report.md` instead.",
+    "",
     ...SWARMVAULT_RULE_BULLETS,
     "",
-    "Use the terminal tool to run `swarmvault` commands. Prefer graph queries over broad grep/glob.",
+    "Use the terminal tool to run `swarmvault` commands. Prefer graph queries over broad grep/glob. Read source files after the graph when you are modifying/debugging specific code, the graph lacks needed detail, or the graph is stale.",
     ""
   ].join("\n");
 }
@@ -481,6 +498,32 @@ async function writeOwnedFile(filePath: string, content: string, executable = fa
   if (executable) {
     await fs.chmod(filePath, 0o755);
   }
+}
+
+async function removeLegacyOwnedFile(filePath: string, ownedContents: string[], warningLabel: string): Promise<string | null> {
+  if (!(await fileExists(filePath))) {
+    return null;
+  }
+  const existing = await fs.readFile(filePath, "utf8");
+  if (ownedContents.some((content) => content.trim() === existing.trim())) {
+    await fs.rm(filePath, { force: true });
+    return null;
+  }
+  return `${warningLabel} already exists at ${filePath}. Left it unchanged because it no longer matches SwarmVault's managed content.`;
+}
+
+async function cleanupLegacyAntigravityFiles(rootDir: string): Promise<string[]> {
+  const legacyRulesPath = path.join(rootDir, legacyAntigravityFileKinds.antigravityRules);
+  const legacyWorkflowPath = path.join(rootDir, legacyAntigravityFileKinds.antigravityWorkflow);
+  const warnings = await Promise.all([
+    removeLegacyOwnedFile(
+      legacyRulesPath,
+      [buildAntigravityRulesFile(), buildAntigravityRulesFile(LEGACY_SWARMVAULT_RULE_BULLETS)],
+      "Legacy Antigravity rules file"
+    ),
+    removeLegacyOwnedFile(legacyWorkflowPath, [buildAntigravityWorkflowFile()], "Legacy Antigravity workflow file")
+  ]);
+  return warnings.filter((warning): warning is string => Boolean(warning));
 }
 
 async function readJsonWithWarnings<T extends object>(filePath: string, fallback: T, label: string): Promise<JsonWarningResult<T>> {
@@ -755,6 +798,7 @@ export async function installAgent(rootDir: string, agent: AgentType, options: I
     case "antigravity":
       await writeOwnedFile(target, buildAntigravityRulesFile());
       await writeOwnedFile(path.join(rootDir, agentFileKinds.antigravityWorkflow), buildAntigravityWorkflowFile());
+      warnings.push(...(await cleanupLegacyAntigravityFiles(rootDir)));
       break;
     case "vscode":
       await writeOwnedFile(target, buildVscodeChatmodeFile());

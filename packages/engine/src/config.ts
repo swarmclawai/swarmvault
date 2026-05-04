@@ -139,6 +139,8 @@ const WORKSPACE_DIR_DEFAULTS = {
   inboxDir: "inbox"
 } as const;
 
+export const SWARMVAULT_OUT_ENV = "SWARMVAULT_OUT";
+
 const vaultConfigSchema = z.object({
   workspace: z
     .object({
@@ -606,23 +608,27 @@ export function resolvePaths(
   schemaPath = path.join(rootDir, PRIMARY_SCHEMA_FILENAME)
 ): ResolvedPaths {
   const effective = config ?? defaultVaultConfig();
-  const rawDir = path.resolve(rootDir, effective.workspace.rawDir);
+  const artifactRootDir = resolveArtifactRootDir(rootDir);
+  const resolveWorkspaceDir = (value: string): string =>
+    path.isAbsolute(value) ? path.resolve(value) : path.resolve(artifactRootDir, value);
+  const rawDir = resolveWorkspaceDir(effective.workspace.rawDir);
   const rawSourcesDir = path.join(rawDir, "sources");
   const rawAssetsDir = path.join(rawDir, "assets");
-  const wikiDir = path.resolve(rootDir, effective.workspace.wikiDir);
+  const wikiDir = resolveWorkspaceDir(effective.workspace.wikiDir);
   const outputsAssetsDir = path.join(wikiDir, "outputs", "assets");
   const projectsDir = path.join(wikiDir, "projects");
   const candidatesDir = path.join(wikiDir, "candidates");
-  const stateDir = path.resolve(rootDir, effective.workspace.stateDir);
+  const stateDir = resolveWorkspaceDir(effective.workspace.stateDir);
   const retrievalDir = path.join(stateDir, "retrieval");
   const schedulesDir = path.join(stateDir, "schedules");
   const watchDir = path.join(stateDir, "watch");
   const managedSourcesDir = path.join(stateDir, "sources");
-  const agentDir = path.resolve(rootDir, effective.workspace.agentDir);
-  const inboxDir = path.resolve(rootDir, effective.workspace.inboxDir);
+  const agentDir = resolveWorkspaceDir(effective.workspace.agentDir);
+  const inboxDir = resolveWorkspaceDir(effective.workspace.inboxDir);
 
   return {
     rootDir,
+    artifactRootDir,
     schemaPath,
     rawDir,
     rawSourcesDir,
@@ -660,6 +666,14 @@ export function resolvePaths(
     managedSourcesDir,
     configPath
   };
+}
+
+export function resolveArtifactRootDir(rootDir: string): string {
+  const override = process.env[SWARMVAULT_OUT_ENV]?.trim();
+  if (!override) {
+    return path.resolve(rootDir);
+  }
+  return path.isAbsolute(override) ? path.resolve(override) : path.resolve(rootDir, override);
 }
 
 export async function loadVaultConfig(rootDir: string): Promise<{ config: VaultConfig; paths: ResolvedPaths }> {

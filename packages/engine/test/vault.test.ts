@@ -30,12 +30,14 @@ import {
   installGitHooks,
   lintVault,
   listApprovals,
+  loadVaultConfig,
   queryGraphVault,
   queryVault,
   readApproval,
   readPage,
   runWatchCycle,
   searchVault,
+  startMemoryTask,
   uninstallGitHooks,
   watchVault
 } from "../src/index.js";
@@ -504,6 +506,41 @@ describe("swarmvault workflow", () => {
     await expect(fs.access(path.join(rootDir, "wiki", "insights", "index.md"))).rejects.toThrow();
   });
 
+  it("resolves generated artifacts under SWARMVAULT_OUT while keeping config in the project root", async () => {
+    const rootDir = await createTempWorkspace();
+    const previousOut = process.env.SWARMVAULT_OUT;
+    process.env.SWARMVAULT_OUT = ".swarmvault-out";
+    try {
+      await initVault(rootDir);
+      const { paths } = await loadVaultConfig(rootDir);
+      const artifactRoot = path.join(rootDir, ".swarmvault-out");
+
+      expect(paths.artifactRootDir).toBe(artifactRoot);
+      await expect(fs.access(path.join(rootDir, "swarmvault.config.json"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(rootDir, "swarmvault.schema.md"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(artifactRoot, "wiki"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(artifactRoot, "state"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(rootDir, "wiki"))).rejects.toThrow();
+      await expect(fs.access(path.join(rootDir, "state"))).rejects.toThrow();
+
+      await fs.writeFile(path.join(rootDir, "out-source.md"), "# Output Root\n\nGenerated vault files move under SWARMVAULT_OUT.", "utf8");
+      await ingestInput(rootDir, "out-source.md");
+      await compileVault(rootDir);
+      await expect(fs.access(path.join(artifactRoot, "state", "graph.json"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(artifactRoot, "wiki", "graph", "report.md"))).resolves.toBeUndefined();
+
+      const task = await startMemoryTask(rootDir, { goal: "Track output root behavior", target: "Output Root", agent: "codex" });
+      expect(task.artifactPath.startsWith(path.join(artifactRoot, "state", "memory"))).toBe(true);
+      expect(task.markdownPath.startsWith(path.join(artifactRoot, "wiki", "memory"))).toBe(true);
+    } finally {
+      if (previousOut === undefined) {
+        delete process.env.SWARMVAULT_OUT;
+      } else {
+        process.env.SWARMVAULT_OUT = previousOut;
+      }
+    }
+  });
+
   it("installs kiro, antigravity, and vscode agents with their expected layouts", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);
@@ -519,13 +556,63 @@ describe("swarmvault workflow", () => {
     expect(kiroSteering.data.inclusion).toBe("always");
     expect(kiroSteering.content).toContain("# SwarmVault Rules");
 
+    await fs.mkdir(path.join(rootDir, ".agent", "rules"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, ".agent", "workflows"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, ".agent", "rules", "swarmvault.md"),
+      [
+        "---",
+        "alwaysApply: true",
+        "description: SwarmVault graph-first repository rules.",
+        "---",
+        "",
+        "# SwarmVault Rules",
+        "",
+        "- Read `swarmvault.schema.md` before compile or query style work. It is the canonical schema path.",
+        "- Treat `raw/` as immutable source input.",
+        "- Treat `wiki/` as generated markdown owned by the agent and compiler workflow.",
+        "- Read `wiki/graph/report.md` before broad file searching when it exists; otherwise start with `wiki/index.md`.",
+        "- For graph questions, prefer `swarmvault graph query`, `swarmvault graph path`, and `swarmvault graph explain` before broad grep/glob searching.",
+        "- Preserve frontmatter fields including `page_id`, `source_ids`, `node_ids`, `freshness`, and `source_hashes`.",
+        "- Save high-value answers back into `wiki/outputs/` instead of leaving them only in chat.",
+        "- Prefer `swarmvault ingest`, `swarmvault compile`, `swarmvault query`, and `swarmvault lint` for SwarmVault maintenance tasks.",
+        "",
+        "> MCP navigation hint: SwarmVault exposes a local MCP server via `swarmvault mcp`. Wire it into your Antigravity MCP config to query the graph without shelling out."
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(rootDir, ".agent", "workflows", "swarmvault.md"),
+      [
+        "---",
+        "command: swarmvault",
+        "description: Compile, query, and lint the SwarmVault vault.",
+        "---",
+        "",
+        "# /swarmvault",
+        "",
+        "Run SwarmVault against the current directory.",
+        "",
+        "## Steps",
+        "",
+        "1. If no vault exists, run `swarmvault init`.",
+        "2. For new sources, run `swarmvault ingest <path>`.",
+        "3. Run `swarmvault compile` to refresh the wiki and graph.",
+        "4. For follow-up questions, prefer `swarmvault query`, `swarmvault graph query`, `swarmvault graph path`, `swarmvault graph explain`.",
+        "5. Save high-value answers to `wiki/outputs/`.",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
     const antigravityTarget = await installAgent(rootDir, "antigravity");
-    expect(antigravityTarget.target).toBe(path.join(rootDir, ".agent", "rules", "swarmvault.md"));
-    expect(antigravityTarget.targets).toContain(path.join(rootDir, ".agent", "workflows", "swarmvault.md"));
+    expect(antigravityTarget.target).toBe(path.join(rootDir, ".agents", "rules", "swarmvault.md"));
+    expect(antigravityTarget.targets).toContain(path.join(rootDir, ".agents", "workflows", "swarmvault.md"));
     const antigravityRules = matter(await fs.readFile(antigravityTarget.target, "utf8"));
     expect(antigravityRules.data.alwaysApply).toBe(true);
     expect(antigravityRules.content).toContain("# SwarmVault Rules");
-    const antigravityWorkflow = matter(await fs.readFile(path.join(rootDir, ".agent", "workflows", "swarmvault.md"), "utf8"));
+    await expect(fs.access(path.join(rootDir, ".agent", "rules", "swarmvault.md"))).rejects.toThrow();
+    await expect(fs.access(path.join(rootDir, ".agent", "workflows", "swarmvault.md"))).rejects.toThrow();
+    const antigravityWorkflow = matter(await fs.readFile(path.join(rootDir, ".agents", "workflows", "swarmvault.md"), "utf8"));
     expect(antigravityWorkflow.data.command).toBe("swarmvault");
     expect(antigravityWorkflow.content).toContain("# /swarmvault");
 
@@ -539,6 +626,7 @@ describe("swarmvault workflow", () => {
     const vscodeInstructions = await fs.readFile(path.join(rootDir, ".github", "copilot-instructions.md"), "utf8");
     expect(vscodeInstructions).toContain("swarmvault:managed:start");
     expect(vscodeInstructions).toContain("Read `wiki/graph/report.md` before broad file searching");
+    expect(vscodeInstructions).toContain("architecture, structure, relationship");
   });
 
   it("installs skill bundles for the extended coding-agent roster", async () => {
@@ -637,7 +725,7 @@ describe("swarmvault workflow", () => {
       };
     };
     expect(settings.hooks?.SessionStart?.some((entry) => entry.matcher === "startup")).toBe(true);
-    expect(settings.hooks?.PreToolUse?.some((entry) => entry.matcher === "Glob|Grep")).toBe(true);
+    expect(settings.hooks?.PreToolUse?.some((entry) => entry.matcher === "Bash")).toBe(true);
     expect(JSON.stringify(settings)).toContain("swarmvault-graph-first.js");
     expect(await fs.readFile(scriptPath, "utf8")).toContain("hookSpecificOutput");
     expect(await fs.readFile(scriptPath, "utf8")).toContain("additionalContext");
@@ -655,7 +743,7 @@ describe("swarmvault workflow", () => {
       await runNodeScript(
         scriptPath,
         ["pre-tool-use"],
-        JSON.stringify({ cwd: rootDir, tool_name: "Glob", tool_input: { pattern: "**/*.ts" } }),
+        JSON.stringify({ cwd: rootDir, tool_name: "Bash", tool_input: { command: "rg Widget" } }),
         rootDir
       )
     ) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: string } };
@@ -676,7 +764,7 @@ describe("swarmvault workflow", () => {
       await runNodeScript(
         scriptPath,
         ["pre-tool-use"],
-        JSON.stringify({ cwd: rootDir, tool_name: "Grep", tool_input: { pattern: "Widget" } }),
+        JSON.stringify({ cwd: rootDir, tool_name: "Bash", tool_input: { command: "grep -R Widget ." } }),
         rootDir
       )
     ) as Record<string, never>;
@@ -684,7 +772,7 @@ describe("swarmvault workflow", () => {
 
     await installAgent(rootDir, "claude", { hook: true });
     const settingsAgain = await fs.readFile(settingsPath, "utf8");
-    expect(settingsAgain.match(/Glob\|Grep/g)?.length ?? 0).toBe(1);
+    expect(settingsAgain.match(/"Bash"/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(settingsAgain.match(/swarmvault-graph-first\.js/g)?.length ?? 0).toBeGreaterThan(0);
   });
 

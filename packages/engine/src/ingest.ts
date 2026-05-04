@@ -53,6 +53,7 @@ import type {
   AddResult,
   DirectoryIngestFailure,
   DirectoryIngestResult,
+  GraphStatusChange,
   InboxImportResult,
   IngestOptions,
   InputIngestResult,
@@ -2262,6 +2263,110 @@ export async function listTrackedRepoRoots(rootDir: string): Promise<string[]> {
   const manifests = await listManifests(rootDir);
   return [...new Set(manifests.map((manifest) => repoRootFromManifest(manifest)).filter((item): item is string => Boolean(item)))].sort(
     (left, right) => left.localeCompare(right)
+  );
+}
+
+async function inferTrackedFileSourceKind(absolutePath: string): Promise<SourceManifest["sourceKind"]> {
+  const payloadBytes = await fs.readFile(absolutePath);
+  const mimeType = guessMimeType(absolutePath);
+  const detectionOptions = await localCodeDetectionOptions(absolutePath, payloadBytes);
+  let sourceKind = refineBinaryKindWithBytes(absolutePath, inferKind(mimeType, absolutePath, detectionOptions), payloadBytes);
+  if (sourceKind === "binary" && path.extname(absolutePath).toLowerCase() === ".zip" && isSlackExportArchive(payloadBytes)) {
+    sourceKind = "chat_export";
+  }
+  return sourceKind;
+}
+
+function graphStatusRefreshType(sourceKind: SourceManifest["sourceKind"]): GraphStatusChange["refreshType"] {
+  return shouldDeferWatchSemanticRefresh(sourceKind) ? "semantic" : "code";
+}
+
+export async function checkTrackedRepoChanges(rootDir: string, repoRoots?: string[]): Promise<GraphStatusChange[]> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const normalizedOptions = await resolveRepoIngestOptions(rootDir, undefined);
+  const manifests = await listManifests(rootDir);
+  const trackedRoots = (repoRoots && repoRoots.length > 0 ? repoRoots : await listTrackedRepoRoots(rootDir)).map((item) =>
+    path.resolve(rootDir, item)
+  );
+  const uniqueRoots = [...new Set(trackedRoots)].sort((left, right) => left.localeCompare(right));
+  const changes: GraphStatusChange[] = [];
+
+  for (const repoRoot of uniqueRoots) {
+    const repoManifests = manifests.filter((manifest) => {
+      const manifestRepoRoot = repoRootFromManifest(manifest);
+      return Boolean(manifestRepoRoot && path.resolve(manifestRepoRoot) === repoRoot);
+    });
+
+    if (!(await fileExists(repoRoot))) {
+      for (const manifest of repoManifests) {
+        const sourceKind = manifest.sourceKind;
+        changes.push({
+          path: toPosix(path.relative(rootDir, manifest.originalPath ?? manifest.storedPath)),
+          repoRoot,
+          changeType: "removed",
+          sourceId: manifest.sourceId,
+          sourceKind,
+          refreshType: graphStatusRefreshType(sourceKind)
+        });
+      }
+      continue;
+    }
+
+    const ignoreRoots = repoSyncWorkspaceIgnorePaths(rootDir, paths, repoRoot);
+    const collected = await collectDirectoryFiles(rootDir, repoRoot, repoRoot, normalizedOptions);
+    const files = collected.files.filter((absolutePath) => !ignoreRoots.some((ignoreRoot) => withinRoot(ignoreRoot, absolutePath)));
+    const currentPaths = new Set(files.map((absolutePath) => path.resolve(absolutePath)));
+    const manifestsByOriginalPath = new Map<string, SourceManifest[]>();
+    for (const manifest of repoManifests) {
+      if (!manifest.originalPath) {
+        continue;
+      }
+      const key = path.resolve(manifest.originalPath);
+      const bucket = manifestsByOriginalPath.get(key) ?? [];
+      bucket.push(manifest);
+      manifestsByOriginalPath.set(key, bucket);
+    }
+
+    for (const absolutePath of files) {
+      const existing = manifestsByOriginalPath.get(path.resolve(absolutePath)) ?? [];
+      const payloadBytes = await fs.readFile(absolutePath);
+      const contentHash = sha256(payloadBytes);
+      const existingMatches = existing.length > 0 && existing.every((manifest) => manifest.contentHash === contentHash);
+      if (existingMatches) {
+        continue;
+      }
+      const sourceKind = existing[0]?.sourceKind ?? (await inferTrackedFileSourceKind(absolutePath));
+      changes.push({
+        path: toPosix(path.relative(rootDir, absolutePath)),
+        repoRoot,
+        changeType: existing.length > 0 ? "modified" : "added",
+        sourceId: existing[0]?.sourceId,
+        sourceKind,
+        refreshType: graphStatusRefreshType(sourceKind)
+      });
+    }
+
+    for (const manifest of repoManifests) {
+      const originalPath = manifest.originalPath ? path.resolve(manifest.originalPath) : null;
+      if (originalPath && !currentPaths.has(originalPath)) {
+        const sourceKind = manifest.sourceKind;
+        changes.push({
+          path: toPosix(path.relative(rootDir, originalPath)),
+          repoRoot,
+          changeType: "removed",
+          sourceId: manifest.sourceId,
+          sourceKind,
+          refreshType: graphStatusRefreshType(sourceKind)
+        });
+      }
+    }
+  }
+
+  return changes.sort(
+    (left, right) =>
+      left.path.localeCompare(right.path) ||
+      left.changeType.localeCompare(right.changeType) ||
+      (left.sourceId ?? "").localeCompare(right.sourceId ?? "")
   );
 }
 

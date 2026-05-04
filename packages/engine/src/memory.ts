@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
 import { z } from "zod";
+import { resolveArtifactRootDir } from "./config.js";
 import { buildContextPack, readContextPack, renderContextPackLlms, renderContextPackMarkdown } from "./context-packs.js";
 import { estimateTokens } from "./token-estimation.js";
 import type {
@@ -88,8 +89,9 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 function memoryDirs(rootDir: string): MemoryDirs {
-  const stateDir = path.join(rootDir, "state", "memory");
-  const wikiDir = path.join(rootDir, "wiki", "memory");
+  const artifactRootDir = resolveArtifactRootDir(rootDir);
+  const stateDir = path.join(artifactRootDir, "state", "memory");
+  const wikiDir = path.join(artifactRootDir, "wiki", "memory");
   return {
     stateDir,
     tasksStateDir: path.join(stateDir, "tasks"),
@@ -552,9 +554,10 @@ export async function resumeMemoryTask(
 
 export function memoryTaskPageRecord(rootDir: string, task: AgentMemoryTask): MemoryTaskStoredPage {
   const content = renderMemoryTaskMarkdown(task);
+  const artifactRootDir = resolveArtifactRootDir(rootDir);
   const page: GraphPage = {
     id: `memory:${task.id}`,
-    path: toPosix(path.relative(path.join(rootDir, "wiki"), task.markdownPath)),
+    path: toPosix(path.relative(path.join(artifactRootDir, "wiki"), task.markdownPath)),
     title: task.title,
     kind: "memory_task",
     sourceIds: task.sourceIds,

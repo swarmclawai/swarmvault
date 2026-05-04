@@ -558,6 +558,7 @@ export interface PromotionSession {
 
 export interface ResolvedPaths {
   rootDir: string;
+  artifactRootDir: string;
   schemaPath: string;
   rawDir: string;
   rawSourcesDir: string;
@@ -1711,6 +1712,30 @@ export interface WatchStatusResult {
   watchedRepoRoots: string[];
   lastRun?: WatchRunRecord;
   pendingSemanticRefresh: PendingSemanticRefreshEntry[];
+}
+
+export interface GraphStatusChange {
+  path: string;
+  repoRoot: string;
+  changeType: "added" | "modified" | "removed";
+  sourceId?: string;
+  sourceKind?: SourceKind;
+  refreshType: "code" | "semantic";
+}
+
+export interface GraphStatusResult {
+  generatedAt: string;
+  graphExists: boolean;
+  graphPath: string;
+  reportExists: boolean;
+  reportPath: string;
+  trackedRepoRoots: string[];
+  codeChangeCount: number;
+  semanticChangeCount: number;
+  pendingSemanticRefresh: PendingSemanticRefreshEntry[];
+  stale: boolean;
+  recommendedCommand: string | null;
+  changes: GraphStatusChange[];
 }
 
 export interface WatchController {

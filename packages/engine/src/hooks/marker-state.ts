@@ -33,7 +33,7 @@ export function isReportPath(value: unknown, cwd: string): boolean {
   if (normalized.endsWith(reportNormalized)) {
     return true;
   }
-  return path.resolve(cwd, value) === path.resolve(cwd, reportSuffix);
+  return path.resolve(cwd, value) === reportPath(cwd);
 }
 
 export function collectCandidatePaths(node: unknown, acc: string[] = []): string[] {
@@ -92,11 +92,23 @@ export function resolveToolName(input: unknown): string {
 
 export async function hasReport(cwd: string): Promise<boolean> {
   try {
-    await fs.access(path.join(cwd, "wiki", "graph", "report.md"));
+    await fs.access(reportPath(cwd));
     return true;
   } catch {
     return false;
   }
+}
+
+function artifactRootDir(cwd: string): string {
+  const override = process.env.SWARMVAULT_OUT?.trim();
+  if (!override) {
+    return path.resolve(cwd);
+  }
+  return path.isAbsolute(override) ? path.resolve(override) : path.resolve(cwd, override);
+}
+
+function reportPath(cwd: string): string {
+  return path.join(artifactRootDir(cwd), "wiki", "graph", "report.md");
 }
 
 export async function markReportRead(cwd: string, agentKey: string): Promise<void> {
@@ -185,4 +197,5 @@ export async function readHookInput(): Promise<unknown> {
   }
 }
 
-export const REPORT_NOTE = "SwarmVault graph report exists at wiki/graph/report.md. Read it before broad grep/glob searching.";
+export const REPORT_NOTE =
+  "SwarmVault graph report exists at wiki/graph/report.md, or at $SWARMVAULT_OUT/wiki/graph/report.md when SWARMVAULT_OUT is set. Read it before broad grep/glob searching.";

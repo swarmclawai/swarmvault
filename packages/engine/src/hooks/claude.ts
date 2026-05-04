@@ -7,14 +7,13 @@ import {
   collectCandidatePaths,
   hasReport,
   hasSeenReport,
-  isBroadSearchTool,
+  isBroadSearchInput,
   isReportPath,
   markReportRead,
   REPORT_NOTE,
   readHookInput,
   resetSession,
-  resolveInputCwd,
-  resolveToolName
+  resolveInputCwd
 } from "./marker-state.js";
 
 const AGENT_KEY = "claude";
@@ -44,14 +43,13 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const toolName = resolveToolName(input);
   if (collectCandidatePaths(input).some((value) => isReportPath(value, cwd))) {
     await markReportRead(cwd, AGENT_KEY);
     emit({});
     process.exit(0);
   }
 
-  if (isBroadSearchTool(toolName) && !(await hasSeenReport(cwd, AGENT_KEY))) {
+  if (isBroadSearchInput(input) && !(await hasSeenReport(cwd, AGENT_KEY))) {
     emit({
       hookSpecificOutput: {
         hookEventName: "PreToolUse",

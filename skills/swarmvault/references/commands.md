@@ -73,6 +73,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault graph update ./src
 swarmvault graph refresh
@@ -91,6 +92,7 @@ swarmvault mcp
 ```bash
 swarmvault watch --lint --repo
 swarmvault watch --repo --code-only --once
+swarmvault graph status .
 swarmvault graph update .
 swarmvault watch status
 swarmvault hook install

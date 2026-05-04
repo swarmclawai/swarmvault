@@ -78,7 +78,7 @@ Karpathy の [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9
 
 **「100 ページ以上にスケールするか？」** —— はい。ハイブリッド検索が SQLite 全文検索とセマンティック embeddings を統合するため、すべてのページをコンテキストに入れる必要がありません。`compile --max-tokens` で出力を制限できます。グラフナビゲーション（`graph query`、`graph path`、`graph explain`）で検索ではなくトラバースが可能です。
 
-**「個人利用だけ？」** —— Git ワークフロー（`--commit`）、watch モード＋git hooks、スケジュール自動化、MCP server でチーム利用も可能です。16 種のエージェント統合があります。
+**「個人利用だけ？」** —— Git ワークフロー（`--commit`）、watch モード＋git hooks、スケジュール自動化、MCP server でチーム利用も可能です。direct-rule targets と extended skill-bundle roster の agent integration があります。
 
 **「API キーは必要？」** —— 不要です。組み込み `heuristic` provider は完全にオフラインです。より高品質な抽出には [Ollama](https://ollama.com) と無料のローカル LLM を組み合わせられます。クラウド provider はオプションです。
 
@@ -101,7 +101,7 @@ Karpathy の [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9
 | オフライン / API キー不要 | — | **あり** |
 | 矛盾検出 | 言及 | **自動** |
 | Approval キュー | — | **あり** |
-| 16 種のエージェント統合 | — | **あり** |
+| Agent integration | — | **あり** |
 | Neo4j / グラフエクスポート | — | **あり** |
 | MCP server | — | **あり** |
 | Watch モード + git hooks | — | **あり** |
@@ -151,6 +151,8 @@ my-vault/
 └── agent/                     エージェント向けに生成される補助ファイル
 ```
 
+生成される vault artifacts をプロジェクトルートの外に置きたい場合は、`SWARMVAULT_OUT=.swarmvault-out` を設定します。scratch worktree や package smoke test に便利です。`swarmvault.config.json` と `swarmvault.schema.md` はプロジェクトルートに残り、相対 `raw/`、`wiki/`、`state/`、`agent/`、`inbox/` は出力ディレクトリ配下に解決されます。
+
 ```bash
 # フルワークフロー — ステップバイステップ
 swarmvault init --obsidian --profile personal-research
@@ -169,6 +171,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
+swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
@@ -418,17 +421,19 @@ clawhub install swarmvault
 
 **ビジュアル + 投稿しやすい share kit** - すべての compile が `wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` を生成します。`swarmvault graph share --post` は短いテキストを出力し、`swarmvault graph share --svg [path]` は 1200x630 のビジュアルカードを書き出し、`swarmvault graph share --bundle [dir]` は markdown、投稿テキスト、SVG、HTML preview、JSON metadata を書き出して、投稿、リンク共有、スクリーンショットに使いやすくします。
 
-**graph blast radius、refresh、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
+**graph blast radius、status、refresh、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph status [path]` は graph/report artifacts と tracked repo changes の stale 状態を read-only で確認し、`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
 
 **グラフ diff** - `swarmvault diff` は現在のナレッジグラフを最後にコミットされたバージョンと比較し、追加/削除されたノード、エッジ、ページを表示して、compile で何が変わったかを正確に確認できます。
 
+**Worktree artifact roots** - `SWARMVAULT_OUT=<dir>` は生成される `raw/`、`wiki/`、`state/`、`agent/`、`inbox/` artifacts を移動しつつ、`swarmvault.config.json` と `swarmvault.schema.md` はプロジェクトルートに残します。isolated smoke tests、共有 source tree、生成 vault state をソース横に置きたくない repo worktree に向いています。
+
 **Obsidian グラフ export** - `graph export --obsidian` は、既存 wiki フォルダ構成を保ちつつ、Breadcrumbs/Juggl 対応の型付きリンク frontmatter 付きグラフ接続、community note、orphan node stub、Dataview ダッシュボードページ、コピー済みアセット、`types.json`・ノードタイプ別カラーグループ・`cssclasses` を含む完全な `.obsidian` 設定を含む Obsidian 向け note bundle を書き出します。
 
-**適応的なコミュニティ分割** - SwarmVault は小規模または疎なグラフでは Louvain の community resolution を自動調整します。クラスタリング結果を固定したい場合は `swarmvault.config.json` で `graph.communityResolution` を設定し、単発の再計算だけなら `swarmvault graph cluster --resolution <n>` を使えます。
+**適応的なコミュニティ分割** - SwarmVault は小規模または疎なグラフでは Louvain の community resolution を自動調整し、さらに大きすぎるまたは cohesion の低いコミュニティを分割して、大きな repo でも graph report を読みやすく保ちます。クラスタリング結果を固定したい場合は `swarmvault.config.json` で `graph.communityResolution` を設定し、単発の再計算だけなら `swarmvault graph cluster --resolution <n>` を使えます。
 
 **任意のモデルプロバイダー** - OpenAI、Anthropic、Gemini、Ollama、OpenRouter、Groq、Together、xAI、Cerebras、汎用 OpenAI-compatible、custom adapters、そしてオフライン/ローカル既定の heuristic を使えます。
 
-**16 つの agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid、Kiro、Hermes、Google Antigravity、VS Code Copilot Chat 用のインストール規則があります。任意の graph-first hooks により、Codex を含む対応エージェントは広い検索の前に wiki を優先します。
+**Agent integration** - Codex、Claude Code、Cursor、Goose、Pi、Gemini CLI、OpenCode、Aider、GitHub Copilot CLI、Trae、Claw/OpenClaw、Droid、Kiro、Hermes、Google Antigravity、VS Code Copilot Chat、および extended skill-bundle roster 用のインストール規則があります。任意の graph-first hooks により、Codex を含む対応エージェントは広い検索の前に wiki を優先します。Antigravity は `.agents/rules/` と `.agents/workflows/` にインストールされ、再インストール時に古い fully managed `.agent/` files をクリーンアップします。
 
 **MCP server** - `swarmvault mcp` は graph stats、graph clustering refresh、community lookup、hyperedges、context-pack、task-ledger、互換 memory-task、vault doctor、retrieval health tools を含むボルト操作を stdio 経由で互換エージェントクライアントへ公開します。
 

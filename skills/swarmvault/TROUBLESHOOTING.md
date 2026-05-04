@@ -78,6 +78,26 @@ Then verify:
 
 If the vault lives inside git and you want a quick graph-level delta, run `swarmvault diff`.
 
+## Artifacts appear in the wrong directory
+
+Check whether `SWARMVAULT_OUT` is set:
+
+```bash
+echo "$SWARMVAULT_OUT"
+```
+
+When it is set, generated `raw/`, `wiki/`, `state/`, `agent/`, and `inbox/` directories resolve under that output root. `swarmvault.config.json` and `swarmvault.schema.md` remain in the project root.
+
+## Graph status reports stale
+
+Run:
+
+```bash
+swarmvault graph status .
+```
+
+If it recommends `swarmvault graph update`, the detected changes are code-only and can use the faster graph refresh path. If it recommends `swarmvault compile`, graph/report artifacts are missing, a non-code tracked source changed, or a pending semantic refresh already exists.
+
 ## Vault doctor reports warnings
 
 `swarmvault doctor` is the broad health summary. It checks graph artifacts, retrieval, review queues, watch state, migrations, managed sources, and task ledgers, then prints concrete follow-up commands. The `swarmvault graph serve` workbench shows the same full check list with details and copyable suggested commands.

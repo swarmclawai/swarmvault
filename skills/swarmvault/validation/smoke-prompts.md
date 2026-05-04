@@ -113,6 +113,7 @@ Expected shape:
 - may suggest `graph export --report`, `graph export --html-standalone`, `graph export --canvas`, or `graph export --obsidian` when a lighter shareable artifact is a better fit
 - may suggest `swarmvault diff` when the user is asking what a compile changed
 - may use `graph blast <target>` when the user is asking about change impact instead of broad graph browsing
+- may use `graph status [path]` when the user needs a read-only stale check before choosing `graph update` or `compile`
 - may use `graph cluster [--resolution <n>]` when the graph exists but community/report metrics need to be recomputed
 - may run `swarmvault doctor` before opening the live workspace when the vault health is uncertain
 - mentions that the live workbench shows doctor details, copyable suggested commands, explicit capture modes, and budgeted context/task actions when the user asks what the viewer can do

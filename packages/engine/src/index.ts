@@ -3,7 +3,15 @@
 export { installAgent, installConfiguredAgents } from "./agents.js";
 export { autoCommitWikiChanges } from "./auto-commit.js";
 export { DEFAULT_PROMOTION_CONFIG, evaluateCandidateForPromotion } from "./candidate-promotion.js";
-export { defaultVaultConfig, defaultVaultSchema, initWorkspace, loadVaultConfig, resolvePaths } from "./config.js";
+export {
+  defaultVaultConfig,
+  defaultVaultSchema,
+  initWorkspace,
+  loadVaultConfig,
+  resolveArtifactRootDir,
+  resolvePaths,
+  SWARMVAULT_OUT_ENV
+} from "./config.js";
 export { DEFAULT_CONSOLIDATION_CONFIG, resolveConsolidationConfig, runConsolidation } from "./consolidate.js";
 export {
   buildContextPack,
@@ -42,10 +50,12 @@ export {
   renderGraphSharePreviewHtml,
   renderGraphShareSvg
 } from "./graph-share.js";
+export { getGraphStatus } from "./graph-status.js";
 export { blastRadius, graphDiff } from "./graph-tools.js";
 export { getGitHookStatus, installGitHooks, uninstallGitHooks } from "./hooks.js";
 export {
   addInput,
+  checkTrackedRepoChanges,
   importInbox,
   ingestDirectory,
   ingestInput,
