@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 3.6.0
+
 - Added local video and public video URL ingest: local `video/*` files extract audio with `ffmpeg`, `swarmvault ingest --video <url>` / `swarmvault add --video <url>` extract public video audio with `yt-dlp`, and both route transcripts through the configured `tasks.audioProvider` while preserving warning sidecars when a binary or provider is missing.
 - Added `.swarmvaultignore` support for directory ingest, enabled by default alongside `.gitignore` and disableable with `--no-swarmvaultignore`.
 - Added parser-backed SQL code analysis for `.sql` sources, including table/view symbols plus extracted `reads`, `writes`, `joins`, and `references` graph edges.
@@ -11,6 +13,7 @@
 - Improved graph community clustering by splitting oversized and low-cohesion communities after the initial Louvain pass so large-repo graph reports remain scannable.
 - Updated the VS Code installer path so `swarmvault install --agent vscode` writes both the chat mode and `.github/copilot-instructions.md`.
 - Updated Antigravity installation to write `.agents/rules/swarmvault.md` and `.agents/workflows/swarmvault.md`, with cleanup for older fully managed `.agent/` files.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.6.0`.
 
 ## 3.5.0
 
