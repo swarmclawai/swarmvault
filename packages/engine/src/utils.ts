@@ -128,6 +128,17 @@ export function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Drop undefined values from a frontmatter-shaped record before passing it to
+ * a YAML serializer. js-yaml refuses to dump `undefined`, so any optional
+ * frontmatter field that wasn't supplied (e.g. `target`, `agent`) would
+ * otherwise crash matter.stringify with `unacceptable kind of an object to
+ * dump [object Undefined]`.
+ */
+export function safeFrontmatter<T extends Record<string, unknown>>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;

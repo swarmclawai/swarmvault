@@ -25,6 +25,7 @@ import {
   isPathWithin,
   normalizeWhitespace,
   readJsonFile,
+  safeFrontmatter,
   sha256,
   slugify,
   toPosix,
@@ -266,7 +267,7 @@ export function renderMemoryTaskMarkdown(task: AgentMemoryTask): string {
     markdownList(task.followUps),
     ""
   ].filter((line): line is string => line !== undefined);
-  return matter.stringify(body.join("\n"), frontmatterForTask(task));
+  return matter.stringify(body.join("\n"), safeFrontmatter(frontmatterForTask(task)));
 }
 
 function renderMemoryTaskIndex(tasks: AgentMemoryTaskSummary[], generatedAt: string): string {

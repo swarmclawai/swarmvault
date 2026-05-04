@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.7.2
+
+- Fixed `swarmvault context build`, `swarmvault task start`, and `swarmvault memory start` failing with `unacceptable kind of an object to dump [object Undefined]` when invoked without `--target` or `--agent`. The generated context-pack and memory-task markdown frontmatter now drops undefined values before js-yaml serialization, so optional fields no longer crash the dump. The MCP `build_context_pack`, `start_task`, and `start_memory_task` tools inherit the same fix.
+- Added a shared `safeFrontmatter` helper in `@swarmvaultai/engine`'s `utils` so other frontmatter writers can stay defensive against undefined values.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.7.2`.
+
 ## 3.7.1
 
 - Fixed the `graph update` / one-shot watch shrink guard so it predicts the projected node and edge drop from tracked-repo removals before any destructive sync runs, instead of partially restoring `state/graph.json` after the rest of the vault had already been mutated. Aborted updates now leave `state/graph.json`, `state/extracts/`, `raw/sources/`, `wiki/`, and the manifest set untouched.

@@ -76,4 +76,22 @@ describe("context packs", () => {
     await expect(fs.access(result.artifactPath)).rejects.toThrow();
     await expect(fs.access(result.markdownPath)).rejects.toThrow();
   });
+
+  it("builds a context pack without a target, agent, or other optional fields", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(path.join(rootDir, "notes.md"), "# Notes\n\nCapture goals, decisions, and follow-ups here.\n", "utf8");
+    await ingestInput(rootDir, path.join(rootDir, "notes.md"));
+    await compileVault(rootDir);
+
+    const result = await buildContextPack(rootDir, {
+      goal: "summarize the vault"
+    });
+
+    expect(result.pack.target).toBeUndefined();
+    await expect(fs.access(result.markdownPath)).resolves.toBeUndefined();
+    const markdown = await fs.readFile(result.markdownPath, "utf8");
+    expect(markdown).not.toContain("[object Undefined]");
+    expect(markdown).not.toContain("target:\n");
+  });
 });

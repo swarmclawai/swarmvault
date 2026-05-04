@@ -107,6 +107,25 @@ describe("agent memory tasks", () => {
     expect(graph.edges.some((edge: { relation: string }) => edge.relation === "follows_up")).toBe(true);
   });
 
+  it("starts a memory task without a target or agent without crashing the YAML serializer", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+    await fs.writeFile(path.join(rootDir, "notes.md"), "# Notes\n\nLightweight scratchpad to anchor the context pack.\n", "utf8");
+
+    const started = await startMemoryTask(rootDir, {
+      goal: "Run a memory task with no target or agent"
+    });
+
+    expect(started.task.status).toBe("active");
+    expect(started.task.target).toBeUndefined();
+    expect(started.task.agent).toBeUndefined();
+    const markdown = await fs.readFile(started.markdownPath, "utf8");
+    expect(markdown).not.toContain("[object Undefined]");
+    const parsed = matter(markdown);
+    expect(parsed.data.target).toBeUndefined();
+    expect(parsed.data.agent).toBeUndefined();
+  });
+
   it("migrates a vault by creating memory index artifacts without touching context packs", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

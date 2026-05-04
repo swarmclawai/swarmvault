@@ -26,6 +26,7 @@ import {
   isPathWithin,
   normalizeWhitespace,
   readJsonFile,
+  safeFrontmatter,
   slugify,
   toPosix,
   truncate,
@@ -493,26 +494,29 @@ function renderForFormat(pack: ContextPack, format: ContextPackFormat): string {
 
 function markdownPageForPack(pack: ContextPack): string {
   const relativeArtifactPath = toPosix(path.relative(path.dirname(pack.markdownPath), pack.artifactPath));
-  return matter.stringify(renderContextPackMarkdown(pack), {
-    page_id: `context:${pack.id}`,
-    kind: "output",
-    title: pack.title,
-    tags: ["context-pack", "agent-memory"],
-    source_ids: pack.relatedSourceIds,
-    node_ids: pack.relatedNodeIds,
-    freshness: "fresh",
-    status: "active",
-    confidence: 1,
-    created_at: pack.createdAt,
-    updated_at: pack.createdAt,
-    managed_by: "system",
-    context_pack_id: pack.id,
-    goal: pack.goal,
-    target: pack.target,
-    budget_tokens: pack.budgetTokens,
-    estimated_tokens: pack.estimatedTokens,
-    artifact_path: relativeArtifactPath
-  });
+  return matter.stringify(
+    renderContextPackMarkdown(pack),
+    safeFrontmatter({
+      page_id: `context:${pack.id}`,
+      kind: "output",
+      title: pack.title,
+      tags: ["context-pack", "agent-memory"],
+      source_ids: pack.relatedSourceIds,
+      node_ids: pack.relatedNodeIds,
+      freshness: "fresh",
+      status: "active",
+      confidence: 1,
+      created_at: pack.createdAt,
+      updated_at: pack.createdAt,
+      managed_by: "system",
+      context_pack_id: pack.id,
+      goal: pack.goal,
+      target: pack.target,
+      budget_tokens: pack.budgetTokens,
+      estimated_tokens: pack.estimatedTokens,
+      artifact_path: relativeArtifactPath
+    })
+  );
 }
 
 export async function buildContextPack(rootDir: string, options: BuildContextPackOptions): Promise<BuildContextPackResult> {
