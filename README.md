@@ -10,7 +10,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)]()
 
-**A local-first knowledge compiler for AI agents**, built on the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern. Most "chat with your docs" tools answer a question and throw away the work. SwarmVault keeps a **durable wiki** between you and raw sources — the LLM does the bookkeeping, you do the thinking.
+**The local-first LLM Wiki, knowledge graph builder, and RAG knowledge base for AI agents** — built on Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern. SwarmVault is an open-source knowledge compiler that turns docs, code, transcripts, and notes into a persistent, locally hosted knowledge graph, RAG pipeline, and agent memory store. Think of it as an Obsidian alternative for personal knowledge management, an AI second brain, and durable Claude Code / Codex / OpenClaw memory — all on disk, all yours. Most "chat with your docs" tools answer a question and throw away the work. SwarmVault keeps a **durable wiki** between you and raw sources — the LLM does the bookkeeping, you do the thinking.
 
 Documentation on the website is currently English-first. If wording drifts between translations, [README.md](README.md) is the canonical source.
 
