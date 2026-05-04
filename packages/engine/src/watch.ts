@@ -3,10 +3,12 @@ import path from "node:path";
 import process from "node:process";
 import chokidar from "chokidar";
 import { initWorkspace, loadVaultConfig } from "./config.js";
-import { importInbox, listTrackedRepoRoots, syncTrackedReposForWatch } from "./ingest.js";
+import { checkTrackedRepoChanges, importInbox, listTrackedRepoRoots, syncTrackedReposForWatch } from "./ingest.js";
 import { appendWatchRun, recordSession } from "./logs.js";
 import type {
   GraphArtifact,
+  GraphEdge,
+  GraphNode,
   GraphShrinkDimension,
   GraphShrinkGuardResult,
   VaultConfig,
@@ -15,7 +17,7 @@ import type {
   WatchOptions,
   WatchStatusResult
 } from "./types.js";
-import { isPathWithin, readJsonFile, writeJsonFile } from "./utils.js";
+import { isPathWithin, readJsonFile } from "./utils.js";
 import { compileVault, lintVault } from "./vault.js";
 import {
   markPagesStaleForSources,
@@ -151,6 +153,40 @@ export function evaluateGraphShrinkGuard(
 
 function forceGraphUpdateEnabled(options: WatchOptions): boolean {
   return options.force === true || process.env.SWARMVAULT_FORCE_UPDATE === "1" || process.env.SWARMVAULT_FORCE_UPDATE === "true";
+}
+
+export function projectGraphAfterRemovals(graph: GraphArtifact, removedSourceIds: readonly string[]): GraphArtifact {
+  if (removedSourceIds.length === 0) {
+    return graph;
+  }
+  const removed = new Set(removedSourceIds);
+  const droppedNodeIds = new Set(
+    graph.nodes
+      .filter((node: GraphNode) => node.sourceIds.length > 0 && node.sourceIds.every((sourceId) => removed.has(sourceId)))
+      .map((node) => node.id)
+  );
+  if (droppedNodeIds.size === 0) {
+    return graph;
+  }
+  const remainingNodes = graph.nodes.filter((node) => !droppedNodeIds.has(node.id));
+  const remainingEdges = graph.edges.filter((edge: GraphEdge) => !droppedNodeIds.has(edge.source) && !droppedNodeIds.has(edge.target));
+  return { ...graph, nodes: remainingNodes, edges: remainingEdges };
+}
+
+async function predictRemovedSourceIdsFromRepoSync(rootDir: string, options: WatchOptions): Promise<string[]> {
+  if (!options.repo) {
+    return [];
+  }
+  const overrideRoots = options.overrideRoots && options.overrideRoots.length > 0 ? options.overrideRoots : undefined;
+  const changes = await checkTrackedRepoChanges(rootDir, overrideRoots);
+  return [
+    ...new Set(
+      changes
+        .filter((change) => change.changeType === "removed")
+        .map((change) => change.sourceId)
+        .filter((sourceId): sourceId is string => Boolean(sourceId))
+    )
+  ];
 }
 
 type WatchCycleResult = {
@@ -375,13 +411,17 @@ export async function runWatchCycle(rootDir: string, options: WatchOptions = {})
   };
 
   try {
-    result = await performWatchCycle(rootDir, paths, options, options.codeOnly ?? false);
-    const nextGraph = await readJsonFile<GraphArtifact>(paths.graphPath);
-    const guard = evaluateGraphShrinkGuard(previousGraph, nextGraph, { threshold: options.maxGraphShrinkRatio });
-    if (previousGraph && nextGraph && guard.blocked && !forceGraphUpdateEnabled(options)) {
-      await writeJsonFile(paths.graphPath, previousGraph);
-      throw new Error(guard.message ?? "Graph update aborted because the graph shrank unexpectedly.");
+    if (previousGraph && options.repo && !forceGraphUpdateEnabled(options)) {
+      const removedSourceIds = await predictRemovedSourceIdsFromRepoSync(rootDir, options);
+      if (removedSourceIds.length > 0) {
+        const projectedGraph = projectGraphAfterRemovals(previousGraph, removedSourceIds);
+        const guard = evaluateGraphShrinkGuard(previousGraph, projectedGraph, { threshold: options.maxGraphShrinkRatio });
+        if (guard.blocked) {
+          throw new Error(guard.message ?? "Graph update aborted because the graph shrank unexpectedly.");
+        }
+      }
     }
+    result = await performWatchCycle(rootDir, paths, options, options.codeOnly ?? false);
     return result;
   } catch (caught) {
     success = false;

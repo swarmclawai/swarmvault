@@ -445,7 +445,7 @@ function makeRationale(
 
 function stripCodeExtension(filePath: string): string {
   return filePath.replace(
-    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx|sql)$/i,
+    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx|sql|svelte|jl|sv|svh|v|vh|r)$/i,
     ""
   );
 }

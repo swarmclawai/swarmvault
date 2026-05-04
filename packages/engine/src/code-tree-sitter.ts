@@ -202,7 +202,7 @@ function normalizeSymbolReference(value: string): string {
 
 function stripCodeExtension(filePath: string): string {
   return filePath.replace(
-    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx|swift|exs?|mli?|mm|resi?|sol|html?|css|vue)$/i,
+    /\.(?:[cm]?jsx?|tsx?|mts|cts|sh|bash|zsh|py|go|rs|java|kt|kts|scala|sc|dart|lua|zig|cs|php|c|cc|cpp|cxx|h|hh|hpp|hxx|swift|exs?|mli?|mm|resi?|sol|html?|css|vue|svelte|jl|sv|svh|v|vh|r)$/i,
     ""
   );
 }

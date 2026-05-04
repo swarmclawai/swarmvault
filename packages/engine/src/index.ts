@@ -174,6 +174,7 @@ export {
   evaluateGraphShrinkGuard,
   getWatchStatus,
   listWatchedRoots,
+  projectGraphAfterRemovals,
   removeWatchedRoot,
   resolveWatchedRepoRoots,
   runWatchCycle,

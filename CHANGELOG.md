@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.7.1
+
+- Fixed the `graph update` / one-shot watch shrink guard so it predicts the projected node and edge drop from tracked-repo removals before any destructive sync runs, instead of partially restoring `state/graph.json` after the rest of the vault had already been mutated. Aborted updates now leave `state/graph.json`, `state/extracts/`, `raw/sources/`, `wiki/`, and the manifest set untouched.
+- Extended `stripCodeExtension` to recognize `.svelte`, `.jl`, `.v`, `.vh`, `.sv`, `.svh`, and `.r` so module names and import alias keys for the new v3.7.0 languages no longer carry the file extension.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.7.1`.
+
 ## 3.7.0
 
 - Added `swarmvault graph tree` for a collapsible HTML source/module/symbol tree, defaulting to `wiki/graph/tree.html`.
