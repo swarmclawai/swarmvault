@@ -65,10 +65,13 @@ swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault check-update ./src
 swarmvault graph stats
 swarmvault graph validate --strict
 swarmvault graph update .
+swarmvault update .
 swarmvault graph cluster
+swarmvault cluster-only
 swarmvault graph tree --output ./exports/tree.html
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
@@ -79,6 +82,7 @@ swarmvault graph serve
 swarmvault graph export --report ./exports/report.html
 swarmvault graph export --html ./exports/graph.html
 swarmvault graph export --cypher ./exports/graph.cypher
+swarmvault graph export --neo4j ./exports/graph.cypher
 swarmvault graph merge ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
 swarmvault graph push neo4j --dry-run
 ```
@@ -410,6 +414,22 @@ Refresh code-derived graph artifacts from tracked repo roots or one explicit rep
 - aborts if nodes or edges drop by more than 25% compared with the existing graph; pass `--force` or set `SWARMVAULT_FORCE_UPDATE=1` when the shrink is expected
 - `--json` returns the same one-shot watch result shape, including repo import/update/remove counts and pending semantic refresh entries
 
+### `swarmvault check-update [path]`
+
+Compatibility alias for `swarmvault graph status [path]`.
+
+- performs the same read-only graph/report freshness check
+- keeps automation-friendly JSON output for cron or hook wrappers
+- recommends `swarmvault update`/`swarmvault graph update` for code-only drift and `swarmvault compile` when semantic refresh is required
+
+### `swarmvault update [path]`
+
+Compatibility alias for `swarmvault graph update [path]`.
+
+- runs the same code-only repo refresh path
+- accepts `--lint` and `--force`
+- returns the same JSON shape as `graph update`
+
 ### `swarmvault graph tree [--output <html>] [--root <path>] [--label <name>] [--max-children <n>]`
 
 Write a collapsible HTML source tree for the current `state/graph.json`.
@@ -469,6 +489,21 @@ Recompute communities, node degrees, bridge scores, god-node flags, and graph re
 - uses `graph.communityResolution` by default, or `--resolution <n>` for a one-off override
 - splits oversized or low-cohesion communities after the initial Louvain pass so large-repo reports stay scannable
 - `--json` returns counts plus the graph/report paths
+
+### `swarmvault cluster-only [vault] [--resolution <n>]`
+
+Compatibility alias for `swarmvault graph cluster`.
+
+- recomputes communities and graph report artifacts without ingest or semantic analysis
+- accepts an optional vault root when the command is run from outside the vault
+- returns the same JSON shape as `graph cluster`
+
+### `swarmvault graph export --neo4j <path>`
+
+Compatibility alias for `swarmvault graph export --cypher <path>`.
+
+- writes a Neo4j-ready Cypher import file
+- can be combined with other `graph export` formats in the same run
 
 ### `swarmvault hook install|uninstall|status`
 

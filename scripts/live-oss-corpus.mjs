@@ -167,6 +167,16 @@ try {
           })
         ).stdout
       );
+      console.log(`[oss-corpus][${repo.id}] check-update`);
+      const checkUpdate = JSON.parse(
+        (
+          await runInstalledCliCommand(`${repo.id}-check-update`, ["--json", "check-update"], {
+            cwd: vaultDir,
+            logsDir: repoLogsDir,
+            timeoutMs: 30_000
+          })
+        ).stdout
+      );
       console.log(`[oss-corpus][${repo.id}] benchmark`);
       const benchmark = JSON.parse(
         (
@@ -207,6 +217,16 @@ try {
           })
         ).stdout
       );
+      console.log(`[oss-corpus][${repo.id}] cluster-only`);
+      const clusterOnly = JSON.parse(
+        (
+          await runInstalledCliCommand(`${repo.id}-cluster-only`, ["--json", "cluster-only"], {
+            cwd: vaultDir,
+            logsDir: repoLogsDir,
+            timeoutMs: 30_000
+          })
+        ).stdout
+      );
       console.log(`[oss-corpus][${repo.id}] query`);
       const query = JSON.parse(
         (
@@ -223,6 +243,15 @@ try {
           await runInstalledCliCommand(
             `${repo.id}-graph-export`,
             ["--json", "graph", "export", "--html", result.exportPath],
+            { cwd: vaultDir, logsDir: repoLogsDir, timeoutMs: 60_000 }
+          )
+        ).stdout
+      );
+      const neo4jExportResult = JSON.parse(
+        (
+          await runInstalledCliCommand(
+            `${repo.id}-graph-export-neo4j`,
+            ["--json", "graph", "export", "--neo4j", path.join(repoArtifactDir, "graph.cypher")],
             { cwd: vaultDir, logsDir: repoLogsDir, timeoutMs: 60_000 }
           )
         ).stdout
@@ -246,10 +275,13 @@ try {
         counts,
         graphQuery,
         graphQueryPages,
+        checkUpdate,
         graphStats,
         graphValidation,
+        clusterOnly,
         query,
-        exportResult
+        exportResult,
+        neo4jExportResult
       });
 
       Object.assign(result, {
@@ -540,10 +572,13 @@ function applyAssertions(repo, input) {
   assert.ok(Array.isArray(input.benchmark.sampleQuestions) && input.benchmark.sampleQuestions.length > 0, `${repo.id}: benchmark produced no questions`);
   assert.ok(input.benchmarkArtifact.summary?.uniqueVisitedNodes >= 1, `${repo.id}: benchmark visited no nodes`);
   assert.ok(Array.isArray(input.graphQuery.pageIds) && input.graphQuery.pageIds.length > 0, `${repo.id}: graph query returned no pages`);
+  assert.equal(input.checkUpdate.graphExists, true, `${repo.id}: check-update did not find the compiled graph`);
+  assert.equal(input.checkUpdate.reportExists, true, `${repo.id}: check-update did not find the graph report`);
   assert.equal(input.graphStats.counts.nodes, input.counts.nodeCount, `${repo.id}: graph stats node count differed from graph artifact`);
   assert.equal(input.graphStats.counts.edges, input.counts.edgeCount, `${repo.id}: graph stats edge count differed from graph artifact`);
   assert.equal(input.graphValidation.ok, true, `${repo.id}: graph validation failed`);
   assert.equal(input.graphValidation.errorCount, 0, `${repo.id}: graph validation reported errors`);
+  assert.equal(input.clusterOnly.nodeCount, input.counts.nodeCount, `${repo.id}: cluster-only node count differed from graph artifact`);
   if (Array.isArray(assertions.expectedGraphQueryKinds) && assertions.expectedGraphQueryKinds.length > 0) {
     const matchedKinds = new Set(input.graphQueryPages.map((page) => page.kind));
     assert.ok(
@@ -557,6 +592,10 @@ function applyAssertions(repo, input) {
   assert.ok(Array.isArray(input.report.surprisingConnections), `${repo.id}: report.json is missing surprisingConnections`);
   assert.ok(Array.isArray(input.report.groupPatterns), `${repo.id}: report.json is missing groupPatterns`);
   assert.ok(typeof input.exportResult.outputPath === "string" && input.exportResult.outputPath.length > 0, `${repo.id}: export did not return outputPath`);
+  assert.ok(
+    typeof input.neo4jExportResult.outputPath === "string" && input.neo4jExportResult.outputPath.endsWith(".cypher"),
+    `${repo.id}: neo4j export alias did not return a cypher output path`
+  );
 }
 
 async function readJson(filePath) {

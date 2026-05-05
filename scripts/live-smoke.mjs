@@ -155,11 +155,15 @@ try {
     await assertExists(path.join(workspaceDir, "state", "retrieval", "fts-000.sqlite"));
     await assertExists(path.join(workspaceDir, "state", "retrieval", "manifest.json"));
     await assertExists(path.join(workspaceDir, "wiki", "index.md"));
+    const checkUpdate = await runCliJson(["check-update"]);
+    assert.equal(checkUpdate.graphExists, true, "check-update did not find the compiled graph");
     const graphStats = await runCliJson(["graph", "stats"]);
     assert.ok(graphStats.counts.nodes > 0, "graph stats did not report graph nodes");
     const graphValidation = await runCliJson(["graph", "validate", "--strict"]);
     assert.equal(graphValidation.ok, true, "graph validate --strict did not accept the compiled graph");
     assert.equal(graphValidation.errorCount, 0, "graph validate --strict reported errors");
+    const clusterOnly = await runCliJson(["cluster-only"]);
+    assert.ok(clusterOnly.nodeCount > 0, "cluster-only did not report graph nodes");
     const defaultShareSvgPath = path.join(workspaceDir, "wiki", "graph", "share-card.svg");
     await assertExists(defaultShareSvgPath);
     const regeneratedShare = await runCliJson(["graph", "share", "--svg"]);
@@ -1405,6 +1409,7 @@ try {
       const svgPath = path.join(exportDir, "graph.svg");
       const graphMlPath = path.join(exportDir, "graph.graphml");
       const cypherPath = path.join(exportDir, "graph.cypher");
+      const neo4jPath = path.join(exportDir, "graph-neo4j.cypher");
       await fs.mkdir(exportDir, { recursive: true });
       const result = await runCliJson(["graph", "export", "--html", outputPath]);
       assert.equal(result.outputPath, outputPath, "graph export returned an unexpected output path");
@@ -1416,12 +1421,15 @@ try {
       const svg = await runCliJson(["graph", "export", "--svg", svgPath]);
       const graphml = await runCliJson(["graph", "export", "--graphml", graphMlPath]);
       const cypher = await runCliJson(["graph", "export", "--cypher", cypherPath]);
+      const neo4j = await runCliJson(["graph", "export", "--neo4j", neo4jPath]);
       assert.equal(svg.outputPath, svgPath, "svg export returned an unexpected output path");
       assert.equal(graphml.outputPath, graphMlPath, "graphml export returned an unexpected output path");
       assert.equal(cypher.outputPath, cypherPath, "cypher export returned an unexpected output path");
+      assert.equal(neo4j.outputPath, neo4jPath, "neo4j export alias returned an unexpected output path");
       assert.ok((await fs.readFile(svgPath, "utf8")).includes("<svg"), "svg export did not contain svg markup");
       assert.ok((await fs.readFile(graphMlPath, "utf8")).includes("<graphml"), "graphml export did not contain graphml markup");
       assert.ok((await fs.readFile(cypherPath, "utf8")).includes("MERGE (n:SwarmNode"), "cypher export did not contain Cypher nodes");
+      assert.ok((await fs.readFile(neo4jPath, "utf8")).includes("MERGE (n:SwarmNode"), "neo4j export alias did not contain Cypher nodes");
     });
 
     await runStep("graph-export-overview", async () => {
@@ -1663,6 +1671,8 @@ try {
       assert.ok(updatedWidget?.sourceId, "graph update did not refresh the widget code-index entry");
       widgetModulePath = `code/${updatedWidget.sourceId}.md`;
       await assertExists(path.join(workspaceDir, "wiki", widgetModulePath));
+      const updateAlias = await runCliJson(["update", "."]);
+      assert.ok(Array.isArray(updateAlias.watchedRepoRoots), "update alias did not return watched roots");
     });
 
     await runStep("mcp", async () => {

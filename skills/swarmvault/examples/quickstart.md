@@ -17,9 +17,12 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault check-update ./src
 swarmvault graph stats
 swarmvault graph validate --strict
+swarmvault update ./src
 swarmvault graph cluster
+swarmvault cluster-only
 swarmvault graph tree --output ./tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What are the key concepts?"
@@ -29,6 +32,7 @@ swarmvault retrieval status
 swarmvault doctor
 swarmvault graph serve
 swarmvault graph export --report ./graph-report.html
+swarmvault graph export --neo4j ./graph.cypher
 ```
 
 ## What To Check
@@ -38,14 +42,14 @@ swarmvault graph export --report ./graph-report.html
 - `scan --no-serve` leaves a compiled vault behind even when the viewer is not launched
 - `state/sources.json` contains the managed source registry entry
 - `wiki/graph/report.md` exists after compile
-- `graph status` reports whether tracked repo changes need `graph update` or a full `compile` without writing watch state
+- `graph status` and `check-update` report whether tracked repo changes need `graph update`/`update` or a full `compile` without writing watch state
 - `graph stats` prints lightweight graph counts and relation mix without opening the viewer
 - `graph validate --strict` checks graph artifact integrity before export, merge, push, or publish workflows
-- `graph cluster` refreshes graph communities and report artifacts from the existing graph without another ingest
+- `graph cluster` and `cluster-only` refresh graph communities and report artifacts from the existing graph without another ingest
 - `graph query` can focus traversal with relation/context/evidence/node/language filters
 - `graph tree` writes an interactive source/module/symbol HTML tree with a node inspector when the user wants file-oriented browsing
 - `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` exist after compile; `graph share --post` prints copyable text, `graph share --svg [path]` writes the visual card, and `graph share --bundle [dir]` writes the portable share kit
-- `graph export --report` writes a shareable HTML report when the user wants a lighter artifact than the full workspace
+- `graph export --report` writes a shareable HTML report when the user wants a lighter artifact than the full workspace; `graph export --neo4j` writes a Cypher import file for Neo4j workflows
 - `wiki/outputs/source-briefs/` contains a source brief
 - `wiki/outputs/` contains the saved query answer
 - `wiki/context/` and `state/context-packs/` contain the saved context pack when `context build` is used

@@ -124,15 +124,15 @@ Expected shape:
 
 - uses `swarmvault graph serve` or `graph export --html`
 - may suggest `swarmvault graph share --post` when a quick copyable summary is enough, `swarmvault graph share --svg [path]` for a visual card, or `swarmvault graph share --bundle [dir]` for a portable share kit
-- may suggest `graph export --report`, `graph export --html-standalone`, `graph export --canvas`, or `graph export --obsidian` when a lighter shareable artifact is a better fit
+- may suggest `graph export --report`, `graph export --html-standalone`, `graph export --canvas`, `graph export --obsidian`, or `graph export --neo4j` when a lighter shareable artifact or Neo4j-ready import is a better fit
 - may suggest `swarmvault diff` when the user is asking what a compile changed
 - may use `graph blast <target>` when the user is asking about change impact instead of broad graph browsing
-- may use `graph status [path]` when the user needs a read-only stale check before choosing `graph update` or `compile`
+- may use `graph status [path]` or `check-update [path]` when the user needs a read-only stale check before choosing `graph update`/`update` or `compile`
 - may use `graph stats` when the user needs lightweight counts or relation mix without opening the viewer
 - may use `graph validate [graph] --strict` before sharing, merging, pushing, or publishing graph artifacts
 - may use `graph tree [--output <html>]` when the user wants file/module/symbol browsing
 - may use `graph merge <graph...> --out <path>` when the user needs to combine SwarmVault or node-link graph JSON
-- may use `graph cluster [--resolution <n>]` when the graph exists but community/report metrics need to be recomputed
+- may use `graph cluster [--resolution <n>]` or `cluster-only [vault]` when the graph exists but community/report metrics need to be recomputed
 - may run `swarmvault doctor` before opening the live workspace when the vault health is uncertain
 - mentions that the live workbench shows doctor details, copyable suggested commands, explicit capture modes, and budgeted context/task actions when the user asks what the viewer can do
 - mentions `swarmvault mcp`

@@ -74,10 +74,13 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault check-update ./src
 swarmvault graph stats
 swarmvault graph validate --strict
 swarmvault graph cluster
+swarmvault cluster-only
 swarmvault graph update ./src
+swarmvault update ./src
 swarmvault graph update ./src --force
 swarmvault graph refresh
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
@@ -89,6 +92,7 @@ swarmvault graph export --html ./graph.html --full
 swarmvault graph export --html-standalone ./graph-standalone.html
 swarmvault graph export --json ./graph.json --canvas ./graph.canvas
 swarmvault graph export --obsidian ./graph-vault
+swarmvault graph export --neo4j ./graph.cypher
 swarmvault graph push neo4j --dry-run
 swarmvault mcp
 ```
@@ -99,8 +103,10 @@ swarmvault mcp
 swarmvault watch --lint --repo
 swarmvault watch --repo --code-only --once
 swarmvault graph status .
+swarmvault check-update .
 swarmvault graph validate --strict
 swarmvault graph update .
+swarmvault update .
 swarmvault graph update . --force
 swarmvault watch status
 swarmvault hook install

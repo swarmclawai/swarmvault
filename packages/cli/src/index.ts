@@ -123,9 +123,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.9.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.10.0";
   } catch {
-    return "3.9.0";
+    return "3.10.0";
   }
 }
 
@@ -343,6 +343,66 @@ function getCommandPath(command: Command): string[] {
     current = current.parent ?? null;
   }
   return names;
+}
+
+async function runGraphUpdateCommand(targetPath: string | undefined, options: { lint?: boolean; force?: boolean }): Promise<void> {
+  const overrideRoots = targetPath ? [path.resolve(process.cwd(), targetPath)] : undefined;
+  const result = await runWatchCycle(process.cwd(), {
+    repo: true,
+    codeOnly: true,
+    lint: options.lint ?? false,
+    force: options.force ?? false,
+    overrideRoots
+  });
+  if (isJson()) {
+    emitJson(result);
+    return;
+  }
+  log(
+    `Updated graph from ${result.watchedRepoRoots.length} repo root${result.watchedRepoRoots.length === 1 ? "" : "s"}. Imported ${result.repoImportedCount}, updated ${result.repoUpdatedCount}, removed ${result.repoRemovedCount}, pending semantic refresh ${result.pendingSemanticRefreshCount}.`
+  );
+}
+
+async function showGraphStatusCommand(targetPath: string | undefined): Promise<void> {
+  const overrideRoots = targetPath ? [path.resolve(process.cwd(), targetPath)] : undefined;
+  const status = await getGraphStatus(process.cwd(), { repoRoots: overrideRoots });
+  if (isJson()) {
+    emitJson(status);
+    return;
+  }
+  log(`Graph: ${status.graphExists ? status.graphPath : `missing (${status.graphPath})`}`);
+  log(`Report: ${status.reportExists ? status.reportPath : `missing (${status.reportPath})`}`);
+  log(`Tracked repo roots: ${status.trackedRepoRoots.length ? status.trackedRepoRoots.join(", ") : "none"}`);
+  log(`Code changes: ${status.codeChangeCount}`);
+  log(`Semantic changes: ${status.semanticChangeCount}`);
+  log(`Pending semantic refresh: ${status.pendingSemanticRefresh.length}`);
+  if (status.changes.length) {
+    for (const change of status.changes.slice(0, 20)) {
+      log(`- ${change.refreshType} ${change.changeType} ${change.path}`);
+    }
+    if (status.changes.length > 20) {
+      log(`... and ${status.changes.length - 20} more`);
+    }
+  }
+  log(`State: ${status.stale ? "stale" : "fresh"}`);
+  if (status.recommendedCommand) {
+    log(`Recommended: ${status.recommendedCommand}`);
+  }
+}
+
+async function runGraphClusterCommand(options: { resolution?: string }, rootDir = process.cwd()): Promise<void> {
+  const resolution = parsePositiveNumber(options.resolution);
+  if (options.resolution && resolution === undefined) {
+    throw new Error("--resolution must be a positive number.");
+  }
+  const result = await refreshGraphClusters(rootDir, { resolution });
+  if (isJson()) {
+    emitJson(result);
+    return;
+  }
+  log(
+    `Refreshed ${result.communityCount} communities across ${result.nodeCount} nodes and ${result.edgeCount} edges. Report: ${result.reportPath}`
+  );
 }
 
 program.hook("postAction", async (_thisCommand, actionCommand) => {
@@ -1437,23 +1497,7 @@ graph
   .argument("[path]", "Optional repo root to refresh instead of configured/tracked roots")
   .option("--lint", "Run lint after the refresh cycle", false)
   .option("--force", "Allow graph updates even when node or edge counts shrink sharply", false)
-  .action(async (targetPath: string | undefined, options: { lint?: boolean; force?: boolean }) => {
-    const overrideRoots = targetPath ? [path.resolve(process.cwd(), targetPath)] : undefined;
-    const result = await runWatchCycle(process.cwd(), {
-      repo: true,
-      codeOnly: true,
-      lint: options.lint ?? false,
-      force: options.force ?? false,
-      overrideRoots
-    });
-    if (isJson()) {
-      emitJson(result);
-      return;
-    }
-    log(
-      `Updated graph from ${result.watchedRepoRoots.length} repo root${result.watchedRepoRoots.length === 1 ? "" : "s"}. Imported ${result.repoImportedCount}, updated ${result.repoUpdatedCount}, removed ${result.repoRemovedCount}, pending semantic refresh ${result.pendingSemanticRefreshCount}.`
-    );
-  });
+  .action(runGraphUpdateCommand);
 
 graph
   .command("tree")
@@ -1504,32 +1548,7 @@ graph
   .command("status")
   .description("Read-only check for graph/report presence and tracked repo changes.")
   .argument("[path]", "Optional repo root to check instead of configured/tracked roots")
-  .action(async (targetPath: string | undefined) => {
-    const overrideRoots = targetPath ? [path.resolve(process.cwd(), targetPath)] : undefined;
-    const status = await getGraphStatus(process.cwd(), { repoRoots: overrideRoots });
-    if (isJson()) {
-      emitJson(status);
-      return;
-    }
-    log(`Graph: ${status.graphExists ? status.graphPath : `missing (${status.graphPath})`}`);
-    log(`Report: ${status.reportExists ? status.reportPath : `missing (${status.reportPath})`}`);
-    log(`Tracked repo roots: ${status.trackedRepoRoots.length ? status.trackedRepoRoots.join(", ") : "none"}`);
-    log(`Code changes: ${status.codeChangeCount}`);
-    log(`Semantic changes: ${status.semanticChangeCount}`);
-    log(`Pending semantic refresh: ${status.pendingSemanticRefresh.length}`);
-    if (status.changes.length) {
-      for (const change of status.changes.slice(0, 20)) {
-        log(`- ${change.refreshType} ${change.changeType} ${change.path}`);
-      }
-      if (status.changes.length > 20) {
-        log(`... and ${status.changes.length - 20} more`);
-      }
-    }
-    log(`State: ${status.stale ? "stale" : "fresh"}`);
-    if (status.recommendedCommand) {
-      log(`Recommended: ${status.recommendedCommand}`);
-    }
-  });
+  .action(showGraphStatusCommand);
 
 graph
   .command("stats")
@@ -1586,20 +1605,7 @@ graph
   .alias("clusters")
   .description("Recompute graph communities, degrees, god-node flags, and graph report artifacts without re-ingesting sources.")
   .option("--resolution <number>", "Override the Louvain community resolution for this run")
-  .action(async (options: { resolution?: string }) => {
-    const resolution = parsePositiveNumber(options.resolution);
-    if (options.resolution && resolution === undefined) {
-      throw new Error("--resolution must be a positive number.");
-    }
-    const result = await refreshGraphClusters(process.cwd(), { resolution });
-    if (isJson()) {
-      emitJson(result);
-      return;
-    }
-    log(
-      `Refreshed ${result.communityCount} communities across ${result.nodeCount} nodes and ${result.edgeCount} edges. Report: ${result.reportPath}`
-    );
-  });
+  .action((options: { resolution?: string }) => runGraphClusterCommand(options));
 
 graphPush
   .command("neo4j")
@@ -1696,6 +1702,7 @@ graph
   .option("--svg <output>", "Output SVG file path")
   .option("--graphml <output>", "Output GraphML file path")
   .option("--cypher <output>", "Output Cypher file path")
+  .option("--neo4j <output>", "Compatibility alias for --cypher, writing a Neo4j Cypher import file")
   .option("--json <output>", "Output JSON file path")
   .option("--obsidian <output>", "Output Obsidian vault directory path")
   .option("--canvas <output>", "Output Obsidian canvas file path")
@@ -1709,6 +1716,7 @@ graph
       svg?: string;
       graphml?: string;
       cypher?: string;
+      neo4j?: string;
       json?: string;
       obsidian?: string;
       canvas?: string;
@@ -1723,6 +1731,7 @@ graph
         options.svg ? ({ format: "svg", outputPath: options.svg } as const) : null,
         options.graphml ? ({ format: "graphml", outputPath: options.graphml } as const) : null,
         options.cypher ? ({ format: "cypher", outputPath: options.cypher } as const) : null,
+        options.neo4j ? ({ format: "cypher", outputPath: options.neo4j } as const) : null,
         options.json ? ({ format: "json", outputPath: options.json } as const) : null,
         options.obsidian ? ({ format: "obsidian", outputPath: options.obsidian } as const) : null,
         options.canvas ? ({ format: "canvas", outputPath: options.canvas } as const) : null
@@ -1730,7 +1739,7 @@ graph
 
       if (targets.length === 0) {
         throw new Error(
-          "Pass at least one of --html, --html-standalone, --report, --svg, --graphml, --cypher, --json, --obsidian, or --canvas."
+          "Pass at least one of --html, --html-standalone, --report, --svg, --graphml, --cypher, --neo4j, --json, --obsidian, or --canvas."
         );
       }
 
@@ -2305,6 +2314,29 @@ async function showWatchStatus(): Promise<void> {
 watch.command("status").description("Show the latest watch run plus pending semantic refresh entries.").action(showWatchStatus);
 
 program.command("watch-status").description("Show the latest watch run plus pending semantic refresh entries.").action(showWatchStatus);
+
+program
+  .command("check-update")
+  .description("Compatibility alias for graph status: read-only graph/report freshness and tracked repo change check.")
+  .argument("[path]", "Optional repo root to check instead of configured/tracked roots")
+  .action(showGraphStatusCommand);
+
+program
+  .command("update")
+  .description("Compatibility alias for graph update: refresh code-derived graph artifacts from tracked repo roots.")
+  .argument("[path]", "Optional repo root to refresh instead of configured/tracked roots")
+  .option("--lint", "Run lint after the refresh cycle", false)
+  .option("--force", "Allow graph updates even when node or edge counts shrink sharply", false)
+  .action(runGraphUpdateCommand);
+
+program
+  .command("cluster-only")
+  .description("Compatibility alias for graph cluster: recompute graph communities and report artifacts without re-ingesting.")
+  .argument("[vault]", "Optional vault root to cluster instead of the current directory")
+  .option("--resolution <number>", "Override the Louvain community resolution for this run")
+  .action((vaultPath: string | undefined, options: { resolution?: string }) =>
+    runGraphClusterCommand(options, vaultPath ? path.resolve(process.cwd(), vaultPath) : process.cwd())
+  );
 
 const hook = program.command("hook").description("Install local git hooks that keep tracked repos and the vault in sync.");
 hook

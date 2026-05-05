@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.10.0
+
+- Added top-level graph-maintenance compatibility commands: `swarmvault check-update [path]`, `swarmvault update [path]`, and `swarmvault cluster-only [vault]`, each backed by the existing graph status/update/cluster implementation instead of a second execution path.
+- Added `swarmvault graph export --neo4j <path>` as a Neo4j-oriented alias for the Cypher export surface.
+- Extended parser-backed CLI surface smoke, installed-package live smoke, and live OSS corpus validation to exercise the new compatibility commands and Neo4j export alias.
+- Updated OSS docs, localized READMEs, site docs, spec notes, and the published ClawHub skill bundle for the compatibility command surface.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.10.0`.
+
 ## 3.9.0
 
 - Added `swarmvault graph stats` for lightweight local graph counts, node type totals, evidence class totals, and top relation mix without starting the viewer.

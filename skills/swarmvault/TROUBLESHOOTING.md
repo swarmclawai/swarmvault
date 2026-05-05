@@ -94,11 +94,12 @@ Run:
 
 ```bash
 swarmvault graph status .
+swarmvault check-update .
 ```
 
-If it recommends `swarmvault graph update`, the detected changes are code-only and can use the faster graph refresh path. If it recommends `swarmvault compile`, graph/report artifacts are missing, a non-code tracked source changed, or a pending semantic refresh already exists.
+If it recommends `swarmvault graph update`, the detected changes are code-only and can use the faster graph refresh path; `swarmvault update` is the top-level alias for the same refresh. If it recommends `swarmvault compile`, graph/report artifacts are missing, a non-code tracked source changed, or a pending semantic refresh already exists.
 
-`swarmvault graph update` aborts when the refreshed graph drops more than 25% of nodes or edges. Re-run with `swarmvault graph update . --force` or `SWARMVAULT_FORCE_UPDATE=1` only when the shrink is expected, such as after deliberately deleting a large source tree.
+`swarmvault graph update` and `swarmvault update` abort when the refreshed graph drops more than 25% of nodes or edges. Re-run with `swarmvault graph update . --force`, `swarmvault update . --force`, or `SWARMVAULT_FORCE_UPDATE=1` only when the shrink is expected, such as after deliberately deleting a large source tree.
 
 Before exporting, merging, pushing, or publishing graph artifacts, run `swarmvault graph validate --strict` to catch dangling references, duplicate ids, or invalid confidence values.
 

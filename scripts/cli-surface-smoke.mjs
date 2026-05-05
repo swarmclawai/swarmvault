@@ -25,6 +25,8 @@ const SURFACE_MANIFEST = {
   "candidate list": "behavior",
   "candidate preview-scores": "behavior",
   "candidate promote": "help",
+  "check-update": "behavior",
+  "cluster-only": "behavior",
   compile: "behavior",
   consolidate: "behavior",
   context: "help",
@@ -108,6 +110,7 @@ const SURFACE_MANIFEST = {
   "task show": "behavior",
   "task start": "behavior",
   "task update": "behavior",
+  update: "behavior",
   watch: "long-running",
   "watch add-root": "behavior",
   "watch list-roots": "behavior",
@@ -361,6 +364,9 @@ async function runBehaviorSmoke() {
   await runJsonCheck(["graph", "status"], workspaceDir, "graph status", (result) => {
     assert.equal(result.graphExists, true, "graph status did not find the compiled graph");
   });
+  await runJsonCheck(["check-update"], workspaceDir, "check-update", (result) => {
+    assert.equal(result.graphExists, true, "check-update did not find the compiled graph");
+  });
   await runJsonCheck(["graph", "stats"], workspaceDir, "graph stats", (result) => {
     assert.ok(result.counts?.nodes > 0, "graph stats did not report graph nodes");
   });
@@ -373,6 +379,9 @@ async function runBehaviorSmoke() {
   await runJsonCheck(["graph", "clusters"], workspaceDir, "graph clusters alias", (result) => {
     assert.ok(result.nodeCount > 0, "graph clusters alias did not report graph nodes");
   });
+  await runJsonCheck(["cluster-only"], workspaceDir, "cluster-only", (result) => {
+    assert.ok(result.nodeCount > 0, "cluster-only did not report graph nodes");
+  });
   await runJsonCheck(["graph", "tree", "--output", path.join(workspaceDir, "exports", "tree.html")], workspaceDir, "graph tree", (result) => {
     assert.ok(result.outputPath.endsWith("tree.html"), "graph tree returned the wrong output path");
   });
@@ -381,6 +390,9 @@ async function runBehaviorSmoke() {
   });
   await runJsonCheck(["graph", "export", "--svg", path.join(workspaceDir, "exports", "graph.svg")], workspaceDir, "graph export", (result) => {
     assert.equal(result.format, "svg", "graph export did not report svg output");
+  });
+  await runJsonCheck(["graph", "export", "--neo4j", path.join(workspaceDir, "exports", "graph.cypher")], workspaceDir, "graph export --neo4j", (result) => {
+    assert.equal(result.format, "cypher", "graph export --neo4j did not report cypher output");
   });
   await runJsonCheck(["graph", "query", "durable outputs", "--relation", "mentions"], workspaceDir, "graph query", (result) => {
     assert.ok(typeof result.summary === "string", "graph query did not return a summary");
@@ -406,6 +418,9 @@ async function runBehaviorSmoke() {
   });
   await runJsonCheck(["graph", "refresh", sourceDir], workspaceDir, "graph refresh alias", (result) => {
     assert.ok(Array.isArray(result.watchedRepoRoots), "graph refresh alias did not return watched roots");
+  });
+  await runJsonCheck(["update", sourceDir], workspaceDir, "update", (result) => {
+    assert.ok(Array.isArray(result.watchedRepoRoots), "update did not return watched roots");
   });
 
   await runJsonCheck(["doctor"], workspaceDir, "doctor", (result) => {
