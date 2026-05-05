@@ -26,6 +26,7 @@ const SURFACE_MANIFEST = {
   "candidate preview-scores": "behavior",
   "candidate promote": "help",
   "check-update": "behavior",
+  clone: "behavior",
   "cluster-only": "behavior",
   compile: "behavior",
   consolidate: "behavior",
@@ -69,6 +70,7 @@ const SURFACE_MANIFEST = {
   init: "behavior",
   install: "behavior",
   lint: "behavior",
+  "merge-graphs": "behavior",
   mcp: "long-running",
   memory: "help",
   "memory finish": "behavior",
@@ -110,6 +112,7 @@ const SURFACE_MANIFEST = {
   "task show": "behavior",
   "task start": "behavior",
   "task update": "behavior",
+  tree: "behavior",
   update: "behavior",
   watch: "long-running",
   "watch add-root": "behavior",
@@ -385,6 +388,9 @@ async function runBehaviorSmoke() {
   await runJsonCheck(["graph", "tree", "--output", path.join(workspaceDir, "exports", "tree.html")], workspaceDir, "graph tree", (result) => {
     assert.ok(result.outputPath.endsWith("tree.html"), "graph tree returned the wrong output path");
   });
+  await runJsonCheck(["tree", "--output", path.join(workspaceDir, "exports", "tree-alias.html")], workspaceDir, "tree", (result) => {
+    assert.ok(result.outputPath.endsWith("tree-alias.html"), "tree alias returned the wrong output path");
+  });
   await runJsonCheck(["graph", "share", "--bundle", path.join(workspaceDir, "exports", "share-kit")], workspaceDir, "graph share", (result) => {
     assert.ok(result.bundlePath.endsWith("share-kit"), "graph share did not report the bundle path");
   });
@@ -412,6 +418,10 @@ async function runBehaviorSmoke() {
   const graphPath = path.join(workspaceDir, "state", "graph.json");
   await runJsonCheck(["graph", "merge", graphPath, graphPath, "--out", path.join(workspaceDir, "exports", "merged.json")], workspaceDir, "graph merge", (result) => {
     assert.ok(result.outputPath.endsWith("merged.json"), "graph merge returned the wrong output path");
+  });
+  await runJsonCheck(["merge-graphs", graphPath, graphPath, "--out", path.join(workspaceDir, "exports", "merged-alias.json")], workspaceDir, "merge-graphs", (result) => {
+    assert.ok(result.outputPath.endsWith("merged-alias.json"), "merge-graphs returned the wrong output path");
+    assert.equal(result.inputGraphs.length, 2, "merge-graphs did not merge both inputs");
   });
   await runJsonCheck(["graph", "update", sourceDir], workspaceDir, "graph update", (result) => {
     assert.ok(Array.isArray(result.watchedRepoRoots), "graph update did not return watched roots");
@@ -496,6 +506,10 @@ async function runBehaviorSmoke() {
   await runJsonCheck(["watch", "--once"], workspaceDir, "watch --once", (result) => {
     assert.ok(Number.isFinite(result.importedCount), "watch --once did not return counts");
   });
+  await runJsonCheck(["watch", sourceDir, "--once", "--code-only"], workspaceDir, "watch path --once", (result) => {
+    assert.ok(Array.isArray(result.watchedRepoRoots), "watch path --once did not return watched roots");
+    assert.ok(result.watchedRepoRoots.length >= 1, "watch path --once did not use the positional repo root");
+  });
   await runJsonCheck(["hook", "status"], workspaceDir, "hook status", (result) => {
     assert.ok("repoRoot" in result, "hook status did not return repoRoot state");
   });
@@ -515,8 +529,14 @@ async function runBehaviorSmoke() {
   await fs.mkdir(scanInput, { recursive: true });
   await fs.mkdir(scanWorkspace, { recursive: true });
   await fs.writeFile(path.join(scanInput, "README.md"), "# Scan Input\n\nScan smoke.\n", "utf8");
-  await runJsonCheck(["scan", scanInput, "--no-serve"], scanWorkspace, "scan", (result) => {
-    assert.ok(result.compiled?.sourceCount >= 1, "scan --no-serve did not compile the input");
+  await runJsonCheck(["scan", scanInput, "--no-viz"], scanWorkspace, "scan", (result) => {
+    assert.ok(result.compiled?.sourceCount >= 1, "scan --no-viz did not compile the input");
+  });
+
+  const cloneWorkspace = path.join(scanDir, "clone-workspace");
+  await fs.mkdir(cloneWorkspace, { recursive: true });
+  await runJsonCheck(["clone", scanInput, "--no-viz"], cloneWorkspace, "clone", (result) => {
+    assert.ok(result.compiled?.sourceCount >= 1, "clone --no-viz did not compile the input");
   });
 
   await runJsonCheck(["context", "delete", contextPackId], workspaceDir, "context delete", (result) => {

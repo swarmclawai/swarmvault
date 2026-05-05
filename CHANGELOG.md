@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 3.11.0
+
+- Added top-level command-shape compatibility aliases: `swarmvault tree`, `swarmvault merge-graphs <graph...> --out <path>`, and `swarmvault clone <input>`, each backed by the existing graph tree, graph merge, and scan implementations.
+- Added positional `swarmvault watch [path]` support so v6-style watch invocations can target one repo root without first writing `watch.repoRoots`.
+- Added `swarmvault scan --no-viz` as a compatibility alias for artifact-only scans and `swarmvault scan --mcp` / `swarmvault clone --mcp` for build-then-serve MCP stdio workflows.
+- Extended parser-backed CLI surface smoke, installed-package live smoke, and live OSS corpus validation to exercise the new v6 compatibility aliases.
+- Updated OSS docs, localized READMEs, site docs, spec notes, and the published ClawHub skill bundle for the v6 parity surface.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.11.0`.
+
 ## 3.10.0
 
 - Added top-level graph-maintenance compatibility commands: `swarmvault check-update [path]`, `swarmvault update [path]`, and `swarmvault cluster-only [vault]`, each backed by the existing graph status/update/cluster implementation instead of a second execution path.

@@ -123,9 +123,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.10.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.11.0";
   } catch {
-    return "3.10.0";
+    return "3.11.0";
   }
 }
 
@@ -403,6 +403,119 @@ async function runGraphClusterCommand(options: { resolution?: string }, rootDir 
   log(
     `Refreshed ${result.communityCount} communities across ${result.nodeCount} nodes and ${result.edgeCount} edges. Report: ${result.reportPath}`
   );
+}
+
+async function runGraphTreeCommand(options: { output?: string; root?: string; label?: string; maxChildren?: string }): Promise<void> {
+  const rootDir = options.root ? path.resolve(process.cwd(), options.root) : process.cwd();
+  const result = await exportGraphTree(rootDir, options.output, {
+    label: options.label,
+    maxChildren: parsePositiveInt(options.maxChildren, 250)
+  });
+  if (isJson()) {
+    emitJson(result);
+    return;
+  }
+  log(`Graph tree: ${result.outputPath}`);
+  log(`Sources: ${result.sourceCount}; nodes: ${result.nodeCount}.`);
+}
+
+async function runGraphMergeCommand(graphPaths: string[], options: { out: string; label?: string }): Promise<void> {
+  const result = await mergeGraphFiles(
+    graphPaths.map((inputPath) => path.resolve(process.cwd(), inputPath)),
+    path.resolve(process.cwd(), options.out),
+    { label: options.label }
+  );
+  if (isJson()) {
+    emitJson(result);
+    return;
+  }
+  log(
+    `Merged ${result.inputGraphs.length} graph${result.inputGraphs.length === 1 ? "" : "s"} into ${result.outputPath}. Nodes ${result.graph.nodes.length}, edges ${result.graph.edges.length}.`
+  );
+  for (const warning of result.warnings) {
+    log(`Warning: ${warning}`);
+  }
+}
+
+async function runScanCommand(
+  input: string,
+  options: { port?: string; serve?: boolean; viz?: boolean; branch?: string; ref?: string; checkoutDir?: string; mcp?: boolean }
+): Promise<void> {
+  const rootDir = process.cwd();
+  await initVault(rootDir, {});
+  if (!isJson()) {
+    log("Initialized workspace.");
+  }
+
+  const result = isHttpUrlInput(input)
+    ? await addManagedSource(rootDir, input, {
+        compile: true,
+        brief: false,
+        branch: options.branch,
+        ref: options.ref,
+        checkoutDir: options.checkoutDir
+      })
+    : await ingestDirectory(rootDir, input, {});
+  if (!isJson()) {
+    if ("source" in result) {
+      log(
+        `Registered ${result.source.kind} source ${result.source.id}. Imported ${result.source.lastSyncCounts?.importedCount ?? 0}, updated ${result.source.lastSyncCounts?.updatedCount ?? 0}.`
+      );
+    } else {
+      log(`Ingested ${result.imported.length} file(s).`);
+    }
+  }
+
+  const compiled = "compile" in result && result.compile ? result.compile : await compileVault(rootDir, {});
+  const { paths } = await loadVaultConfig(rootDir);
+  const shareCardPath = path.join(paths.wikiDir, "graph", "share-card.md");
+  const shareCardSvgPath = path.join(paths.wikiDir, "graph", "share-card.svg");
+  const shareKitPath = path.join(paths.wikiDir, "graph", "share-kit");
+  if (!isJson()) {
+    log(`Compiled ${compiled.sourceCount} source(s), ${compiled.pageCount} page(s).`);
+    log(`Share card: ${shareCardPath}`);
+    log(`Visual card: ${shareCardSvgPath}`);
+    log(`Share kit: ${shareKitPath}`);
+    log("Post text: swarmvault graph share --post");
+  }
+
+  if (options.mcp) {
+    process.stderr.write(`${JSON.stringify({ status: "running", transport: "stdio", compiled: compiled.sourceCount })}\n`);
+    const controller = await startMcpServer(rootDir);
+    process.on("SIGINT", async () => {
+      try {
+        await controller.close();
+      } catch {}
+      process.exit(0);
+    });
+    return;
+  }
+
+  if (options.serve !== false && options.viz !== false) {
+    const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
+    const server = await startGraphServer(rootDir, port, { full: false });
+    if (isJson()) {
+      emitJson({
+        ...result,
+        compiled,
+        shareCardPath,
+        shareCardSvgPath,
+        shareKitPath,
+        port: server.port,
+        url: `http://localhost:${server.port}`
+      });
+    } else {
+      log(`Graph viewer running at http://localhost:${server.port}`);
+    }
+    process.on("SIGINT", async () => {
+      try {
+        await server.close();
+      } catch {}
+      process.exit(0);
+    });
+  } else if (isJson()) {
+    emitJson({ ...result, compiled, shareCardPath, shareCardSvgPath, shareKitPath });
+  }
 }
 
 program.hook("postAction", async (_thisCommand, actionCommand) => {
@@ -1506,19 +1619,7 @@ graph
   .option("--root <path>", "Vault root to read instead of the current directory")
   .option("--label <name>", "Tree title")
   .option("--max-children <n>", "Maximum children to render per tree node", "250")
-  .action(async (options: { output?: string; root?: string; label?: string; maxChildren?: string }) => {
-    const rootDir = options.root ? path.resolve(process.cwd(), options.root) : process.cwd();
-    const result = await exportGraphTree(rootDir, options.output, {
-      label: options.label,
-      maxChildren: parsePositiveInt(options.maxChildren, 250)
-    });
-    if (isJson()) {
-      emitJson(result);
-      return;
-    }
-    log(`Graph tree: ${result.outputPath}`);
-    log(`Sources: ${result.sourceCount}; nodes: ${result.nodeCount}.`);
-  });
+  .action(runGraphTreeCommand);
 
 graph
   .command("merge")
@@ -1526,23 +1627,7 @@ graph
   .argument("<graphs...>", "Graph JSON files to merge")
   .requiredOption("--out <path>", "Output graph JSON path")
   .option("--label <name>", "Label/prefix to use when merging one graph")
-  .action(async (graphPaths: string[], options: { out: string; label?: string }) => {
-    const result = await mergeGraphFiles(
-      graphPaths.map((inputPath) => path.resolve(process.cwd(), inputPath)),
-      path.resolve(process.cwd(), options.out),
-      { label: options.label }
-    );
-    if (isJson()) {
-      emitJson(result);
-      return;
-    }
-    log(
-      `Merged ${result.inputGraphs.length} graph${result.inputGraphs.length === 1 ? "" : "s"} into ${result.outputPath}. Nodes ${result.graph.nodes.length}, edges ${result.graph.edges.length}.`
-    );
-    for (const warning of result.warnings) {
-      log(`Warning: ${warning}`);
-    }
-  });
+  .action(runGraphMergeCommand);
 
 graph
   .command("status")
@@ -2196,6 +2281,7 @@ async function confirmInteractive(message: string): Promise<boolean> {
 const watch = program
   .command("watch")
   .description("Watch the inbox directory and optionally tracked repos, or run one refresh cycle immediately.")
+  .argument("[path]", "Optional repo root to watch or refresh instead of config/auto-discovery")
   .option("--lint", "Run lint after each compile cycle", false)
   .option("--repo", "Also refresh tracked repo sources and watch their repo roots", false)
   .option("--once", "Run one import/refresh cycle immediately instead of starting a watcher", false)
@@ -2204,21 +2290,26 @@ const watch = program
   .option("--root <path>", "Watch this repo root instead of config/auto-discovery (repeat for multiple)", collectRepeated, [] as string[])
   .option("--force", "Allow graph updates even when node or edge counts shrink sharply", false)
   .action(
-    async (options: {
-      lint?: boolean;
-      repo?: boolean;
-      once?: boolean;
-      codeOnly?: boolean;
-      debounce?: string;
-      root?: string[];
-      force?: boolean;
-    }) => {
+    async (
+      targetPath: string | undefined,
+      options: {
+        lint?: boolean;
+        repo?: boolean;
+        once?: boolean;
+        codeOnly?: boolean;
+        debounce?: string;
+        root?: string[];
+        force?: boolean;
+      }
+    ) => {
       const debounceMs = parsePositiveInt(options.debounce, 900);
-      const overrideRoots = options.root && options.root.length > 0 ? options.root : undefined;
+      const rootOverrides = [...(targetPath ? [targetPath] : []), ...(options.root ?? [])];
+      const overrideRoots = rootOverrides.length > 0 ? rootOverrides : undefined;
+      const repoMode = options.repo || Boolean(targetPath);
       if (options.once) {
         const result = await runWatchCycle(process.cwd(), {
           lint: options.lint ?? false,
-          repo: options.repo ?? false,
+          repo: repoMode,
           codeOnly: options.codeOnly ?? false,
           debounceMs,
           force: options.force ?? false,
@@ -2228,7 +2319,7 @@ const watch = program
           emitJson(result);
         } else {
           log(
-            `Refreshed inbox${options.repo ? " and tracked repos" : ""}. Imported ${result.importedCount}, repo imported ${result.repoImportedCount}, repo updated ${result.repoUpdatedCount}, repo removed ${result.repoRemovedCount}.`
+            `Refreshed inbox${repoMode ? " and tracked repos" : ""}. Imported ${result.importedCount}, repo imported ${result.repoImportedCount}, repo updated ${result.repoUpdatedCount}, repo removed ${result.repoRemovedCount}.`
           );
         }
         return;
@@ -2236,16 +2327,16 @@ const watch = program
       const { paths } = await loadVaultConfig(process.cwd());
       const controller = await watchVault(process.cwd(), {
         lint: options.lint ?? false,
-        repo: options.repo ?? false,
+        repo: repoMode,
         codeOnly: options.codeOnly ?? false,
         debounceMs,
         force: options.force ?? false,
         overrideRoots
       });
       if (isJson()) {
-        emitJson({ status: "watching", inboxDir: paths.inboxDir, repo: options.repo ?? false });
+        emitJson({ status: "watching", inboxDir: paths.inboxDir, repo: repoMode });
       } else {
-        log(`Watching inbox${options.repo ? " and tracked repos" : ""} for changes. Press Ctrl+C to stop.`);
+        log(`Watching inbox${repoMode ? " and tracked repos" : ""} for changes. Press Ctrl+C to stop.`);
       }
       process.on("SIGINT", async () => {
         try {
@@ -2337,6 +2428,23 @@ program
   .action((vaultPath: string | undefined, options: { resolution?: string }) =>
     runGraphClusterCommand(options, vaultPath ? path.resolve(process.cwd(), vaultPath) : process.cwd())
   );
+
+program
+  .command("tree")
+  .description("Compatibility alias for graph tree: write a collapsible source/module/symbol tree for the compiled graph.")
+  .option("--output <html>", "Output HTML path (default: wiki/graph/tree.html)")
+  .option("--root <path>", "Vault root to read instead of the current directory")
+  .option("--label <name>", "Tree title")
+  .option("--max-children <n>", "Maximum children to render per tree node", "250")
+  .action(runGraphTreeCommand);
+
+program
+  .command("merge-graphs")
+  .description("Compatibility alias for graph merge: combine graph JSON files into one namespaced graph artifact.")
+  .argument("<graphs...>", "Graph JSON files to merge")
+  .requiredOption("--out <path>", "Output graph JSON path")
+  .option("--label <name>", "Label/prefix to use when merging one graph")
+  .action(runGraphMergeCommand);
 
 const hook = program.command("hook").description("Install local git hooks that keep tracked repos and the vault in sync.");
 hook
@@ -2969,74 +3077,25 @@ program
   .argument("<input>", "Directory or public GitHub repo root URL to scan")
   .option("--port <port>", "Port for the graph viewer")
   .option("--no-serve", "Skip launching the graph viewer after compile")
+  .option("--no-viz", "Compatibility alias for --no-serve; skip launching the graph viewer after compile")
+  .option("--mcp", "Start the MCP stdio server after compile instead of launching the graph viewer", false)
   .option("--branch <name>", "GitHub branch to clone when scanning a public repo URL")
   .option("--ref <ref>", "Git ref, tag, or commit to check out when scanning a public repo URL")
   .option("--checkout-dir <path>", "Persistent checkout directory for a public GitHub repo scan")
-  .action(async (input: string, options: { port?: string; serve?: boolean; branch?: string; ref?: string; checkoutDir?: string }) => {
-    const rootDir = process.cwd();
-    await initVault(rootDir, {});
-    if (!isJson()) {
-      log("Initialized workspace.");
-    }
+  .action(runScanCommand);
 
-    const result = isHttpUrlInput(input)
-      ? await addManagedSource(rootDir, input, {
-          compile: true,
-          brief: false,
-          branch: options.branch,
-          ref: options.ref,
-          checkoutDir: options.checkoutDir
-        })
-      : await ingestDirectory(rootDir, input, {});
-    if (!isJson()) {
-      if ("source" in result) {
-        log(
-          `Registered ${result.source.kind} source ${result.source.id}. Imported ${result.source.lastSyncCounts?.importedCount ?? 0}, updated ${result.source.lastSyncCounts?.updatedCount ?? 0}.`
-        );
-      } else {
-        log(`Ingested ${result.imported.length} file(s).`);
-      }
-    }
-
-    const compiled = "compile" in result && result.compile ? result.compile : await compileVault(rootDir, {});
-    const { paths } = await loadVaultConfig(rootDir);
-    const shareCardPath = path.join(paths.wikiDir, "graph", "share-card.md");
-    const shareCardSvgPath = path.join(paths.wikiDir, "graph", "share-card.svg");
-    const shareKitPath = path.join(paths.wikiDir, "graph", "share-kit");
-    if (!isJson()) {
-      log(`Compiled ${compiled.sourceCount} source(s), ${compiled.pageCount} page(s).`);
-      log(`Share card: ${shareCardPath}`);
-      log(`Visual card: ${shareCardSvgPath}`);
-      log(`Share kit: ${shareKitPath}`);
-      log("Post text: swarmvault graph share --post");
-    }
-
-    if (options.serve !== false) {
-      const port = options.port ? parsePositiveInt(options.port, 0) || undefined : undefined;
-      const server = await startGraphServer(rootDir, port, { full: false });
-      if (isJson()) {
-        emitJson({
-          ...result,
-          compiled,
-          shareCardPath,
-          shareCardSvgPath,
-          shareKitPath,
-          port: server.port,
-          url: `http://localhost:${server.port}`
-        });
-      } else {
-        log(`Graph viewer running at http://localhost:${server.port}`);
-      }
-      process.on("SIGINT", async () => {
-        try {
-          await server.close();
-        } catch {}
-        process.exit(0);
-      });
-    } else if (isJson()) {
-      emitJson({ ...result, compiled, shareCardPath, shareCardSvgPath, shareKitPath });
-    }
-  });
+program
+  .command("clone")
+  .description("Compatibility alias for scan: initialize, clone/register a public repo URL, and compile it into the vault.")
+  .argument("<input>", "Public GitHub repo URL or local directory to scan")
+  .option("--port <port>", "Port for the graph viewer")
+  .option("--no-serve", "Skip launching the graph viewer after compile")
+  .option("--no-viz", "Compatibility alias for --no-serve; skip launching the graph viewer after compile")
+  .option("--mcp", "Start the MCP stdio server after compile instead of launching the graph viewer", false)
+  .option("--branch <name>", "GitHub branch to clone when scanning a public repo URL")
+  .option("--ref <ref>", "Git ref, tag, or commit to check out when scanning a public repo URL")
+  .option("--checkout-dir <path>", "Persistent checkout directory for a public GitHub repo scan")
+  .action(runScanCommand);
 
 function enableStructuredJsonOnSubcommands(command: Command): void {
   for (const subcommand of command.commands) {

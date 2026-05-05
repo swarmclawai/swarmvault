@@ -130,9 +130,10 @@ Expected shape:
 - may use `graph status [path]` or `check-update [path]` when the user needs a read-only stale check before choosing `graph update`/`update` or `compile`
 - may use `graph stats` when the user needs lightweight counts or relation mix without opening the viewer
 - may use `graph validate [graph] --strict` before sharing, merging, pushing, or publishing graph artifacts
-- may use `graph tree [--output <html>]` when the user wants file/module/symbol browsing
-- may use `graph merge <graph...> --out <path>` when the user needs to combine SwarmVault or node-link graph JSON
+- may use `graph tree [--output <html>]` or `tree [--output <html>]` when the user wants file/module/symbol browsing
+- may use `graph merge <graph...> --out <path>` or `merge-graphs <graph...> --out <path>` when the user needs to combine SwarmVault or node-link graph JSON
 - may use `graph cluster [--resolution <n>]` or `cluster-only [vault]` when the graph exists but community/report metrics need to be recomputed
+- may use `watch [path] --once --code-only` when one repo root should be refreshed without persisting watch config
 - may run `swarmvault doctor` before opening the live workspace when the vault health is uncertain
 - mentions that the live workbench shows doctor details, copyable suggested commands, explicit capture modes, and budgeted context/task actions when the user asks what the viewer can do
 - mentions `swarmvault mcp`

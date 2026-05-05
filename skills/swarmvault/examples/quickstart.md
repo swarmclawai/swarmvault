@@ -9,6 +9,8 @@ npm install -g @swarmvaultai/cli
 swarmvault demo --no-serve
 swarmvault init --obsidian
 swarmvault scan ./repo --no-serve
+swarmvault scan ./repo --no-viz
+swarmvault clone https://github.com/owner/repo --branch main --no-viz
 swarmvault source add https://github.com/karpathy/micrograd
 swarmvault source add https://github.com/owner/repo --branch main --checkout-dir .swarmvault-checkouts/repo
 swarmvault diff
@@ -24,6 +26,7 @@ swarmvault update ./src
 swarmvault graph cluster
 swarmvault cluster-only
 swarmvault graph tree --output ./tree.html
+swarmvault tree --output ./tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What are the key concepts?"
 swarmvault context build "Explain the key concepts to the next agent" --target ./repo --budget 8000
@@ -33,21 +36,24 @@ swarmvault doctor
 swarmvault graph serve
 swarmvault graph export --report ./graph-report.html
 swarmvault graph export --neo4j ./graph.cypher
+swarmvault merge-graphs ./graph.json ./other-graph.json --out ./merged-graph.json
 ```
 
 ## What To Check
 
 - `swarmvault.schema.md` exists and reflects the vault contract
 - `demo --no-serve` leaves a temporary compiled vault behind even on a clean machine
-- `scan --no-serve` leaves a compiled vault behind even when the viewer is not launched
+- `scan --no-serve`, `scan --no-viz`, and `clone --no-viz` leave a compiled vault behind even when the viewer is not launched
 - `state/sources.json` contains the managed source registry entry
 - `wiki/graph/report.md` exists after compile
 - `graph status` and `check-update` report whether tracked repo changes need `graph update`/`update` or a full `compile` without writing watch state
+- `watch [path] --once --code-only` can refresh one repo root without persisting watch config
 - `graph stats` prints lightweight graph counts and relation mix without opening the viewer
 - `graph validate --strict` checks graph artifact integrity before export, merge, push, or publish workflows
 - `graph cluster` and `cluster-only` refresh graph communities and report artifacts from the existing graph without another ingest
 - `graph query` can focus traversal with relation/context/evidence/node/language filters
-- `graph tree` writes an interactive source/module/symbol HTML tree with a node inspector when the user wants file-oriented browsing
+- `graph tree` and `tree` write an interactive source/module/symbol HTML tree with a node inspector when the user wants file-oriented browsing
+- `graph merge` and `merge-graphs` combine SwarmVault or node-link graph JSON artifacts
 - `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` exist after compile; `graph share --post` prints copyable text, `graph share --svg [path]` writes the visual card, and `graph share --bundle [dir]` writes the portable share kit
 - `graph export --report` writes a shareable HTML report when the user wants a lighter artifact than the full workspace; `graph export --neo4j` writes a Cypher import file for Neo4j workflows
 - `wiki/outputs/source-briefs/` contains a source brief

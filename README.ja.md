@@ -180,6 +180,7 @@ swarmvault update ./src
 swarmvault graph cluster
 swarmvault cluster-only
 swarmvault graph tree --output ./exports/tree.html
+swarmvault tree --output ./exports/tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
@@ -191,10 +192,12 @@ swarmvault graph export --report ./exports/report.html
 swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault graph export --neo4j ./exports/graph.cypher
 swarmvault graph merge ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
+swarmvault merge-graphs ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
 swarmvault graph push neo4j --dry-run
+swarmvault clone https://github.com/owner/repo --no-viz
 ```
 
-ローカル repo、公開 GitHub repo、docs ツリーを最短で一度見たい場合は、`swarmvault scan ./path --no-serve` または `swarmvault scan https://github.com/owner/repo --branch main --no-serve` を使います。現在のディレクトリを vault として初期化し、その入力を取り込み、compile まで実行し、`--no-serve` ならグラフビューアは起動しません。`wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` も残るため、`swarmvault graph share --post` で短い共有用サマリーを出力し、`swarmvault graph share --svg ./share-card.svg` でビジュアルカードを生成し、`swarmvault graph share --bundle ./share-kit` で markdown、投稿テキスト、SVG、自包含 HTML preview、JSON metadata を含む portable folder を作成できます。
+ローカル repo、公開 GitHub repo、docs ツリーを最短で一度見たい場合は、`swarmvault scan ./path --no-serve`、`swarmvault scan ./path --no-viz`、または `swarmvault clone https://github.com/owner/repo --branch main --no-viz` を使います。現在のディレクトリを vault として初期化し、その入力を取り込み、compile まで実行し、artifacts だけ必要な場合はグラフビューアを起動しません。compile 後に MCP stdio server に入る場合は `scan --mcp` または `clone --mcp` を使います。`wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` も残るため、`swarmvault graph share --post` で短い共有用サマリーを出力し、`swarmvault graph share --svg ./share-card.svg` でビジュアルカードを生成し、`swarmvault graph share --bundle ./share-kit` で markdown、投稿テキスト、SVG、自包含 HTML preview、JSON metadata を含む portable folder を作成できます。
 
 `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>` は、次の agent 作業に必要なページ、ノード、エッジ、根拠を token 予算内にまとめます。出力形式は `--format markdown|json|llms` で選べ、保存済み bundle は `swarmvault context list` と `swarmvault context show <id>` で再利用できます。長めの作業では `swarmvault task start "<goal>" --target <path-or-node>` で永続 task ledger を作成し、`task update` で notes、decisions、changed paths、linked packs を記録し、`task resume <id>` で次の agent 向け handoff を出力します。既存の `memory` commands と `--memory <id>` flags は同じ task ledger の互換 alias として残ります。
 
@@ -431,7 +434,7 @@ clawhub install swarmvault
 
 **ビジュアル + 投稿しやすい share kit** - すべての compile が `wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` を生成します。`swarmvault graph share --post` は短いテキストを出力し、`swarmvault graph share --svg [path]` は 1200x630 のビジュアルカードを書き出し、`swarmvault graph share --bundle [dir]` は markdown、投稿テキスト、SVG、HTML preview、JSON metadata を書き出して、投稿、リンク共有、スクリーンショットに使いやすくします。
 
-**graph blast radius、status、stats、validation、refresh、query filters、tree、merge、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph status [path]` は graph/report artifacts と tracked repo changes の stale 状態を read-only で確認します。`check-update [path]` は同じ cron-safe status check の top-level compatibility alias です。`graph stats` は軽量な counts と relation mix を出力し、`graph validate [graph] --strict` は export/merge/push workflow の前に duplicate id、dangling reference、confidence range、conflicted-edge evidence を検査します。`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、node/edge が 25% を超えて減る場合は明示的な `--force` がない限り停止します。`update [path]` は top-level compatibility alias です。`graph query` は relation、context group、evidence class、node type、language で traversal を絞り込めます。`graph tree` は expand/collapse controls と node inspector 付きの interactive source/module/symbol HTML tree を書き出し、`graph merge` は SwarmVault または node-link JSON graph を namespace 付きの 1 つの artifact に統合します。`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`cluster-only [vault]` は top-level compatibility alias です。`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。`graph export --neo4j <path>` は Neo4j import 前に使う Cypher export alias です。
+**graph blast radius、status、stats、validation、refresh、query filters、tree、merge、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph status [path]` は graph/report artifacts と tracked repo changes の stale 状態を read-only で確認します。`check-update [path]` は同じ cron-safe status check の top-level compatibility alias です。`graph stats` は軽量な counts と relation mix を出力し、`graph validate [graph] --strict` は export/merge/push workflow の前に duplicate id、dangling reference、confidence range、conflicted-edge evidence を検査します。`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、node/edge が 25% を超えて減る場合は明示的な `--force` がない限り停止します。`update [path]` は top-level compatibility alias です。`watch [path] --once` は watch config に保存せずに 1 つの repo root を対象にできます。`graph query` は relation、context group、evidence class、node type、language で traversal を絞り込めます。`graph tree` は expand/collapse controls と node inspector 付きの interactive source/module/symbol HTML tree を書き出し、`tree` は top-level alias です。`graph merge` は SwarmVault または node-link JSON graph を namespace 付きの 1 つの artifact に統合し、`merge-graphs` は top-level alias です。`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`cluster-only [vault]` は top-level compatibility alias です。`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。`graph export --neo4j <path>` は Neo4j import 前に使う Cypher export alias です。
 
 **グラフ diff** - `swarmvault diff` は現在のナレッジグラフを最後にコミットされたバージョンと比較し、追加/削除されたノード、エッジ、ページを表示して、compile で何が変わったかを正確に確認できます。
 

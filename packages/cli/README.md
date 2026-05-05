@@ -73,6 +73,7 @@ swarmvault update .
 swarmvault graph cluster
 swarmvault cluster-only
 swarmvault graph tree --output ./exports/tree.html
+swarmvault tree --output ./exports/tree.html
 swarmvault graph query "Which nodes bridge the biggest clusters?"
 swarmvault graph explain "concept:drift"
 swarmvault watch status
@@ -84,7 +85,9 @@ swarmvault graph export --html ./exports/graph.html
 swarmvault graph export --cypher ./exports/graph.cypher
 swarmvault graph export --neo4j ./exports/graph.cypher
 swarmvault graph merge ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
+swarmvault merge-graphs ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
 swarmvault graph push neo4j --dry-run
+swarmvault clone https://github.com/owner/repo --no-viz
 ```
 
 ## Commands
@@ -110,7 +113,7 @@ Set `SWARMVAULT_OUT=<dir>` when generated artifacts should be isolated from the 
 
 `--profile` accepts `default`, `personal-research`, or a comma-separated preset list such as `reader,timeline`. For fully custom vault behavior, edit the `profile` block in `swarmvault.config.json`; that deterministic profile layer works alongside the human-written `swarmvault.schema.md`. The `personal-research` preset also sets `profile.guidedIngestDefault: true` and `profile.deepLintDefault: true`, so guided ingest/source and lint flows are on by default until you override them with `--no-guide` or `--no-deep`.
 
-### `swarmvault scan <directory|github-url> [--port <port>] [--no-serve] [--branch <name>] [--ref <ref>] [--checkout-dir <path>]`
+### `swarmvault scan <directory|github-url> [--port <port>] [--no-serve] [--no-viz] [--mcp] [--branch <name>] [--ref <ref>] [--checkout-dir <path>]`
 
 Quick-start a scratch vault from a local directory or public GitHub repo root URL in one command.
 
@@ -118,11 +121,21 @@ Quick-start a scratch vault from a local directory or public GitHub repo root UR
 - ingests the supplied directory as local sources, or registers/syncs the supplied public GitHub repo root URL
 - compiles the vault immediately
 - writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`, then prints the paths
-- starts `graph serve` unless you pass `--no-serve`
+- starts `graph serve` unless you pass `--no-serve` or `--no-viz`
+- `--no-viz` is a compatibility alias for `--no-serve`
+- `--mcp` starts the MCP stdio server after compile instead of the graph viewer
 - respects `--port` when you want a specific viewer port
 - for GitHub repo URLs, supports `--branch`, `--ref`, and `--checkout-dir`
 
 Use this when you want the fastest repo or docs-tree walkthrough without first deciding on managed-source registration.
+
+### `swarmvault clone <directory|github-url> [--no-viz] [--mcp] [--branch <name>] [--ref <ref>] [--checkout-dir <path>]`
+
+Compatibility alias for `swarmvault scan`.
+
+- initializes, ingests or registers the input, and compiles in one command
+- supports the same public GitHub repo checkout flags as `scan`
+- accepts `--no-serve`, `--no-viz`, `--mcp`, and `--port`
 
 ### `swarmvault demo [--port <port>] [--no-serve]`
 
@@ -440,6 +453,13 @@ Write a collapsible HTML source tree for the current `state/graph.json`.
 - `--max-children` caps very wide folders or modules with a `+N more` row
 - `--json` returns the output path, source count, node count, and tree payload
 
+### `swarmvault tree [--output <html>] [--root <path>] [--label <name>] [--max-children <n>]`
+
+Compatibility alias for `swarmvault graph tree`.
+
+- writes the same source/module/symbol tree
+- returns the same JSON shape as `graph tree`
+
 ### `swarmvault graph merge <graph...> --out <path> [--label <name>]`
 
 Merge multiple graph JSON files into one namespaced graph artifact.
@@ -449,6 +469,13 @@ Merge multiple graph JSON files into one namespaced graph artifact.
 - prefixes ids from every input to avoid collisions
 - maps explicit extracted/inferred/ambiguous edge evidence into SwarmVault edge semantics
 - `--json` returns the merged graph, input summaries, and warnings
+
+### `swarmvault merge-graphs <graph...> --out <path> [--label <name>]`
+
+Compatibility alias for `swarmvault graph merge`.
+
+- accepts the same SwarmVault and NetworkX/node-link graph inputs
+- returns the same JSON shape as `graph merge`
 
 ### `swarmvault graph status [path]`
 
@@ -460,6 +487,15 @@ Read-only graph freshness check for tracked repo roots or one explicit repo path
 - recommends `swarmvault graph update` for code-only graph drift
 - recommends `swarmvault compile` when graph/report artifacts are missing, non-code files changed, or a semantic refresh is pending
 - supports global `--json` for automation
+
+### `swarmvault watch [path] [--once] [--code-only] [--lint]`
+
+Watch or refresh one explicit repo root without first writing `watch.repoRoots`.
+
+- positional `[path]` is treated as a repo-root override and turns on repo mode
+- `--once` runs one refresh cycle and exits
+- `--code-only` limits the refresh to parser-backed repo graph artifacts
+- repeated `--root <path>` remains available when you need multiple roots
 
 ### `swarmvault graph stats`
 

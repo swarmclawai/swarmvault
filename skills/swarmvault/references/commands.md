@@ -8,6 +8,9 @@ swarmvault init
 swarmvault init --obsidian --profile personal-research
 swarmvault init --obsidian --profile reader,timeline
 swarmvault scan ./apps/api --no-serve
+swarmvault scan ./apps/api --no-viz
+swarmvault clone https://github.com/owner/repo --branch main --no-viz
+swarmvault clone https://github.com/owner/repo --mcp
 swarmvault --version
 ```
 
@@ -85,7 +88,9 @@ swarmvault graph update ./src --force
 swarmvault graph refresh
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault graph tree --output ./tree.html
+swarmvault tree --output ./tree.html
 swarmvault graph merge ./graph.json ./other-graph.json --out ./merged-graph.json
+swarmvault merge-graphs ./graph.json ./other-graph.json --out ./merged-graph.json
 swarmvault graph export --html ./graph.html
 swarmvault graph export --report ./graph-report.html
 swarmvault graph export --html ./graph.html --full
@@ -104,6 +109,7 @@ swarmvault watch --lint --repo
 swarmvault watch --repo --code-only --once
 swarmvault graph status .
 swarmvault check-update .
+swarmvault watch ./src --once --code-only
 swarmvault graph validate --strict
 swarmvault graph update .
 swarmvault update .

@@ -1418,6 +1418,17 @@ try {
       const html = await fs.readFile(outputPath, "utf8");
       assert.ok(html.includes("data:"), "graph export did not embed local asset data");
 
+      const treeAliasPath = path.join(exportDir, "tree-alias.html");
+      const treeAlias = await runCliJson(["tree", "--output", treeAliasPath]);
+      assert.equal(treeAlias.outputPath, treeAliasPath, "tree alias returned an unexpected output path");
+      await assertExists(treeAliasPath);
+
+      const graphPath = path.join(workspaceDir, "state", "graph.json");
+      const mergedAliasPath = path.join(exportDir, "merged-alias.json");
+      const mergedAlias = await runCliJson(["merge-graphs", graphPath, graphPath, "--out", mergedAliasPath]);
+      assert.equal(mergedAlias.outputPath, mergedAliasPath, "merge-graphs alias returned an unexpected output path");
+      await assertExists(mergedAliasPath);
+
       const svg = await runCliJson(["graph", "export", "--svg", svgPath]);
       const graphml = await runCliJson(["graph", "export", "--graphml", graphMlPath]);
       const cypher = await runCliJson(["graph", "export", "--cypher", cypherPath]);
@@ -1633,6 +1644,9 @@ try {
         (cycle.pendingSemanticRefreshPaths ?? []).some((entry) => entry.endsWith("guide.md")),
         "watch --repo --once did not report the pending semantic refresh path"
       );
+      const positionalCycle = await runCliJson(["watch", ".", "--once", "--code-only"]);
+      assert.ok(Array.isArray(positionalCycle.watchedRepoRoots), "watch path --once did not return watched roots");
+      assert.ok(positionalCycle.watchedRepoRoots.length >= 1, "watch path --once did not use the positional repo root");
       const status = await runCliJson(["watch", "status"]);
       assert.ok(Array.isArray(status.pendingSemanticRefresh), "watch status did not return pendingSemanticRefresh");
       assert.ok(

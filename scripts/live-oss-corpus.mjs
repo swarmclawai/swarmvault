@@ -256,6 +256,31 @@ try {
           )
         ).stdout
       );
+      const treeAliasResult = JSON.parse(
+        (
+          await runInstalledCliCommand(
+            `${repo.id}-tree-alias`,
+            ["--json", "tree", "--output", path.join(repoArtifactDir, "tree.html")],
+            { cwd: vaultDir, logsDir: repoLogsDir, timeoutMs: 60_000 }
+          )
+        ).stdout
+      );
+      const mergeGraphsResult = JSON.parse(
+        (
+          await runInstalledCliCommand(
+            `${repo.id}-merge-graphs`,
+            [
+              "--json",
+              "merge-graphs",
+              path.join(vaultDir, "state", "graph.json"),
+              path.join(vaultDir, "state", "graph.json"),
+              "--out",
+              path.join(repoArtifactDir, "merged.json")
+            ],
+            { cwd: vaultDir, logsDir: repoLogsDir, timeoutMs: 60_000 }
+          )
+        ).stdout
+      );
 
       const graph = await readJson(path.join(vaultDir, "state", "graph.json"));
       const report = await readJson(path.join(vaultDir, "wiki", "graph", "report.json"));
@@ -281,7 +306,9 @@ try {
         clusterOnly,
         query,
         exportResult,
-        neo4jExportResult
+        neo4jExportResult,
+        treeAliasResult,
+        mergeGraphsResult
       });
 
       Object.assign(result, {
@@ -595,6 +622,14 @@ function applyAssertions(repo, input) {
   assert.ok(
     typeof input.neo4jExportResult.outputPath === "string" && input.neo4jExportResult.outputPath.endsWith(".cypher"),
     `${repo.id}: neo4j export alias did not return a cypher output path`
+  );
+  assert.ok(
+    typeof input.treeAliasResult.outputPath === "string" && input.treeAliasResult.outputPath.endsWith("tree.html"),
+    `${repo.id}: tree alias did not return a tree output path`
+  );
+  assert.ok(
+    typeof input.mergeGraphsResult.outputPath === "string" && input.mergeGraphsResult.outputPath.endsWith("merged.json"),
+    `${repo.id}: merge-graphs alias did not return a merged output path`
   );
 }
 

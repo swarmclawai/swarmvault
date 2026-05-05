@@ -180,6 +180,7 @@ swarmvault update ./src
 swarmvault graph cluster
 swarmvault cluster-only
 swarmvault graph tree --output ./exports/tree.html
+swarmvault tree --output ./exports/tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
@@ -191,10 +192,12 @@ swarmvault graph export --report ./exports/report.html
 swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault graph export --neo4j ./exports/graph.cypher
 swarmvault graph merge ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
+swarmvault merge-graphs ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
 swarmvault graph push neo4j --dry-run
+swarmvault clone https://github.com/owner/repo --no-viz
 ```
 
-想要对本地仓库、公开 GitHub 仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve` 或 `swarmvault scan https://github.com/owner/repo --branch main --no-serve` 会将当前目录初始化为 vault，导入该输入并完成编译；加上 `--no-serve` 时不会启动图谱查看器。它还会留下 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`，之后运行 `swarmvault graph share --post` 可复制紧凑摘要，运行 `swarmvault graph share --svg ./share-card.svg` 可生成可视化卡片，或运行 `swarmvault graph share --bundle ./share-kit` 写出包含 markdown、发布文本、SVG、自包含 HTML 预览和 JSON 元数据的便携目录。
+想要对本地仓库、公开 GitHub 仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve`、`swarmvault scan ./path --no-viz` 或 `swarmvault clone https://github.com/owner/repo --branch main --no-viz` 会将当前目录初始化为 vault，导入该输入并完成编译；只需要 artifacts 时不会启动图谱查看器。需要编译后直接进入 MCP stdio server 时，用 `scan --mcp` 或 `clone --mcp`。它还会留下 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`，之后运行 `swarmvault graph share --post` 可复制紧凑摘要，运行 `swarmvault graph share --svg ./share-card.svg` 可生成可视化卡片，或运行 `swarmvault graph share --bundle ./share-kit` 写出包含 markdown、发布文本、SVG、自包含 HTML 预览和 JSON 元数据的便携目录。
 
 需要把有边界的上下文交给 agent？`swarmvault context build "Ship this feature safely" --target ./src --budget 8000` 会把图谱遍历、本地搜索命中、freshness、evidence class 和引用合成为保存下来的 context pack。`--format llms` 会输出类似 `llms.txt` 的 handoff，`context list` 可查看历史 pack，`context show <id>` 可重新打印。对于持续更久的工作，`swarmvault task start "<goal>" --target <path-or-node>` 会创建持久任务账本，`task update` 记录 note、decision、changed path 和关联 pack，`task resume <id>` 输出下一个 agent 可接手的 handoff。既有的 `memory` 命令和 `--memory <id>` 仍作为兼容别名可用。
 
@@ -429,7 +432,7 @@ clawhub install swarmvault
 
 **可视化 + 可直接发布的 share kit** - 每次 compile 都会写入 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`；`swarmvault graph share --post` 会打印简短文本，`swarmvault graph share --svg [path]` 会写出 1200x630 的可视化卡片，`swarmvault graph share --bundle [dir]` 会写出 markdown、发布文本、SVG、HTML 预览和 JSON 元数据，便于发布、链接或截图。
 
-**图谱 blast radius、status、stats、validation、refresh、查询过滤、tree、merge、聚类与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph status [path]` 会只读检查 graph/report artifacts 与已跟踪 repo 改动是否 stale，`check-update [path]` 是同一 cron-safe status check 的顶层兼容 alias。`graph stats` 会输出轻量级计数与 relation mix，`graph validate [graph] --strict` 会在 export/merge/push 工作流前检查重复 id、悬空引用、confidence 范围与 conflicted-edge evidence；`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，并默认阻止节点或边数下降超过 25% 的刷新，除非显式传入 `--force`，`update [path]` 是顶层兼容 alias。`graph query` 可按 relation、context group、evidence class、node type 或 language 过滤 traversal；`graph tree` 会写出带 expand/collapse 控件与节点 inspector 的交互式 source/module/symbol HTML 树；`graph merge` 会把 SwarmVault 或 node-link JSON 图谱合并为带命名空间的单一 artifact；`graph cluster [--resolution <n>]` 可以在不重新 ingest 的情况下基于现有 graph 重新计算 communities、degree、god-node 标记与 graph report 页面，`cluster-only [vault]` 是顶层兼容 alias。`graph export --report` 会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警；`graph export --neo4j <path>` 是导入 Neo4j 前使用的 Cypher export alias。
+**图谱 blast radius、status、stats、validation、refresh、查询过滤、tree、merge、聚类与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph status [path]` 会只读检查 graph/report artifacts 与已跟踪 repo 改动是否 stale，`check-update [path]` 是同一 cron-safe status check 的顶层兼容 alias。`graph stats` 会输出轻量级计数与 relation mix，`graph validate [graph] --strict` 会在 export/merge/push 工作流前检查重复 id、悬空引用、confidence 范围与 conflicted-edge evidence；`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，并默认阻止节点或边数下降超过 25% 的刷新，除非显式传入 `--force`，`update [path]` 是顶层兼容 alias。`watch [path] --once` 可针对单个 repo root 刷新而不写入 watch config。`graph query` 可按 relation、context group、evidence class、node type 或 language 过滤 traversal；`graph tree` 会写出带 expand/collapse 控件与节点 inspector 的交互式 source/module/symbol HTML 树，`tree` 是顶层 alias；`graph merge` 会把 SwarmVault 或 node-link JSON 图谱合并为带命名空间的单一 artifact，`merge-graphs` 是顶层 alias；`graph cluster [--resolution <n>]` 可以在不重新 ingest 的情况下基于现有 graph 重新计算 communities、degree、god-node 标记与 graph report 页面，`cluster-only [vault]` 是顶层兼容 alias。`graph export --report` 会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警；`graph export --neo4j <path>` 是导入 Neo4j 前使用的 Cypher export alias。
 
 **图谱 diff** - `swarmvault diff` 将当前知识图谱与上次提交的版本进行对比，显示新增/移除的节点、边和页面，让你清楚看到每次 compile 改变了什么。
 
