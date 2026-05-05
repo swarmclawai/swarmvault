@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 3.8.0
+
+- Added parser-backed Julia and Verilog/SystemVerilog analysis via packaged WASM grammars, including symbols, imports, calls, module/interface/package extraction, and SystemVerilog instantiation relations. R sources remain detected with an explicit parser-asset diagnostic until a safe packaged grammar is available.
+- Added dynamic `import()` extraction for JavaScript and TypeScript so async module edges resolve through the existing code index and tsconfig path aliases.
+- Added relation-aware graph query filters across CLI, MCP, and shared traversal: `--relation`, `--context`, `--evidence`, `--node-type`, and `--language`.
+- Upgraded `swarmvault graph tree` to an interactive self-contained HTML tree with expand/collapse/reset controls, count badges, selected-node metadata, and connected-edge inspection.
+- Added provider-analysis chunking for long non-code sources so large PDFs, transcripts, books, and markdown exports are analyzed in bounded model calls and merged deterministically.
+- Hardened directory ingest with cascading nested `.gitignore` support and `.swarmvaultinclude` allowlists while keeping hard ignores such as `.git` and `.venv` non-bypassable.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.8.0`.
+
 ## 3.7.3
 
 - Made the `viewer` config block optional with a default port of `4123`. `swarmvault init` (and any other command that loads the workspace config) used to fail with a raw Zod error against partial or hand-edited `swarmvault.config.json` files that omitted the `viewer` block; older configs now load cleanly.

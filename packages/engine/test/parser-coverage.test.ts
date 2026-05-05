@@ -77,10 +77,76 @@ describe("parser-backed language coverage", () => {
     expect(graph.edges.some((edge) => edge.source === svelteModule?.id && edge.relation === "imports")).toBe(true);
   });
 
-  it("emits explicit diagnostics when a detected language has no packaged parser asset", async () => {
-    const analysis = await analyzeCodeSource(manifestFor("analysis.jl", "julia"), "function f(x)\n  x + 1\nend\n", "schema");
+  it("extracts Julia modules, imports, symbols, and calls through tree-sitter", async () => {
+    const analysis = await analyzeCodeSource(
+      manifestFor("analysis.jl", "julia"),
+      [
+        "module MathKit",
+        "export addtwice",
+        "using Statistics",
+        "import LinearAlgebra: norm",
+        "struct Counter",
+        "  value::Int",
+        "end",
+        "macro trace(ex)",
+        "  return ex",
+        "end",
+        "function addtwice(x)",
+        "  helper(x) + helper(x)",
+        "end",
+        "helper(x)=x+1",
+        "end"
+      ].join("\n"),
+      "schema"
+    );
 
     expect(analysis.code?.language).toBe("julia");
+    expect(analysis.code?.diagnostics).toEqual([]);
+    expect(analysis.code?.moduleName).toBe("MathKit");
+    expect(analysis.code?.imports.map((item) => item.specifier).sort()).toEqual(["LinearAlgebra", "Statistics"]);
+    expect(analysis.code?.symbols.map((symbol) => symbol.name).sort()).toEqual(["Counter", "addtwice", "helper", "trace"]);
+    expect(analysis.code?.symbols.find((symbol) => symbol.name === "addtwice")?.calls).toContain("helper");
+  });
+
+  it("extracts SystemVerilog packages, modules, imports, instantiations, and calls through tree-sitter", async () => {
+    const analysis = await analyzeCodeSource(
+      manifestFor("counter.sv", "systemverilog"),
+      [
+        "package math_pkg;",
+        "  function automatic int add(input int a, input int b);",
+        "    return a + b;",
+        "  endfunction",
+        "endpackage",
+        "",
+        "interface bus_if(input logic clk);",
+        "  logic valid;",
+        "endinterface",
+        "",
+        "module counter(input logic clk);",
+        "  import math_pkg::add;",
+        "  bus_if bus(clk);",
+        "  always_ff @(posedge clk) begin",
+        "    add(1, 2);",
+        "  end",
+        "endmodule"
+      ].join("\n"),
+      "schema"
+    );
+
+    expect(analysis.code?.language).toBe("systemverilog");
+    expect(analysis.code?.diagnostics).toEqual([]);
+    expect(analysis.code?.symbols.map((symbol) => symbol.name).sort()).toEqual(["add", "bus_if", "counter", "math_pkg"]);
+    expect(analysis.code?.imports.map((item) => item.specifier)).toContain("math_pkg::add");
+    expect(analysis.code?.relations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ sourceName: "counter", targetName: "bus_if", relation: "instantiates" })])
+    );
+    expect(analysis.code?.symbols.find((symbol) => symbol.name === "counter")?.calls).toContain("add");
+  });
+
+  it("keeps R on the explicit parser diagnostic path until a packaged grammar is available", async () => {
+    const analysis = await analyzeCodeSource(manifestFor("analysis.R", "r"), "run <- function(x) x + 1\n", "schema");
+
+    expect(analysis.code?.language).toBe("r");
     expect(analysis.code?.diagnostics[0]?.message).toContain("No packaged parser asset");
   });
 });

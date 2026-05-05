@@ -85,6 +85,7 @@ const DEFAULT_MAX_ASSET_SIZE = 10 * 1024 * 1024;
 const DEFAULT_MAX_DIRECTORY_FILES = 5000;
 const HARD_REPO_IGNORES = new Set([".git", ".venv"]);
 const SWARMVAULT_IGNORE_FILENAME = ".swarmvaultignore";
+const SWARMVAULT_INCLUDE_FILENAME = ".swarmvaultinclude";
 const VCS_BOUNDARY_DIRS = new Set([".git", ".hg", ".svn"]);
 const PROGRESS_FILE_THRESHOLD = 150;
 const PROGRESS_UPDATE_INTERVAL = 100;
@@ -1552,19 +1553,6 @@ async function readManifestByOrigin(manifestsDir: string, prepared: PreparedInpu
   return manifests.find((manifest) => manifestMatchesOriginPart(manifest, prepared)) ?? null;
 }
 
-async function loadGitignoreMatcher(repoRoot: string, enabled: boolean) {
-  if (!enabled) {
-    return null;
-  }
-  const gitignorePath = path.join(repoRoot, ".gitignore");
-  if (!(await fileExists(gitignorePath))) {
-    return null;
-  }
-  const matcher = ignore();
-  matcher.add(await fs.readFile(gitignorePath, "utf8"));
-  return matcher;
-}
-
 async function hasVcsBoundary(dir: string): Promise<boolean> {
   for (const name of VCS_BOUNDARY_DIRS) {
     if (await fileExists(path.join(dir, name))) {
@@ -1574,14 +1562,19 @@ async function hasVcsBoundary(dir: string): Promise<boolean> {
   return false;
 }
 
-type SwarmvaultIgnoreMatcher = {
+type CascadingMatcher = {
   anchorDir: string;
   matchInputRelative: boolean;
   matcher: ReturnType<typeof ignore>;
 };
 
-async function loadSwarmvaultIgnoreMatchers(inputDir: string, repoRoot: string, enabled: boolean): Promise<SwarmvaultIgnoreMatcher[]> {
-  if (!enabled) {
+async function loadCascadingMatchers(
+  inputDir: string,
+  repoRoot: string,
+  filename: string,
+  options: { enabled?: boolean; matchInputRelativeFromParents?: boolean } = {}
+): Promise<CascadingMatcher[]> {
+  if (options.enabled === false) {
     return [];
   }
 
@@ -1602,20 +1595,51 @@ async function loadSwarmvaultIgnoreMatchers(inputDir: string, repoRoot: string, 
     current = parent;
   }
 
-  const matchers: SwarmvaultIgnoreMatcher[] = [];
+  const matchers: CascadingMatcher[] = [];
   for (const dir of dirs.reverse()) {
-    const ignorePath = path.join(dir, SWARMVAULT_IGNORE_FILENAME);
-    if (!(await fileExists(ignorePath))) {
+    const matcherPath = path.join(dir, filename);
+    if (!(await fileExists(matcherPath))) {
       continue;
     }
     const matcher = ignore();
-    matcher.add(await fs.readFile(ignorePath, "utf8"));
-    matchers.push({ anchorDir: dir, matchInputRelative: dir !== start, matcher });
+    matcher.add(await fs.readFile(matcherPath, "utf8"));
+    matchers.push({
+      anchorDir: dir,
+      matchInputRelative: Boolean(options.matchInputRelativeFromParents && dir !== start),
+      matcher
+    });
   }
   return matchers;
 }
 
-function swarmvaultIgnoreMatches(absolutePath: string, inputDir: string, matchers: SwarmvaultIgnoreMatcher[]): boolean {
+async function appendLocalMatcher(
+  matchers: CascadingMatcher[],
+  currentDir: string,
+  filename: string,
+  matchInputRelative: boolean
+): Promise<CascadingMatcher[]> {
+  if (matchers.some((entry) => entry.anchorDir === currentDir)) {
+    return matchers;
+  }
+  const matcherPath = path.join(currentDir, filename);
+  if (!(await fileExists(matcherPath))) {
+    return matchers;
+  }
+  const matcher = ignore();
+  matcher.add(await fs.readFile(matcherPath, "utf8"));
+  return [...matchers, { anchorDir: currentDir, matchInputRelative, matcher }];
+}
+
+async function loadSwarmvaultIgnoreMatchers(inputDir: string, repoRoot: string, enabled: boolean): Promise<CascadingMatcher[]> {
+  if (!enabled) {
+    return [];
+  }
+  return loadCascadingMatchers(inputDir, repoRoot, SWARMVAULT_IGNORE_FILENAME, {
+    matchInputRelativeFromParents: true
+  });
+}
+
+function cascadingMatcherMatches(absolutePath: string, inputDir: string, matchers: CascadingMatcher[]): boolean {
   return matchers.some(({ anchorDir, matchInputRelative, matcher }) => {
     const relativeToAnchor = toPosix(path.relative(anchorDir, absolutePath));
     if (withinRoot(anchorDir, absolutePath) && relativeToAnchor && matcher.ignores(relativeToAnchor)) {
@@ -1627,6 +1651,10 @@ function swarmvaultIgnoreMatches(absolutePath: string, inputDir: string, matcher
     const relativeToInput = toPosix(path.relative(inputDir, absolutePath));
     return Boolean(relativeToInput && matcher.ignores(relativeToInput));
   });
+}
+
+function isAllowlisted(absolutePath: string, inputDir: string, includeMatchers: CascadingMatcher[]): boolean {
+  return cascadingMatcherMatches(absolutePath, inputDir, includeMatchers);
 }
 
 function builtInIgnoreReason(relativePath: string): string | null {
@@ -1648,11 +1676,19 @@ async function collectDirectoryFiles(
   repoRoot: string,
   options: NormalizedIngestOptions
 ): Promise<{ files: string[]; skipped: DirectoryIngestResult["skipped"] }> {
-  const matcher = await loadGitignoreMatcher(repoRoot, options.gitignore);
+  const gitignoreMatchers = await loadCascadingMatchers(inputDir, repoRoot, ".gitignore", { enabled: options.gitignore });
   const swarmvaultIgnoreMatchers = await loadSwarmvaultIgnoreMatchers(inputDir, repoRoot, options.swarmvaultignore);
+  const includeMatchers = await loadCascadingMatchers(inputDir, repoRoot, SWARMVAULT_INCLUDE_FILENAME, {
+    matchInputRelativeFromParents: true
+  });
   const skipped: DirectoryIngestResult["skipped"] = [];
   const files: string[] = [];
-  const stack: Array<{ dir: string; matchers: typeof swarmvaultIgnoreMatchers }> = [{ dir: inputDir, matchers: swarmvaultIgnoreMatchers }];
+  const stack: Array<{
+    dir: string;
+    gitignoreMatchers: typeof gitignoreMatchers;
+    swarmvaultIgnoreMatchers: typeof swarmvaultIgnoreMatchers;
+    includeMatchers: typeof includeMatchers;
+  }> = [{ dir: inputDir, gitignoreMatchers, swarmvaultIgnoreMatchers, includeMatchers }];
 
   while (stack.length > 0) {
     const current = stack.pop();
@@ -1660,20 +1696,21 @@ async function collectDirectoryFiles(
       continue;
     }
     const currentDir = current.dir;
-    let currentSwarmvaultIgnoreMatchers = current.matchers;
-    const localSwarmvaultIgnorePath = path.join(currentDir, SWARMVAULT_IGNORE_FILENAME);
-    if (
-      options.swarmvaultignore &&
-      !currentSwarmvaultIgnoreMatchers.some((entry) => entry.anchorDir === currentDir) &&
-      (await fileExists(localSwarmvaultIgnorePath))
-    ) {
-      const localMatcher = ignore();
-      localMatcher.add(await fs.readFile(localSwarmvaultIgnorePath, "utf8"));
-      currentSwarmvaultIgnoreMatchers = [
-        ...currentSwarmvaultIgnoreMatchers,
-        { anchorDir: currentDir, matchInputRelative: false, matcher: localMatcher }
-      ];
+    let currentGitignoreMatchers = current.gitignoreMatchers;
+    let currentSwarmvaultIgnoreMatchers = current.swarmvaultIgnoreMatchers;
+    let currentIncludeMatchers = current.includeMatchers;
+    if (options.gitignore) {
+      currentGitignoreMatchers = await appendLocalMatcher(currentGitignoreMatchers, currentDir, ".gitignore", false);
     }
+    if (options.swarmvaultignore) {
+      currentSwarmvaultIgnoreMatchers = await appendLocalMatcher(
+        currentSwarmvaultIgnoreMatchers,
+        currentDir,
+        SWARMVAULT_IGNORE_FILENAME,
+        false
+      );
+    }
+    currentIncludeMatchers = await appendLocalMatcher(currentIncludeMatchers, currentDir, SWARMVAULT_INCLUDE_FILENAME, false);
 
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
@@ -1684,6 +1721,10 @@ async function collectDirectoryFiles(
         skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "swarmvaultignore" });
         continue;
       }
+      if (entry.name === SWARMVAULT_INCLUDE_FILENAME) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "swarmvaultinclude" });
+        continue;
+      }
       const relativeToRepo = repoRelativePathFor(absolutePath, repoRoot) ?? toPosix(path.relative(inputDir, absolutePath));
       const relativePath = relativeToRepo || entry.name;
       const builtInReason = builtInIgnoreReason(relativePath);
@@ -1691,21 +1732,28 @@ async function collectDirectoryFiles(
         skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: builtInReason });
         continue;
       }
-      if (matcher?.ignores(relativePath)) {
-        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "gitignore" });
-        continue;
-      }
-      if (swarmvaultIgnoreMatches(absolutePath, inputDir, currentSwarmvaultIgnoreMatchers)) {
-        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "swarmvaultignore" });
-        continue;
-      }
       if (matchesAnyGlob(relativePath, options.exclude)) {
         skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "exclude_glob" });
         continue;
       }
+      const allowlisted = isAllowlisted(absolutePath, inputDir, currentIncludeMatchers);
+      const descendForAllowlist = entry.isDirectory() && currentIncludeMatchers.length > 0;
+      if (cascadingMatcherMatches(absolutePath, inputDir, currentGitignoreMatchers) && !allowlisted && !descendForAllowlist) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "gitignore" });
+        continue;
+      }
+      if (cascadingMatcherMatches(absolutePath, inputDir, currentSwarmvaultIgnoreMatchers) && !allowlisted && !descendForAllowlist) {
+        skipped.push({ path: toPosix(path.relative(rootDir, absolutePath)), reason: "swarmvaultignore" });
+        continue;
+      }
 
       if (entry.isDirectory()) {
-        stack.push({ dir: absolutePath, matchers: currentSwarmvaultIgnoreMatchers });
+        stack.push({
+          dir: absolutePath,
+          gitignoreMatchers: currentGitignoreMatchers,
+          swarmvaultIgnoreMatchers: currentSwarmvaultIgnoreMatchers,
+          includeMatchers: currentIncludeMatchers
+        });
         continue;
       }
       if (!entry.isFile()) {

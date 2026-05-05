@@ -175,6 +175,7 @@ swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault graph tree --output ./exports/tree.html
+swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
@@ -383,7 +384,7 @@ clawhub install swarmvault
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest と軽量な `.rst` 見出し正規化 |
 | 設定 / データ | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | key/value スキーマヒント付きの構造化プレビュー |
 | 開発者マニフェスト | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` など | コンテンツスニッフベースのテキスト ingest —— 一般的な開発設定ファイルが暗黙的に捨てられることはありません |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`、および `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang を持つ拡張子なしスクリプト | packaged parser がある言語は AST/parser ベースの解析とモジュール解決。Svelte は `<script>` block を TypeScript analyzer で nest-parse します。Julia、Verilog/SystemVerilog、R は検出し、packaged WASM grammar がない場合は明示的な parser diagnostic を出します。SQL は table/view ノードと read/write/join/reference edges も追加 |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`、および `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang を持つ拡張子なしスクリプト | packaged parser がある言語は AST/parser ベースの解析とモジュール解決。Svelte は `<script>` block を TypeScript analyzer で nest-parse します。Julia と Verilog/SystemVerilog は packaged WASM grammar を使うようになりました。JavaScript と TypeScript は静的 import と動的 `import()` edge を捕捉します。R は検出し、安全な packaged grammar が利用可能になるまでは明示的な parser-asset diagnostic を出します。SQL は table/view ノードと read/write/join/reference edges も追加 |
 | Browser clips | inbox bundles | `inbox import` によるアセット書き換え済み Markdown |
 | Managed sources | ローカルディレクトリ、公開 GitHub リポジトリ root URL、docs ハブ URL | `swarmvault source add` によるレジストリ同期 |
 
@@ -424,7 +425,7 @@ clawhub install swarmvault
 
 **ビジュアル + 投稿しやすい share kit** - すべての compile が `wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` を生成します。`swarmvault graph share --post` は短いテキストを出力し、`swarmvault graph share --svg [path]` は 1200x630 のビジュアルカードを書き出し、`swarmvault graph share --bundle [dir]` は markdown、投稿テキスト、SVG、HTML preview、JSON metadata を書き出して、投稿、リンク共有、スクリーンショットに使いやすくします。
 
-**graph blast radius、status、refresh、tree、merge、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph status [path]` は graph/report artifacts と tracked repo changes の stale 状態を read-only で確認し、`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、node/edge が 25% を超えて減る場合は明示的な `--force` がない限り停止します。`graph tree` は source/module/symbol の折りたたみ HTML ツリーを書き出し、`graph merge` は SwarmVault または node-link JSON graph を namespace 付きの 1 つの artifact に統合します。`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
+**graph blast radius、status、refresh、query filters、tree、merge、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph status [path]` は graph/report artifacts と tracked repo changes の stale 状態を read-only で確認し、`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、node/edge が 25% を超えて減る場合は明示的な `--force` がない限り停止します。`graph query` は relation、context group、evidence class、node type、language で traversal を絞り込めます。`graph tree` は expand/collapse controls と node inspector 付きの interactive source/module/symbol HTML tree を書き出し、`graph merge` は SwarmVault または node-link JSON graph を namespace 付きの 1 つの artifact に統合します。`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
 
 **グラフ diff** - `swarmvault diff` は現在のナレッジグラフを最後にコミットされたバージョンと比較し、追加/削除されたノード、エッジ、ページを表示して、compile で何が変わったかを正確に確認できます。
 
@@ -457,7 +458,7 @@ clawhub install swarmvault
 
 **外部グラフ連携** - 完全版 HTML、軽量 standalone HTML、self-contained report HTML、SVG、GraphML、Cypher、JSON、Obsidian note bundle、Obsidian canvas にエクスポートでき、Bolt/Aura 経由で Neo4j へライブグラフを直接 push することもできます。共有 DB 上でも `vaultId` により安全に名前空間分離されます。
 
-**大規模リポジトリ向けの堅牢化** - 大きな repo ingest や compile では抑制された進捗表示を出し、parser 互換性の失敗は該当ソースだけに閉じ込めて明示的な診断を残し、code-only repo watch cycle は non-code re-analysis を飛ばし、グラフレポートでは細かすぎるコミュニティをまとめて可読性を保ちます。
+**大規模リポジトリ向けの堅牢化** - 大きな repo ingest や compile では抑制された進捗表示を出し、provider-backed non-code analysis は model call の前に長い抽出テキストを chunk 化します。nested `.gitignore` と `.swarmvaultignore` を尊重し、意図的な例外には `.swarmvaultinclude` allowlist を使えます。parser 互換性の失敗は該当ソースだけに閉じ込めて明示的な診断を残し、code-only repo watch cycle は non-code re-analysis を飛ばし、グラフレポートでは細かすぎるコミュニティをまとめて可読性を保ちます。
 
 各エッジには `extracted`、`inferred`、`ambiguous` のタグが付き、何が実際に見つかった情報で、何が推論かを常に判断できます。
 

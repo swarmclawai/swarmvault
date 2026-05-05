@@ -175,6 +175,7 @@ swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault graph tree --output ./exports/tree.html
+swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
@@ -381,7 +382,7 @@ clawhub install swarmvault
 | Text docs | `.md .mdx .txt .rst .rest` | 直接 ingest，并对 `.rst` 做轻量标题归一化 |
 | 配置 / 数据 | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | 结构化预览，带 key/value schema 提示 |
 | 开发清单文件 | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` 等 | 基于内容嗅探的文本 ingest —— 常见开发配置不会被静默丢弃 |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 有打包 parser 的语言使用 AST/parser-backed 分析与模块解析；Svelte 会通过 TypeScript 分析器解析 `<script>` 块；Julia、Verilog/SystemVerilog 和 R 会被识别，并在缺少打包 WASM grammar 时给出明确诊断；SQL 会生成 table/view 节点以及 read/write/join/reference 边 |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`，以及带有 `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebang 的无扩展名脚本 | 有打包 parser 的语言使用 AST/parser-backed 分析与模块解析；Svelte 会通过 TypeScript 分析器解析 `<script>` 块；Julia 与 Verilog/SystemVerilog 现在使用打包 WASM grammar；JavaScript 与 TypeScript 会捕获静态 import 和动态 `import()` 边；R 会被识别，并在安全的打包 grammar 可用前给出明确 parser-asset 诊断；SQL 会生成 table/view 节点以及 read/write/join/reference 边 |
 | Browser clips | inbox bundles | 通过 `inbox import` 重写资产路径后的 Markdown |
 | Managed sources | 本地目录、公开 GitHub 仓库根 URL、文档中心 URL | 通过 `swarmvault source add` 的 registry 同步 |
 
@@ -422,7 +423,7 @@ clawhub install swarmvault
 
 **可视化 + 可直接发布的 share kit** - 每次 compile 都会写入 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`；`swarmvault graph share --post` 会打印简短文本，`swarmvault graph share --svg [path]` 会写出 1200x630 的可视化卡片，`swarmvault graph share --bundle [dir]` 会写出 markdown、发布文本、SVG、HTML 预览和 JSON 元数据，便于发布、链接或截图。
 
-**图谱 blast radius、status、refresh、tree、merge、聚类与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph status [path]` 会只读检查 graph/report artifacts 与已跟踪 repo 改动是否 stale，`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，并默认阻止节点或边数下降超过 25% 的刷新，除非显式传入 `--force`；`graph tree` 会写出可折叠的 source/module/symbol HTML 树；`graph merge` 会把 SwarmVault 或 node-link JSON 图谱合并为带命名空间的单一 artifact；`graph cluster [--resolution <n>]` 可以在不重新 ingest 的情况下基于现有 graph 重新计算 communities、degree、god-node 标记与 graph report 页面，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
+**图谱 blast radius、status、refresh、查询过滤、tree、merge、聚类与报告导出** - `graph blast <target>` 会沿模块依赖的反向 import 链追踪改动影响范围，`graph status [path]` 会只读检查 graph/report artifacts 与已跟踪 repo 改动是否 stale，`graph update [path]` / `graph refresh [path]` 会为 graph artifacts 运行 code-only repo refresh cycle，并默认阻止节点或边数下降超过 25% 的刷新，除非显式传入 `--force`；`graph query` 可按 relation、context group、evidence class、node type 或 language 过滤 traversal；`graph tree` 会写出带 expand/collapse 控件与节点 inspector 的交互式 source/module/symbol HTML 树；`graph merge` 会把 SwarmVault 或 node-link JSON 图谱合并为带命名空间的单一 artifact；`graph cluster [--resolution <n>]` 可以在不重新 ingest 的情况下基于现有 graph 重新计算 communities、degree、god-node 标记与 graph report 页面，`graph export --report` 则会生成一个自包含的 HTML 图谱报告，展示统计、关键节点、社区和告警。
 
 **图谱 diff** - `swarmvault diff` 将当前知识图谱与上次提交的版本进行对比，显示新增/移除的节点、边和页面，让你清楚看到每次 compile 改变了什么。
 
@@ -455,7 +456,7 @@ clawhub install swarmvault
 
 **外部图谱输出** - 可导出为完整 HTML、轻量 standalone HTML、自包含 report HTML、SVG、GraphML、Cypher、JSON、Obsidian 笔记包或 Obsidian canvas，也可以通过 Bolt/Aura 直接把实时图谱推送到 Neo4j，并用共享数据库安全的 `vaultId` 进行命名空间隔离。
 
-**大型仓库加固** - 面对大批量仓库 ingest 和 compile 时会输出有边界的进度提示；parser 兼容性失败只会影响对应源文件并留下明确诊断；仅代码改动的 repo watch cycle 会跳过非代码重分析；图谱报告会把过于碎片化的小社区折叠展示，保持可读性。
+**大型仓库加固** - 面对大批量仓库 ingest 和 compile 时会输出有边界的进度提示；provider-backed 非代码分析会在模型调用前对超长提取文本分块；嵌套 `.gitignore` 与 `.swarmvaultignore` 会被遵守，并可用 `.swarmvaultinclude` 为有意保留的路径设置 allowlist；parser 兼容性失败只会影响对应源文件并留下明确诊断；仅代码改动的 repo watch cycle 会跳过非代码重分析；图谱报告会把过于碎片化的小社区折叠展示，保持可读性。
 
 每条边都会标记为 `extracted`、`inferred` 或 `ambiguous`，因此你始终知道哪些是明确提取到的，哪些只是推断。
 

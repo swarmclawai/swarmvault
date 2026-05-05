@@ -1,4 +1,10 @@
-import { runCoreGraphExplain, runCoreGraphPath } from "./graph-query-core.js";
+import {
+  coreGraphFilterSummaryLines,
+  filterCoreGraphForQuery,
+  normalizeCoreGraphQueryFilters,
+  runCoreGraphExplain,
+  runCoreGraphPath
+} from "./graph-query-core.js";
 import type {
   BlastRadiusResult,
   EvidenceClass,
@@ -11,6 +17,7 @@ import type {
   GraphNode,
   GraphPage,
   GraphPathResult,
+  GraphQueryFilters,
   GraphQueryMatch,
   GraphQueryResult,
   SearchResult
@@ -216,22 +223,34 @@ export function queryGraph(
     traversal?: "bfs" | "dfs";
     budget?: number;
     semanticMatches?: GraphQueryMatch[];
+    filters?: GraphQueryFilters;
   }
 ): GraphQueryResult {
   const traversal = options?.traversal ?? "bfs";
   const budget = Math.max(3, Math.min(options?.budget ?? 12, 50));
+  const normalizedFilters = normalizeCoreGraphQueryFilters(options?.filters) as GraphQueryFilters | undefined;
+  const filtered = filterCoreGraphForQuery(graph, normalizedFilters);
+  const queryGraph = filtered.graph as GraphArtifact;
+  const filteredNodeIds = new Set(queryGraph.nodes.map((node) => node.id));
+  const filteredPageIds = new Set(queryGraph.pages.map((page) => page.id));
+  const filteredHyperedgeIds = new Set((queryGraph.hyperedges ?? []).map((hyperedge) => hyperedge.id));
+  const semanticMatches = (options?.semanticMatches ?? []).filter((match) => {
+    if (match.type === "node") return filteredNodeIds.has(match.id);
+    if (match.type === "page") return filteredPageIds.has(match.id);
+    return filteredHyperedgeIds.has(match.id);
+  });
   const matches = uniqueBy(
     [
-      ...(options?.semanticMatches ?? []),
-      ...pageSearchMatches(graph, question, searchResults),
-      ...nodeMatches(graph, question),
-      ...hyperedgeMatches(graph, question)
+      ...semanticMatches,
+      ...pageSearchMatches(queryGraph, question, searchResults),
+      ...nodeMatches(queryGraph, question),
+      ...hyperedgeMatches(queryGraph, question)
     ],
     (match) => `${match.type}:${match.id}`
   )
     .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
     .slice(0, 12);
-  const pages = pageById(graph);
+  const pages = pageById(queryGraph);
   const seeds = uniqueBy(
     [
       ...searchResults.flatMap((result) => pages.get(result.pageId)?.nodeIds ?? []),
@@ -239,12 +258,12 @@ export function queryGraph(
       ...matches.filter((match) => match.type === "node").map((match) => match.id),
       ...matches
         .filter((match) => match.type === "hyperedge")
-        .flatMap((match) => graph.hyperedges.find((hyperedge) => hyperedge.id === match.id)?.nodeIds ?? [])
+        .flatMap((match) => queryGraph.hyperedges.find((hyperedge) => hyperedge.id === match.id)?.nodeIds ?? [])
     ],
     (item) => item
   ).filter(Boolean);
 
-  const adjacency = graphAdjacency(graph);
+  const adjacency = graphAdjacency(queryGraph);
   const visitedNodeIds: string[] = [];
   const visitedEdgeIds = new Set<string>();
   const seen = new Set<string>();
@@ -268,7 +287,7 @@ export function queryGraph(
     }
   }
 
-  const nodes = nodeById(graph);
+  const nodes = nodeById(queryGraph);
   const pageIds = uniqueBy(
     [
       ...searchResults.map((result) => result.pageId),
@@ -285,7 +304,7 @@ export function queryGraph(
     (item) => item
   );
   const hyperedgeIds = uniqueBy(
-    (graph.hyperedges ?? [])
+    (queryGraph.hyperedges ?? [])
       .filter((hyperedge) => hyperedge.nodeIds.some((nodeId) => visitedNodeIds.includes(nodeId)))
       .map((hyperedge) => hyperedge.id),
     (item) => item
@@ -309,10 +328,13 @@ export function queryGraph(
       `Seeds: ${seeds.join(", ") || "none"}`,
       `Visited nodes: ${visitedNodeIds.length}`,
       `Visited edges: ${visitedEdgeIds.size}`,
+      ...coreGraphFilterSummaryLines(normalizedFilters, filtered.stats),
       `Touched group patterns: ${hyperedgeIds.length}`,
       `Communities: ${communities.join(", ") || "none"}`,
       `Pages: ${pageIds.join(", ") || "none"}`
-    ].join("\n")
+    ].join("\n"),
+    filters: normalizedFilters,
+    filterStats: filtered.stats
   };
 }
 

@@ -44,7 +44,44 @@ import {
 } from "./vault.js";
 import { getWatchStatus } from "./watch.js";
 
-const SERVER_VERSION = "3.7.3";
+const SERVER_VERSION = "3.8.0";
+const codeLanguageSchema = z.enum([
+  "javascript",
+  "jsx",
+  "typescript",
+  "tsx",
+  "bash",
+  "python",
+  "go",
+  "rust",
+  "java",
+  "kotlin",
+  "scala",
+  "dart",
+  "lua",
+  "zig",
+  "csharp",
+  "c",
+  "cpp",
+  "php",
+  "ruby",
+  "powershell",
+  "swift",
+  "elixir",
+  "ocaml",
+  "objc",
+  "rescript",
+  "solidity",
+  "html",
+  "css",
+  "vue",
+  "svelte",
+  "julia",
+  "verilog",
+  "systemverilog",
+  "r",
+  "sql"
+]);
 
 export async function createMcpServer(rootDir: string): Promise<McpServer> {
   const server = new McpServer({
@@ -164,13 +201,34 @@ export async function createMcpServer(rootDir: string): Promise<McpServer> {
       inputSchema: {
         question: z.string().min(1).describe("Question or graph search seed"),
         traversal: z.enum(["bfs", "dfs"]).optional().describe("Traversal strategy"),
-        budget: z.number().int().min(3).max(50).optional().describe("Maximum nodes to summarize")
+        budget: z.number().int().min(3).max(50).optional().describe("Maximum nodes to summarize"),
+        relations: z.array(z.string().min(1)).optional().describe("Only traverse edges with these relation names"),
+        context: z
+          .array(z.enum(["calls", "imports", "types", "data", "rationale", "evidence"]))
+          .optional()
+          .describe("Relation group filters for common code/evidence contexts"),
+        evidenceClasses: z
+          .array(z.enum(["extracted", "inferred", "ambiguous"]))
+          .optional()
+          .describe("Only traverse these evidence classes"),
+        nodeTypes: z
+          .array(z.enum(["source", "concept", "entity", "module", "symbol", "rationale", "memory_task", "decision"]))
+          .optional()
+          .describe("Prefer traversal around these graph node types"),
+        languages: z.array(codeLanguageSchema).optional().describe("Prefer traversal around nodes with these code languages")
       }
     },
-    safeHandler(async ({ question, traversal, budget }) => {
+    safeHandler(async ({ question, traversal, budget, relations, context, evidenceClasses, nodeTypes, languages }) => {
       const result = await queryGraphVault(rootDir, question, {
         traversal,
-        budget
+        budget,
+        filters: {
+          relations,
+          relationGroups: context,
+          evidenceClasses,
+          nodeTypes,
+          languages
+        }
       });
       return asToolText(result);
     })

@@ -121,6 +121,7 @@ import type {
   GraphNode,
   GraphPage,
   GraphPathResult,
+  GraphQueryFilters,
   GraphQueryResult,
   GraphReportArtifact,
   GraphShareBundleFile,
@@ -6085,6 +6086,7 @@ async function runResolvedGraphQuery(
   options: {
     traversal?: "bfs" | "dfs";
     budget?: number;
+    filters?: GraphQueryFilters;
   } = {}
 ): Promise<GraphQueryResult> {
   const searchResults = await searchVault(rootDir, question, Math.max(5, options.budget ?? 10));
@@ -6101,6 +6103,7 @@ export async function queryGraphVault(
   options: {
     traversal?: "bfs" | "dfs";
     budget?: number;
+    filters?: GraphQueryFilters;
   } = {}
 ): Promise<GraphQueryResult> {
   const question = normalizeWhitespace(rawQuestion);

@@ -131,6 +131,11 @@ describe("graph tree export", () => {
     expect(html).toContain("src");
     expect(html).toContain("app.ts");
     expect(html).toContain("start");
+    expect(html).toContain("expandAll");
+    expect(html).toContain("collapseAll");
+    expect(html).toContain("inspectorTitle");
+    expect(html).toContain("edge:start-app");
+    expect(html).not.toContain("</script><script>");
   });
 });
 

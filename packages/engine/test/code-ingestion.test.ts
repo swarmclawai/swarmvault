@@ -109,6 +109,38 @@ describe("code-aware ingestion", () => {
     expect(modulePage).toContain("diagnostic");
   });
 
+  it("resolves dynamic TypeScript imports through the existing code graph index", async () => {
+    const rootDir = await createTempWorkspace();
+    await initVault(rootDir);
+
+    await fs.mkdir(path.join(rootDir, "src", "features"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@features/*": ["src/features/*"] } } }),
+      "utf8"
+    );
+    await fs.writeFile(path.join(rootDir, "src", "features", "math.ts"), "export function add(a: number, b: number) { return a + b; }\n");
+    await fs.writeFile(
+      path.join(rootDir, "src", "loader.ts"),
+      ["export async function loadMath() {", "  const math = await import('@features/math');", "  return math.add(1, 2);", "}"].join("\n"),
+      "utf8"
+    );
+
+    const ingest = await ingestDirectory(rootDir, rootDir, { repoRoot: rootDir });
+    const loaderManifest = [...ingest.imported, ...ingest.updated].find((manifest) => manifest.originalPath?.endsWith("src/loader.ts"));
+    expect(loaderManifest).toBeDefined();
+    await compileVault(rootDir);
+
+    const loaderAnalysis = JSON.parse(
+      await fs.readFile(path.join(rootDir, "state", "analyses", `${loaderManifest?.sourceId}.json`), "utf8")
+    ) as SourceAnalysis;
+    const dynamicImport = loaderAnalysis.code?.imports.find((item) => item.specifier === "@features/math");
+    expect(dynamicImport?.resolvedRepoPath).toBe("src/features/math.ts");
+
+    const graph = JSON.parse(await fs.readFile(path.join(rootDir, "state", "graph.json"), "utf8")) as GraphArtifact;
+    expect(graph.edges.some((edge) => edge.relation === "imports" && edge.id.includes("@features/math"))).toBe(true);
+  });
+
   it("extracts SQL tables and deterministic read/write relationships into the graph", async () => {
     const rootDir = await createTempWorkspace();
     await initVault(rootDir);

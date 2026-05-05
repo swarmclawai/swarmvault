@@ -25,6 +25,8 @@ import type {
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
 const ANALYSIS_FORMAT_VERSION = 8;
+const PROVIDER_ANALYSIS_TARGET_CHARS = 14000;
+const PROVIDER_ANALYSIS_MAX_CHARS = 18000;
 
 const sourceAnalysisSchema = z.object({
   title: z.string().min(1),
@@ -298,11 +300,131 @@ function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: s
   };
 }
 
-async function providerAnalysis(
+type ProviderAnalysisChunk = {
+  index: number;
+  total: number;
+  text: string;
+};
+
+function splitOversizedBlock(block: string, targetSize: number): string[] {
+  const chunks: string[] = [];
+  for (let index = 0; index < block.length; index += targetSize) {
+    const chunk = block.slice(index, index + targetSize).trim();
+    if (chunk) {
+      chunks.push(chunk);
+    }
+  }
+  return chunks;
+}
+
+function providerAnalysisBlocks(manifest: SourceManifest, text: string): string[] {
+  if (MARKDOWN_RATIONALE_KINDS.has(manifest.sourceKind)) {
+    const nodes = parseMarkdownNodes(text);
+    const markdownBlocks = nodes.map((node) => normalizeWhitespace(markdownNodeText(node))).filter(Boolean);
+    if (markdownBlocks.length) {
+      return markdownBlocks.flatMap((block) =>
+        block.length > PROVIDER_ANALYSIS_MAX_CHARS ? splitOversizedBlock(block, PROVIDER_ANALYSIS_TARGET_CHARS) : [block]
+      );
+    }
+  }
+
+  return text
+    .split(/\n\s*\n/g)
+    .map((block) => normalizeWhitespace(block))
+    .filter(Boolean)
+    .flatMap((block) =>
+      block.length > PROVIDER_ANALYSIS_MAX_CHARS ? splitOversizedBlock(block, PROVIDER_ANALYSIS_TARGET_CHARS) : [block]
+    );
+}
+
+function providerAnalysisChunks(manifest: SourceManifest, text: string): ProviderAnalysisChunk[] {
+  if (text.length <= PROVIDER_ANALYSIS_MAX_CHARS) {
+    return [{ index: 1, total: 1, text }];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+  for (const block of providerAnalysisBlocks(manifest, text)) {
+    const candidate = current ? `${current}\n\n${block}` : block;
+    if (candidate.length <= PROVIDER_ANALYSIS_TARGET_CHARS || !current) {
+      current = candidate;
+      continue;
+    }
+    chunks.push(current);
+    current = block;
+  }
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks.map((chunk, index) => ({
+    index: index + 1,
+    total: chunks.length,
+    text: chunk
+  }));
+}
+
+function uniqueTerms<T extends { name: string }>(terms: T[], limit: number): T[] {
+  return uniqueBy(terms, (term) => term.name.toLowerCase()).slice(0, limit);
+}
+
+function mergeProviderChunkAnalyses(manifest: SourceManifest, schemaHash: string, chunks: SourceAnalysis[]): SourceAnalysis {
+  const concepts = uniqueTerms(
+    chunks.flatMap((chunk) => chunk.concepts),
+    12
+  );
+  const entities = uniqueTerms(
+    chunks.flatMap((chunk) => chunk.entities),
+    12
+  );
+  const claims = chunks
+    .flatMap((chunk) => chunk.claims)
+    .slice(0, 8)
+    .map((claim, index) => ({
+      ...claim,
+      id: `claim:${manifest.sourceId}:${index + 1}`
+    }));
+  const questions = uniqueBy(
+    chunks.flatMap((chunk) => chunk.questions),
+    (question) => question.toLowerCase()
+  ).slice(0, 6);
+  const tags = uniqueBy(
+    chunks.flatMap((chunk) => chunk.tags),
+    (tag) => tag.toLowerCase()
+  ).slice(0, 5);
+  const summary = firstSentences(
+    chunks
+      .map((chunk) => chunk.summary)
+      .filter(Boolean)
+      .join(" "),
+    4
+  );
+
+  return {
+    analysisVersion: ANALYSIS_FORMAT_VERSION,
+    sourceId: manifest.sourceId,
+    sourceHash: manifest.contentHash,
+    semanticHash: manifest.semanticHash,
+    extractionHash: manifest.extractionHash,
+    schemaHash,
+    title: chunks.find((chunk) => chunk.title.trim())?.title ?? manifest.title,
+    summary: summary || `Analyzed ${chunks.length} chunks from ${manifest.title}.`,
+    concepts,
+    entities,
+    claims,
+    questions,
+    tags,
+    rationales: [],
+    producedAt: new Date().toISOString()
+  };
+}
+
+async function providerAnalysisChunk(
   manifest: SourceManifest,
   text: string,
   provider: ProviderAdapter,
-  schema: VaultSchema
+  schema: VaultSchema,
+  chunk?: ProviderAnalysisChunk
 ): Promise<SourceAnalysis> {
   const parsed = await provider.generateStructured(
     {
@@ -318,7 +440,19 @@ async function providerAnalysis(
         "Vault schema instructions:",
         truncate(schema.content, 6000)
       ].join("\n"),
-      prompt: `Analyze the following source and return structured JSON.\n\nSource title: ${manifest.title}\nSource kind: ${manifest.sourceKind}\nSource id: ${manifest.sourceId}\n\nText:\n${truncate(text, 18000)}`
+      prompt: [
+        "Analyze the following source and return structured JSON.",
+        "",
+        `Source title: ${manifest.title}`,
+        `Source kind: ${manifest.sourceKind}`,
+        `Source id: ${manifest.sourceId}`,
+        chunk ? `Chunk: ${chunk.index}/${chunk.total}` : undefined,
+        "",
+        "Text:",
+        truncate(text, PROVIDER_ANALYSIS_MAX_CHARS)
+      ]
+        .filter(Boolean)
+        .join("\n")
     },
     sourceAnalysisSchema
   );
@@ -348,13 +482,35 @@ async function providerAnalysis(
       confidence: claim.confidence,
       status: claim.status,
       polarity: claim.polarity,
-      citation: claim.citation
+      citation: chunk ? `${manifest.sourceId}#chunk-${chunk.index}` : claim.citation
     })),
     questions: parsed.questions,
     tags: parsed.tags,
     rationales: [],
     producedAt: new Date().toISOString()
   };
+}
+
+async function providerAnalysis(
+  manifest: SourceManifest,
+  text: string,
+  provider: ProviderAdapter,
+  schema: VaultSchema
+): Promise<SourceAnalysis> {
+  const chunks = providerAnalysisChunks(manifest, text);
+  if (chunks.length === 1) {
+    return providerAnalysisChunk(manifest, text, provider, schema);
+  }
+
+  const analyses: SourceAnalysis[] = [];
+  for (const chunk of chunks) {
+    try {
+      analyses.push(await providerAnalysisChunk(manifest, chunk.text, provider, schema, chunk));
+    } catch {
+      analyses.push(heuristicAnalysis(manifest, chunk.text, schema.hash));
+    }
+  }
+  return mergeProviderChunkAnalyses(manifest, schema.hash, analyses);
 }
 
 function analysisFromVisionExtraction(

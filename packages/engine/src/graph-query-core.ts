@@ -19,6 +19,7 @@ export interface CoreGraphNode {
   degree?: number;
   confidence?: number;
   evidenceClass?: string;
+  language?: string;
   tags?: string[];
 }
 
@@ -37,6 +38,7 @@ export interface CoreGraphPage {
   id: string;
   path: string;
   title: string;
+  nodeIds?: string[];
 }
 
 /** Minimal hyperedge shape the core helpers depend on. */
@@ -88,6 +90,8 @@ export interface CoreQueryResult {
   communities: string[];
   matches: CoreQueryMatch[];
   summary: string;
+  filters?: CoreGraphQueryFilters;
+  filterStats?: CoreGraphQueryFilterStats;
 }
 
 export interface CorePathResult {
@@ -129,6 +133,32 @@ type EdgeNeighbor = {
   direction: "incoming" | "outgoing";
 };
 
+export type CoreGraphQueryRelationGroup = "calls" | "imports" | "types" | "data" | "rationale" | "evidence";
+
+export interface CoreGraphQueryFilters {
+  relations?: string[];
+  relationGroups?: CoreGraphQueryRelationGroup[];
+  evidenceClasses?: string[];
+  nodeTypes?: string[];
+  languages?: string[];
+}
+
+export interface CoreGraphQueryFilterStats {
+  active: boolean;
+  droppedEdges: number;
+  droppedNodes: number;
+  expandedRelations: string[];
+}
+
+const RELATIONS_BY_GROUP: Record<CoreGraphQueryRelationGroup, string[]> = {
+  calls: ["calls"],
+  imports: ["imports", "exports", "contains_code"],
+  types: ["implements", "extends", "uses_type", "references"],
+  data: ["reads", "writes", "joins", "references"],
+  rationale: ["rationale_for"],
+  evidence: ["supports", "contradicts", "builds_on", "mentions"]
+};
+
 const NODE_TYPE_PRIORITY: Record<string, number> = {
   concept: 6,
   entity: 5,
@@ -157,6 +187,128 @@ function uniqueStrings(values: string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+function normalizeFilterValues(values: readonly string[] | undefined): string[] {
+  return uniqueStrings((values ?? []).map((value) => value.trim()).filter(Boolean));
+}
+
+export function normalizeCoreGraphQueryFilters(filters: CoreGraphQueryFilters | undefined): CoreGraphQueryFilters | undefined {
+  if (!filters) {
+    return undefined;
+  }
+  const normalized: CoreGraphQueryFilters = {
+    relations: normalizeFilterValues(filters.relations),
+    relationGroups: normalizeFilterValues(filters.relationGroups) as CoreGraphQueryRelationGroup[],
+    evidenceClasses: normalizeFilterValues(filters.evidenceClasses),
+    nodeTypes: normalizeFilterValues(filters.nodeTypes),
+    languages: normalizeFilterValues(filters.languages)
+  };
+  return Object.values(normalized).some((value) => value && value.length > 0) ? normalized : undefined;
+}
+
+function expandedRelationsForFilters(filters: CoreGraphQueryFilters | undefined): string[] {
+  return uniqueStrings([
+    ...(filters?.relations ?? []),
+    ...(filters?.relationGroups ?? []).flatMap((group) => RELATIONS_BY_GROUP[group] ?? [])
+  ]);
+}
+
+function nodePassesFilters(node: CoreGraphNode | undefined, filters: CoreGraphQueryFilters | undefined): boolean {
+  if (!node) {
+    return false;
+  }
+  if (filters?.nodeTypes?.length && !filters.nodeTypes.includes(node.type)) {
+    return false;
+  }
+  if (filters?.languages?.length && (!node.language || !filters.languages.includes(node.language))) {
+    return false;
+  }
+  return true;
+}
+
+function edgePassesFilters(
+  edge: CoreGraphEdge,
+  nodeById: Map<string, CoreGraphNode>,
+  filters: CoreGraphQueryFilters | undefined,
+  expandedRelations: string[]
+): boolean {
+  if (expandedRelations.length && !expandedRelations.includes(edge.relation)) {
+    return false;
+  }
+  if (filters?.evidenceClasses?.length && !filters.evidenceClasses.includes(edge.evidenceClass)) {
+    return false;
+  }
+  if (filters?.nodeTypes?.length || filters?.languages?.length) {
+    return nodePassesFilters(nodeById.get(edge.source), filters) || nodePassesFilters(nodeById.get(edge.target), filters);
+  }
+  return true;
+}
+
+export function filterCoreGraphForQuery(
+  graph: CoreGraph,
+  filters: CoreGraphQueryFilters | undefined
+): { graph: CoreGraph; stats: CoreGraphQueryFilterStats } {
+  const normalized = normalizeCoreGraphQueryFilters(filters);
+  const expandedRelations = expandedRelationsForFilters(normalized);
+  if (!normalized) {
+    return {
+      graph,
+      stats: {
+        active: false,
+        droppedEdges: 0,
+        droppedNodes: 0,
+        expandedRelations: []
+      }
+    };
+  }
+
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const edges = graph.edges.filter((edge) => edgePassesFilters(edge, nodeById, normalized, expandedRelations));
+  const connectedNodeIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
+  const nodes = graph.nodes.filter((node) => connectedNodeIds.has(node.id) || nodePassesFilters(node, normalized));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+
+  return {
+    graph: {
+      ...graph,
+      nodes,
+      edges,
+      pages: (graph.pages ?? []).map((page) => ({
+        ...page,
+        nodeIds: page.nodeIds?.filter((nodeId) => nodeIds.has(nodeId))
+      })),
+      hyperedges: (graph.hyperedges ?? []).filter((hyperedge) => hyperedge.nodeIds.some((nodeId) => nodeIds.has(nodeId))),
+      communities: (graph.communities ?? []).map((community) => ({
+        ...community,
+        nodeIds: community.nodeIds.filter((nodeId) => nodeIds.has(nodeId))
+      }))
+    },
+    stats: {
+      active: true,
+      droppedEdges: graph.edges.length - edges.length,
+      droppedNodes: graph.nodes.length - nodes.length,
+      expandedRelations
+    }
+  };
+}
+
+export function coreGraphFilterSummaryLines(filters: CoreGraphQueryFilters | undefined, stats: CoreGraphQueryFilterStats): string[] {
+  if (!filters || !stats.active) {
+    return [];
+  }
+  const parts = [
+    filters.relations?.length ? `relations=${filters.relations.join(",")}` : undefined,
+    filters.relationGroups?.length ? `context=${filters.relationGroups.join(",")}` : undefined,
+    filters.evidenceClasses?.length ? `evidence=${filters.evidenceClasses.join(",")}` : undefined,
+    filters.nodeTypes?.length ? `nodeTypes=${filters.nodeTypes.join(",")}` : undefined,
+    filters.languages?.length ? `languages=${filters.languages.join(",")}` : undefined
+  ].filter(Boolean);
+  return [
+    `Filters: ${parts.join("; ") || "active"}`,
+    `Filtered edges dropped: ${stats.droppedEdges}`,
+    `Filtered nodes dropped: ${stats.droppedNodes}`
+  ];
 }
 
 function uniqueMatches(matches: CoreQueryMatch[]): CoreQueryMatch[] {
@@ -291,22 +443,25 @@ function coreHyperedgeMatches(graph: CoreGraph, query: string): CoreQueryMatch[]
 export function runCoreGraphQuery(
   graph: CoreGraph,
   question: string,
-  options?: { traversal?: "bfs" | "dfs"; budget?: number }
+  options?: { traversal?: "bfs" | "dfs"; budget?: number; filters?: CoreGraphQueryFilters }
 ): CoreQueryResult {
   const traversal = options?.traversal ?? "bfs";
   const budget = Math.max(3, Math.min(options?.budget ?? 12, 50));
+  const normalizedFilters = normalizeCoreGraphQueryFilters(options?.filters);
+  const filtered = filterCoreGraphForQuery(graph, normalizedFilters);
+  const queryGraph = filtered.graph;
 
   const matches = uniqueMatches([
-    ...corePageMatches(graph, question),
-    ...coreNodeMatches(graph, question),
-    ...coreHyperedgeMatches(graph, question)
+    ...corePageMatches(queryGraph, question),
+    ...coreNodeMatches(queryGraph, question),
+    ...coreHyperedgeMatches(queryGraph, question)
   ])
     .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
     .slice(0, 12);
 
-  const pagesById = new Map((graph.pages ?? []).map((page) => [page.id, page] as const));
+  const pagesById = new Map((queryGraph.pages ?? []).map((page) => [page.id, page] as const));
   const nodesByPageId = new Map<string, string[]>();
-  for (const node of graph.nodes) {
+  for (const node of queryGraph.nodes) {
     if (!node.pageId) continue;
     const list = nodesByPageId.get(node.pageId);
     if (list) list.push(node.id);
@@ -318,10 +473,10 @@ export function runCoreGraphQuery(
     ...matches.filter((match) => match.type === "node").map((match) => match.id),
     ...matches
       .filter((match) => match.type === "hyperedge")
-      .flatMap((match) => (graph.hyperedges ?? []).find((hyperedge) => hyperedge.id === match.id)?.nodeIds ?? [])
+      .flatMap((match) => (queryGraph.hyperedges ?? []).find((hyperedge) => hyperedge.id === match.id)?.nodeIds ?? [])
   ]);
 
-  const adjacency = buildAdjacency(graph);
+  const adjacency = buildAdjacency(queryGraph);
   const visitedNodeIds: string[] = [];
   const visitedEdgeIds = new Set<string>();
   const seen = new Set<string>();
@@ -341,7 +496,7 @@ export function runCoreGraphQuery(
     }
   }
 
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const nodeById = new Map(queryGraph.nodes.map((node) => [node.id, node]));
   const pageIds = uniqueStrings([
     ...matches.filter((match) => match.type === "page").map((match) => match.id),
     ...visitedNodeIds.flatMap((nodeId) => {
@@ -353,7 +508,7 @@ export function runCoreGraphQuery(
     visitedNodeIds.map((nodeId) => nodeById.get(nodeId)?.communityId).filter((value): value is string => Boolean(value))
   );
   const hyperedgeIds = uniqueStrings(
-    (graph.hyperedges ?? [])
+    (queryGraph.hyperedges ?? [])
       .filter((hyperedge) => hyperedge.nodeIds.some((nodeId) => visitedNodeIds.includes(nodeId)))
       .map((hyperedge) => hyperedge.id)
   );
@@ -366,6 +521,7 @@ export function runCoreGraphQuery(
     `Seeds: ${seeds.join(", ") || "none"}`,
     `Visited nodes: ${visitedNodeIds.length}`,
     `Visited edges: ${visitedEdgeIds.size}`,
+    ...coreGraphFilterSummaryLines(normalizedFilters, filtered.stats),
     `Touched group patterns: ${hyperedgeIds.length}`,
     `Communities: ${communities.join(", ") || "none"}`,
     `Pages: ${pageIds.join(", ") || "none"}`
@@ -386,7 +542,9 @@ export function runCoreGraphQuery(
     pageIds,
     communities,
     matches,
-    summary
+    summary,
+    filters: normalizedFilters,
+    filterStats: filtered.stats
   };
 }
 

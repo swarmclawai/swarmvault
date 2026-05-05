@@ -175,6 +175,7 @@ swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault graph tree --output ./exports/tree.html
+swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
@@ -379,7 +380,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 | Text docs | `.md .mdx .txt .rst .rest` | Direct ingest with lightweight `.rst` heading normalization |
 | Config / data | `.json .jsonc .json5 .toml .yaml .yml .xml .ini .conf .cfg .properties .env` | Structured preview with key/value schema hints |
 | Developer manifests | `package.json` `tsconfig.json` `Cargo.toml` `pyproject.toml` `go.mod` `go.sum` `Dockerfile` `Makefile` `LICENSE` `.gitignore` `.editorconfig` `.npmrc` (and similar) | Content-sniffed text ingest — no plaintext dev files are silently dropped |
-| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`, plus extensionless scripts with `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebangs | AST/parser-backed analysis + module resolution where a packaged parser exists; Svelte nest-parses script blocks through the TypeScript analyzer; Julia, Verilog/SystemVerilog, and R are detected with explicit parser-asset diagnostics until packaged WASM grammars are available; SQL adds table/view nodes plus read/write/join/reference edges |
+| Code | `.js .mjs .cjs .jsx .ts .mts .cts .tsx .sh .bash .zsh .py .go .rs .java .kt .kts .scala .sc .dart .lua .zig .cs .c .cc .cpp .cxx .h .hh .hpp .hxx .php .rb .ps1 .psm1 .psd1 .ex .exs .ml .mli .m .mm .res .resi .sol .vue .svelte .jl .v .vh .sv .svh .r .R .css .html .htm .sql`, plus extensionless scripts with `#!/usr/bin/env node\|python\|ruby\|bash\|zsh` shebangs | AST/parser-backed analysis + module resolution where a packaged parser exists; Svelte nest-parses script blocks through the TypeScript analyzer; Julia and Verilog/SystemVerilog now use packaged WASM grammars; JavaScript and TypeScript capture static and dynamic `import()` edges; R is detected with an explicit parser-asset diagnostic until a safe packaged grammar is available; SQL adds table/view nodes plus read/write/join/reference edges |
 | Browser clips | inbox bundles | Asset-rewritten markdown via `inbox import` |
 | Managed sources | local directories, public GitHub repo roots, docs hubs | Registry-backed sync via `swarmvault source add` |
 
@@ -424,7 +425,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Visual + post-ready share kit** - every compile writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`; `swarmvault graph share --post` prints concise text, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, and `swarmvault graph share --bundle [dir]` writes markdown, post text, SVG, HTML preview, and JSON metadata for easy posting, linking, or screenshotting.
 
-**Graph blast radius, status, refresh, tree, merge, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph status [path]` performs a read-only stale check over graph/report artifacts and tracked repo changes, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts with a 25% shrink guard unless `--force` is explicit, `graph tree` writes a collapsible source/module/symbol HTML tree, `graph merge` combines SwarmVault or node-link JSON graphs into one namespaced artifact, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
+**Graph blast radius, status, refresh, query filters, tree, merge, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph status [path]` performs a read-only stale check over graph/report artifacts and tracked repo changes, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts with a 25% shrink guard unless `--force` is explicit, `graph query` can filter traversal by relation, context group, evidence class, node type, or language, `graph tree` writes an interactive source/module/symbol HTML tree with expand/collapse controls and a node inspector, `graph merge` combines SwarmVault or node-link JSON graphs into one namespaced artifact, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 
 **Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
 
@@ -457,7 +458,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **External graph sinks** - export to full HTML, lightweight standalone HTML, self-contained report HTML, SVG, GraphML, Cypher, JSON, Obsidian note bundles, or Obsidian canvas, or push the live graph directly into Neo4j over Bolt/Aura with shared-database-safe `vaultId` namespacing.
 
-**Large-repo hardening** - long repo ingests and compile passes emit bounded progress on big batches, parser compatibility failures stay local to the affected sources with explicit diagnostics, code-only repo watch cycles skip non-code re-analysis, and graph reports roll up tiny fragmented communities for readability.
+**Large-repo hardening** - long repo ingests and compile passes emit bounded progress on big batches, provider-backed non-code analysis chunks long extracted text before model calls, nested `.gitignore` and `.swarmvaultignore` files are respected with `.swarmvaultinclude` allowlists for intentional exceptions, parser compatibility failures stay local to the affected sources with explicit diagnostics, code-only repo watch cycles skip non-code re-analysis, and graph reports roll up tiny fragmented communities for readability.
 
 Every edge is tagged `extracted`, `inferred`, or `ambiguous` - you always know what was found vs guessed.
 

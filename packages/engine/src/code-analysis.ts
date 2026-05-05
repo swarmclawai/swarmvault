@@ -1684,6 +1684,31 @@ function extractTypeScriptRationales(manifest: SourceManifest, content: string, 
   return uniqueBy(rationales, (item) => `${item.symbolName ?? ""}:${item.text.toLowerCase()}`);
 }
 
+function dynamicTypeScriptImports(sourceFile: ts.SourceFile): CodeImport[] {
+  const imports: CodeImport[] = [];
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length > 0 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      const specifier = node.arguments[0].text;
+      imports.push({
+        specifier,
+        importedSymbols: [],
+        isExternal: !isRelativeSpecifier(specifier),
+        reExport: false
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return uniqueBy(imports, (item) => item.specifier);
+}
+
 function analyzeTypeScriptLikeCode(
   manifest: SourceManifest,
   content: string
@@ -1879,6 +1904,12 @@ function analyzeTypeScriptLikeCode(
           exportLabels.push(declaration.name.text);
         }
       }
+    }
+  }
+
+  for (const dynamicImport of dynamicTypeScriptImports(sourceFile)) {
+    if (!imports.some((item) => item.specifier === dynamicImport.specifier && !item.reExport)) {
+      imports.push(dynamicImport);
     }
   }
 

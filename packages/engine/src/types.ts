@@ -1130,6 +1130,23 @@ export interface GraphQueryMatch {
   score: number;
 }
 
+export type GraphQueryRelationGroup = "calls" | "imports" | "types" | "data" | "rationale" | "evidence";
+
+export interface GraphQueryFilters {
+  relations?: string[];
+  relationGroups?: GraphQueryRelationGroup[];
+  evidenceClasses?: EvidenceClass[];
+  nodeTypes?: GraphNode["type"][];
+  languages?: CodeLanguage[];
+}
+
+export interface GraphQueryFilterStats {
+  active: boolean;
+  droppedEdges: number;
+  droppedNodes: number;
+  expandedRelations: string[];
+}
+
 export interface GraphQueryResult {
   question: string;
   traversal: "bfs" | "dfs";
@@ -1142,6 +1159,8 @@ export interface GraphQueryResult {
   communities: string[];
   summary: string;
   matches: GraphQueryMatch[];
+  filters?: GraphQueryFilters;
+  filterStats?: GraphQueryFilterStats;
 }
 
 export interface GraphPathResult {

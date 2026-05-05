@@ -78,6 +78,7 @@ swarmvault graph cluster
 swarmvault graph update ./src
 swarmvault graph update ./src --force
 swarmvault graph refresh
+swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault graph tree --output ./tree.html
 swarmvault graph merge ./graph.json ./other-graph.json --out ./merged-graph.json
 swarmvault graph export --html ./graph.html

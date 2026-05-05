@@ -21,6 +21,7 @@ swarmvault graph share --post
 swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph tree --output ./tree.html
+swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault graph serve
 ```
 
@@ -32,7 +33,8 @@ swarmvault graph serve
 - `swarmvault diff` reflects the graph-level additions and removals when the vault is inside git
 - `state/approvals/` contains staged review bundles when `--approve` is used
 - `wiki/graph/report.md` highlights the important modules, bridge nodes, and contradictions
-- `wiki/graph/tree.html` or the chosen tree export path helps users browse sources, modules, and symbols as a file tree
+- `graph query` filters help users focus on calls, imports, data edges, rationale edges, evidence classes, node types, or languages
+- `wiki/graph/tree.html` or the chosen tree export path helps users browse sources, modules, symbols, and connected edges as a file tree
 - `wiki/context/` and `state/context-packs/` contain bounded handoff packs when `context build` is used
 - `wiki/memory/` and `state/memory/tasks/` contain durable task records when `task start` is used
 - `swarmvault doctor` summarizes graph, retrieval, review, watch, migration, source, and task health before handoff; the live workbench shows the same details and suggested commands

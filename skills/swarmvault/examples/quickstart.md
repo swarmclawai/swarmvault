@@ -19,6 +19,7 @@ swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
 swarmvault graph cluster
 swarmvault graph tree --output ./tree.html
+swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What are the key concepts?"
 swarmvault context build "Explain the key concepts to the next agent" --target ./repo --budget 8000
 swarmvault task start "Explain the key concepts to the next agent" --target ./repo --agent codex
@@ -37,7 +38,8 @@ swarmvault graph export --report ./graph-report.html
 - `wiki/graph/report.md` exists after compile
 - `graph status` reports whether tracked repo changes need `graph update` or a full `compile` without writing watch state
 - `graph cluster` refreshes graph communities and report artifacts from the existing graph without another ingest
-- `graph tree` writes a collapsible source/module/symbol HTML tree when the user wants file-oriented browsing
+- `graph query` can focus traversal with relation/context/evidence/node/language filters
+- `graph tree` writes an interactive source/module/symbol HTML tree with a node inspector when the user wants file-oriented browsing
 - `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` exist after compile; `graph share --post` prints copyable text, `graph share --svg [path]` writes the visual card, and `graph share --bundle [dir]` writes the portable share kit
 - `graph export --report` writes a shareable HTML report when the user wants a lighter artifact than the full workspace
 - `wiki/outputs/source-briefs/` contains a source brief

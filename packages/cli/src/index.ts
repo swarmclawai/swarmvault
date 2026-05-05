@@ -9,6 +9,7 @@ import type {
   AgentMemoryTaskStatus,
   ContextPackFormat,
   GraphArtifact,
+  GraphQueryFilters,
   GuidedSourceSessionQuestion,
   SourceClass
 } from "@swarmvaultai/engine";
@@ -120,9 +121,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.7.3";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.8.0";
   } catch {
-    return "3.7.3";
+    return "3.8.0";
   }
 }
 
@@ -1761,18 +1762,49 @@ graph
   .argument("<question>", "Question or graph search seed")
   .option("--dfs", "Prefer a depth-first traversal instead of breadth-first", false)
   .option("--budget <n>", "Maximum number of graph nodes to summarize")
-  .action(async (question: string, options: { dfs?: boolean; budget?: string }) => {
-    const budget = options.budget ? parsePositiveInt(options.budget, 0) || undefined : undefined;
-    const result = await queryGraphVault(process.cwd(), question, {
-      traversal: options.dfs ? "dfs" : "bfs",
-      budget
-    });
-    if (isJson()) {
-      emitJson(result);
-      return;
+  .option("--relation <name>", "Only traverse edges with this relation name (repeatable)", collectRepeated, [])
+  .option(
+    "--context <group>",
+    "Relation group context: calls, imports, types, data, rationale, or evidence (repeatable)",
+    collectRepeated,
+    []
+  )
+  .option("--evidence <class>", "Evidence class: extracted, inferred, or ambiguous (repeatable)", collectRepeated, [])
+  .option("--node-type <type>", "Prefer traversal around this graph node type (repeatable)", collectRepeated, [])
+  .option("--language <lang>", "Prefer traversal around this code language (repeatable)", collectRepeated, [])
+  .action(
+    async (
+      question: string,
+      options: {
+        dfs?: boolean;
+        budget?: string;
+        relation?: string[];
+        context?: string[];
+        evidence?: string[];
+        nodeType?: string[];
+        language?: string[];
+      }
+    ) => {
+      const budget = options.budget ? parsePositiveInt(options.budget, 0) || undefined : undefined;
+      const filters: GraphQueryFilters = {
+        relations: options.relation,
+        relationGroups: options.context as GraphQueryFilters["relationGroups"],
+        evidenceClasses: options.evidence as GraphQueryFilters["evidenceClasses"],
+        nodeTypes: options.nodeType as GraphQueryFilters["nodeTypes"],
+        languages: options.language as GraphQueryFilters["languages"]
+      };
+      const result = await queryGraphVault(process.cwd(), question, {
+        traversal: options.dfs ? "dfs" : "bfs",
+        budget,
+        filters
+      });
+      if (isJson()) {
+        emitJson(result);
+        return;
+      }
+      log(result.summary);
     }
-    log(result.summary);
-  });
+  );
 
 graph
   .command("path")

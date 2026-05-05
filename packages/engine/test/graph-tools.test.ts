@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shortestGraphPath } from "../src/graph-tools.js";
+import { queryGraph, shortestGraphPath } from "../src/graph-tools.js";
 import type { GraphArtifact } from "../src/types.js";
 
 function nodeId(prefix: string, id: string): string {
@@ -145,5 +145,74 @@ describe("shortestGraphPath", () => {
 
     expect(result.found).toBe(false);
     expect(result.nodeIds).toEqual([]);
+  });
+});
+
+describe("queryGraph filters", () => {
+  it("filters traversal by relation groups, evidence classes, node types, and languages", () => {
+    const graph = buildAmbiguousGraph();
+    graph.nodes.push(
+      {
+        id: "symbol:loader",
+        type: "symbol",
+        label: "loadMath",
+        pageId: "module:loader",
+        sourceIds: ["loader"],
+        projectIds: [],
+        sourceClass: "first_party",
+        language: "typescript",
+        degree: 1,
+        bridgeScore: 0.2
+      },
+      {
+        id: "symbol:add",
+        type: "symbol",
+        label: "add",
+        pageId: "module:math",
+        sourceIds: ["math"],
+        projectIds: [],
+        sourceClass: "first_party",
+        language: "typescript",
+        degree: 1,
+        bridgeScore: 0.2
+      }
+    );
+    graph.edges.push(
+      {
+        id: "loader->add:calls",
+        source: "symbol:loader",
+        target: "symbol:add",
+        relation: "calls",
+        status: "extracted",
+        evidenceClass: "extracted",
+        confidence: 1,
+        provenance: ["test"]
+      },
+      {
+        id: "loader->math:imports",
+        source: "symbol:loader",
+        target: "module:auth-code",
+        relation: "imports",
+        status: "inferred",
+        evidenceClass: "inferred",
+        confidence: 0.6,
+        provenance: ["test"]
+      }
+    );
+
+    const result = queryGraph(graph, "loadMath", [], {
+      filters: {
+        relationGroups: ["calls"],
+        evidenceClasses: ["extracted"],
+        nodeTypes: ["symbol"],
+        languages: ["typescript"]
+      }
+    });
+
+    expect(result.visitedEdgeIds).toEqual(["loader->add:calls"]);
+    expect(result.filterStats?.expandedRelations).toEqual(["calls"]);
+    expect(result.filterStats?.droppedEdges).toBeGreaterThan(0);
+    expect(result.summary).toContain("Filters:");
+    expect(result.summary).toContain("context=calls");
   });
 });

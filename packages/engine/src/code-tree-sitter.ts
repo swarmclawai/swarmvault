@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   CodeAnalysis,
   CodeDiagnostic,
@@ -16,8 +18,15 @@ import { normalizeWhitespace, slugify, toPosix, truncate, uniqueBy } from "./uti
 const require = createRequire(import.meta.url);
 const TREE_SITTER_RUNTIME_PACKAGE = "@vscode/tree-sitter-wasm";
 const TREE_SITTER_EXTRA_GRAMMARS_PACKAGE = "tree-sitter-wasms";
+const TREE_SITTER_JULIA_PACKAGE = "tree-sitter-julia";
+const TREE_SITTER_SYSTEMVERILOG_PACKAGE = "tree-sitter-systemverilog";
 const SWIFT_TREE_SITTER_OPT_IN_ENV = "SWARMVAULT_ENABLE_SWIFT_TREE_SITTER";
 const packageRootCache = new Map<string, string>();
+const vendoredGrammarAssetByLanguage: Partial<Record<TreeSitterCodeLanguage, string>> = {
+  julia: "tree-sitter-julia.wasm",
+  verilog: "tree-sitter-systemverilog.wasm",
+  systemverilog: "tree-sitter-systemverilog.wasm"
+};
 
 type DraftCodeSymbol = {
   name: string;
@@ -126,7 +135,10 @@ const grammarAssetByLanguage: Partial<Record<TreeSitterCodeLanguage, TreeSitterG
   html: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-html.wasm" },
   css: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-css.wasm" },
   vue: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-vue.wasm" },
-  svelte: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-html.wasm" }
+  svelte: { packageName: TREE_SITTER_EXTRA_GRAMMARS_PACKAGE, relativePath: "out/tree-sitter-html.wasm" },
+  julia: { packageName: TREE_SITTER_JULIA_PACKAGE, relativePath: "tree-sitter-julia.wasm" },
+  verilog: { packageName: TREE_SITTER_SYSTEMVERILOG_PACKAGE, relativePath: "tree-sitter-systemverilog.wasm" },
+  systemverilog: { packageName: TREE_SITTER_SYSTEMVERILOG_PACKAGE, relativePath: "tree-sitter-systemverilog.wasm" }
 };
 
 function resolvePackageRoot(packageName: string): string {
@@ -145,6 +157,13 @@ function resolvePackageRoot(packageName: string): string {
 }
 
 function grammarAssetPath(language: TreeSitterCodeLanguage): string {
+  const vendoredAsset = vendoredGrammarAssetByLanguage[language];
+  if (vendoredAsset) {
+    const candidate = path.join(path.dirname(fileURLToPath(import.meta.url)), "vendor", vendoredAsset);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
   const asset = grammarAssetByLanguage[language];
   if (!asset) {
     throw new Error(`No packaged parser asset is available for ${language}.`);
@@ -334,7 +353,8 @@ function finalizeCodeAnalysis(
   draftSymbols: DraftCodeSymbol[],
   exportLabels: string[],
   diagnostics: CodeDiagnostic[],
-  metadata?: { moduleName?: string; namespace?: string }
+  metadata?: { moduleName?: string; namespace?: string },
+  relations?: NonNullable<CodeAnalysis["relations"]>
 ): CodeAnalysis {
   const topLevelNames = new Set(draftSymbols.map((symbol) => symbol.name));
   for (const symbol of draftSymbols) {
@@ -367,7 +387,8 @@ function finalizeCodeAnalysis(
     ),
     symbols,
     exports: uniqueBy([...symbols.filter((symbol) => symbol.exported).map((symbol) => symbol.name), ...exportLabels], (label) => label),
-    diagnostics
+    diagnostics,
+    relations: relations?.length ? relations : undefined
   };
 }
 
@@ -4544,6 +4565,222 @@ function vueCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnosti
   return finalizeCodeAnalysis(manifest, "vue", imports, draftSymbols, exportLabels, diagnostics);
 }
 
+function firstDescendantIdentifier(node: TreeNode | null | undefined): string | undefined {
+  if (!node) {
+    return undefined;
+  }
+  const direct = extractIdentifier(node);
+  if (direct) {
+    return normalizeSymbolReference(direct);
+  }
+  const descendant = node
+    .descendantsOfType(["identifier", "simple_identifier", "type_identifier", "package_identifier", "function_name"])
+    .find((item): item is TreeNode => item !== null);
+  return descendant ? normalizeSymbolReference(descendant.text) : undefined;
+}
+
+function identifiersInNode(node: TreeNode | null | undefined): string[] {
+  if (!node) {
+    return [];
+  }
+  return uniqueBy(
+    node
+      .descendantsOfType(["identifier", "simple_identifier", "type_identifier", "package_identifier", "function_name"])
+      .filter((item): item is TreeNode => item !== null)
+      .map((item) => normalizeSymbolReference(item.text))
+      .filter(Boolean),
+    (item) => item
+  );
+}
+
+function juliaSignatureName(node: TreeNode): string | undefined {
+  const signature = findNamedChild(node, "signature") ?? node.childForFieldName("signature");
+  const call = signature?.descendantsOfType("call_expression").find((item): item is TreeNode => item !== null);
+  return firstDescendantIdentifier(call ?? signature ?? node);
+}
+
+function juliaCodeAnalysis(manifest: SourceManifest, rootNode: TreeNode, diagnostics: CodeDiagnostic[]): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const seenSymbols = new Set<string>();
+
+  for (const exportNode of rootNode.descendantsOfType("export_statement").filter((item): item is TreeNode => item !== null)) {
+    for (const name of identifiersInNode(exportNode)) {
+      exportLabels.push(name);
+    }
+  }
+  const exportedNames = new Set(exportLabels);
+
+  const moduleNode = rootNode.descendantsOfType("module_definition").find((item): item is TreeNode => item !== null);
+  const moduleName = firstDescendantIdentifier(moduleNode);
+
+  for (const importNode of rootNode
+    .descendantsOfType(["using_statement", "import_statement"])
+    .filter((item): item is TreeNode => item !== null)) {
+    const names = identifiersInNode(importNode);
+    const specifier = names[0];
+    if (!specifier) {
+      continue;
+    }
+    imports.push({
+      specifier,
+      importedSymbols: names.slice(1),
+      isExternal: true,
+      reExport: false
+    });
+  }
+
+  const addSymbol = (name: string | undefined, kind: CodeSymbolKind, node: TreeNode, exported = exportedNames.has(name ?? "")) => {
+    if (!name || seenSymbols.has(`${kind}:${name}`)) {
+      return;
+    }
+    seenSymbols.add(`${kind}:${name}`);
+    draftSymbols.push({
+      name,
+      kind,
+      signature: singleLineSignature(node.text.split("\n")[0] ?? node.text),
+      exported,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: node.text
+    });
+  };
+
+  for (const structNode of rootNode
+    .descendantsOfType(["struct_definition", "abstract_definition", "primitive_definition"])
+    .filter((item): item is TreeNode => item !== null)) {
+    const typeHead = findNamedChild(structNode, "type_head") ?? structNode.childForFieldName("name") ?? structNode;
+    addSymbol(firstDescendantIdentifier(typeHead), "struct", structNode);
+  }
+
+  for (const functionNode of rootNode.descendantsOfType("function_definition").filter((item): item is TreeNode => item !== null)) {
+    addSymbol(juliaSignatureName(functionNode), "function", functionNode);
+  }
+
+  for (const macroNode of rootNode.descendantsOfType("macro_definition").filter((item): item is TreeNode => item !== null)) {
+    addSymbol(juliaSignatureName(macroNode), "function", macroNode);
+  }
+
+  for (const assignmentNode of rootNode.descendantsOfType("assignment").filter((item): item is TreeNode => item !== null)) {
+    const left = assignmentNode.namedChildren[0];
+    if (left?.type !== "call_expression") {
+      continue;
+    }
+    addSymbol(firstDescendantIdentifier(left), "function", assignmentNode);
+  }
+
+  return finalizeCodeAnalysis(manifest, "julia", imports, draftSymbols, exportLabels, diagnostics, { moduleName });
+}
+
+function systemVerilogDeclarationName(node: TreeNode): string | undefined {
+  const header =
+    findNamedChild(node, "module_ansi_header") ??
+    findNamedChild(node, "module_nonansi_header") ??
+    findNamedChild(node, "interface_ansi_header") ??
+    findNamedChild(node, "interface_nonansi_header") ??
+    findNamedChild(node, "program_ansi_header") ??
+    findNamedChild(node, "program_nonansi_header") ??
+    node;
+  return firstDescendantIdentifier(header);
+}
+
+function systemVerilogFunctionName(node: TreeNode): string | undefined {
+  const body = findNamedChild(node, "function_body_declaration") ?? findNamedChild(node, "task_body_declaration") ?? node;
+  return firstDescendantIdentifier(body);
+}
+
+function systemVerilogCodeAnalysis(
+  manifest: SourceManifest,
+  language: "verilog" | "systemverilog",
+  rootNode: TreeNode,
+  diagnostics: CodeDiagnostic[]
+): CodeAnalysis {
+  const imports: CodeImport[] = [];
+  const draftSymbols: DraftCodeSymbol[] = [];
+  const exportLabels: string[] = [];
+  const relations: NonNullable<CodeAnalysis["relations"]> = [];
+  const seenSymbols = new Set<string>();
+  const seenRelations = new Set<string>();
+
+  const addSymbol = (name: string | undefined, kind: CodeSymbolKind, node: TreeNode, exported = true) => {
+    if (!name || seenSymbols.has(`${kind}:${name}`)) {
+      return;
+    }
+    seenSymbols.add(`${kind}:${name}`);
+    draftSymbols.push({
+      name,
+      kind,
+      signature: singleLineSignature(node.text.split("\n")[0] ?? node.text),
+      exported,
+      callNames: [],
+      extendsNames: [],
+      implementsNames: [],
+      bodyText: node.text
+    });
+    if (exported) {
+      exportLabels.push(name);
+    }
+  };
+
+  const addRelation = (sourceName: string | undefined, targetName: string | undefined, relation: string, confidence = 0.95) => {
+    if (!targetName) {
+      return;
+    }
+    const key = `${sourceName ?? "module"}:${relation}:${targetName}`;
+    if (seenRelations.has(key)) {
+      return;
+    }
+    seenRelations.add(key);
+    relations.push({ sourceName, targetName, relation, confidence });
+  };
+
+  for (const importNode of rootNode.descendantsOfType("package_import_item").filter((item): item is TreeNode => item !== null)) {
+    const names = identifiersInNode(importNode);
+    const specifier = importNode.text.trim() || names.join("::");
+    if (!specifier) {
+      continue;
+    }
+    imports.push({
+      specifier,
+      importedSymbols: names.slice(1),
+      isExternal: true,
+      reExport: false
+    });
+  }
+
+  for (const packageNode of rootNode.descendantsOfType("package_declaration").filter((item): item is TreeNode => item !== null)) {
+    addSymbol(firstDescendantIdentifier(packageNode), "class", packageNode);
+  }
+
+  for (const interfaceNode of rootNode.descendantsOfType("interface_declaration").filter((item): item is TreeNode => item !== null)) {
+    addSymbol(systemVerilogDeclarationName(interfaceNode), "interface", interfaceNode);
+  }
+
+  for (const programNode of rootNode.descendantsOfType("program_declaration").filter((item): item is TreeNode => item !== null)) {
+    addSymbol(systemVerilogDeclarationName(programNode), "class", programNode);
+  }
+
+  for (const moduleNode of rootNode.descendantsOfType("module_declaration").filter((item): item is TreeNode => item !== null)) {
+    const moduleName = systemVerilogDeclarationName(moduleNode);
+    addSymbol(moduleName, "class", moduleNode);
+    for (const instantiation of moduleNode.descendantsOfType("module_instantiation").filter((item): item is TreeNode => item !== null)) {
+      addRelation(moduleName, firstDescendantIdentifier(instantiation), "instantiates", 0.95);
+    }
+  }
+
+  for (const functionNode of rootNode.descendantsOfType("function_declaration").filter((item): item is TreeNode => item !== null)) {
+    addSymbol(systemVerilogFunctionName(functionNode), "function", functionNode);
+  }
+
+  for (const taskNode of rootNode.descendantsOfType("task_declaration").filter((item): item is TreeNode => item !== null)) {
+    addSymbol(systemVerilogFunctionName(taskNode), "function", taskNode);
+  }
+
+  return finalizeCodeAnalysis(manifest, language, imports, draftSymbols, exportLabels, diagnostics, undefined, relations);
+}
+
 function cFamilyCodeAnalysis(
   manifest: SourceManifest,
   language: "c" | "cpp",
@@ -4779,6 +5016,11 @@ export async function analyzeTreeSitterCode(
         return { code: cssCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
       case "vue":
         return { code: vueCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "julia":
+        return { code: juliaCodeAnalysis(manifest, tree.rootNode, diagnostics), rationales };
+      case "verilog":
+      case "systemverilog":
+        return { code: systemVerilogCodeAnalysis(manifest, language, tree.rootNode, diagnostics), rationales };
       case "c":
       case "cpp":
         return { code: cFamilyCodeAnalysis(manifest, language, tree.rootNode, diagnostics), rationales };
