@@ -52,7 +52,7 @@ export {
   renderGraphShareSvg
 } from "./graph-share.js";
 export { getGraphStatus } from "./graph-status.js";
-export { blastRadius, graphDiff } from "./graph-tools.js";
+export { blastRadius, graphDiff, graphStats, validateGraphArtifact } from "./graph-tools.js";
 export { buildGraphTree, exportGraphTree, renderGraphTreeHtml } from "./graph-tree.js";
 export { getGitHookStatus, installGitHooks, uninstallGitHooks } from "./hooks.js";
 export {
@@ -166,7 +166,8 @@ export {
   rejectApproval,
   runAutoPromotion,
   searchVault,
-  stageGeneratedOutputPages
+  stageGeneratedOutputPages,
+  validateGraphVault
 } from "./vault.js";
 export { exportGraphHtml, startGraphServer } from "./viewer.js";
 export {

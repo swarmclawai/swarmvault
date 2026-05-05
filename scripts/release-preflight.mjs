@@ -95,6 +95,7 @@ async function main() {
     await runGate("check", "pnpm check", () => run("pnpm", ["check"], { cwd: repoRoot }), args.skipCheck ? "--skip-check" : undefined);
     await runGate("test", "pnpm test", () => run("pnpm", ["test"], { cwd: repoRoot }), args.skipTest ? "--skip-test" : undefined);
     await runGate("build", "pnpm build", () => run("pnpm", ["build"], { cwd: repoRoot }), args.skipBuild ? "--skip-build" : undefined);
+    await runGate("cli-surface", "direct CLI surface smoke", () => run("pnpm", ["live:cli-surface"], { cwd: repoRoot }), args.skipBuild ? "--skip-build" : undefined);
     await runGate("web-build", "web pnpm build", () => run("pnpm", ["build"], { cwd: webRoot }), args.skipWeb ? "--skip-web" : undefined);
     await runGate(
       "skill-dry-run",

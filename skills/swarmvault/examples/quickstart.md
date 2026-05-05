@@ -17,6 +17,8 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault graph stats
+swarmvault graph validate --strict
 swarmvault graph cluster
 swarmvault graph tree --output ./tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
@@ -37,6 +39,8 @@ swarmvault graph export --report ./graph-report.html
 - `state/sources.json` contains the managed source registry entry
 - `wiki/graph/report.md` exists after compile
 - `graph status` reports whether tracked repo changes need `graph update` or a full `compile` without writing watch state
+- `graph stats` prints lightweight graph counts and relation mix without opening the viewer
+- `graph validate --strict` checks graph artifact integrity before export, merge, push, or publish workflows
 - `graph cluster` refreshes graph communities and report artifacts from the existing graph without another ingest
 - `graph query` can focus traversal with relation/context/evidence/node/language filters
 - `graph tree` writes an interactive source/module/symbol HTML tree with a node inspector when the user wants file-oriented browsing

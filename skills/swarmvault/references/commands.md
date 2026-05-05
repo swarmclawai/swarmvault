@@ -74,6 +74,8 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault graph stats
+swarmvault graph validate --strict
 swarmvault graph cluster
 swarmvault graph update ./src
 swarmvault graph update ./src --force
@@ -97,6 +99,7 @@ swarmvault mcp
 swarmvault watch --lint --repo
 swarmvault watch --repo --code-only --once
 swarmvault graph status .
+swarmvault graph validate --strict
 swarmvault graph update .
 swarmvault graph update . --force
 swarmvault watch status

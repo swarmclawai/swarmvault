@@ -2,6 +2,19 @@
 
 These prompts are the human-readable validation set for the ClawHub skill and the installed-package release flow.
 
+## Maintainer validation prompt
+
+Prompt:
+
+> Verify the CLI surface before release.
+
+Expected shape:
+
+- runs `pnpm live:cli-surface` from the OSS repo before release preflight when CLI command coverage is in scope
+- expects the smoke to parse `packages/cli/src/index.ts` with the TypeScript compiler API
+- expects every stable command path and alias to be classified in the surface manifest
+- expects `--help` coverage across the full command tree plus direct JSON behavior checks for the main local workflows
+
 ## First-run prompt
 
 Prompt:
@@ -115,6 +128,8 @@ Expected shape:
 - may suggest `swarmvault diff` when the user is asking what a compile changed
 - may use `graph blast <target>` when the user is asking about change impact instead of broad graph browsing
 - may use `graph status [path]` when the user needs a read-only stale check before choosing `graph update` or `compile`
+- may use `graph stats` when the user needs lightweight counts or relation mix without opening the viewer
+- may use `graph validate [graph] --strict` before sharing, merging, pushing, or publishing graph artifacts
 - may use `graph tree [--output <html>]` when the user wants file/module/symbol browsing
 - may use `graph merge <graph...> --out <path>` when the user needs to combine SwarmVault or node-link graph JSON
 - may use `graph cluster [--resolution <n>]` when the graph exists but community/report metrics need to be recomputed

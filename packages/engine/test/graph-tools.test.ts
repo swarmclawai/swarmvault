@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { queryGraph, shortestGraphPath } from "../src/graph-tools.js";
+import { graphStats, queryGraph, shortestGraphPath, validateGraphArtifact } from "../src/graph-tools.js";
 import type { GraphArtifact } from "../src/types.js";
 
 function nodeId(prefix: string, id: string): string {
@@ -119,6 +119,113 @@ function buildAmbiguousGraph(): GraphArtifact {
   };
 }
 
+function buildValidatedGraph(): GraphArtifact {
+  const now = new Date("2026-01-01T00:00:00.000Z").toISOString();
+  return {
+    generatedAt: now,
+    nodes: [
+      {
+        id: "source:notes",
+        type: "source",
+        label: "notes",
+        pageId: "page:notes",
+        sourceIds: [],
+        projectIds: [],
+        confidence: 1
+      },
+      {
+        id: "concept:durable-outputs",
+        type: "concept",
+        label: "Durable Outputs",
+        pageId: "page:durable-outputs",
+        sourceIds: [],
+        projectIds: [],
+        confidence: 0.9
+      }
+    ],
+    edges: [
+      {
+        id: "source:notes->concept:durable-outputs:mentions",
+        source: "source:notes",
+        target: "concept:durable-outputs",
+        relation: "mentions",
+        status: "extracted",
+        evidenceClass: "extracted",
+        confidence: 0.8,
+        provenance: ["page:notes"]
+      }
+    ],
+    hyperedges: [
+      {
+        id: "pattern:durable-output-flow",
+        label: "Durable output flow",
+        relation: "participate_in",
+        nodeIds: ["source:notes", "concept:durable-outputs"],
+        evidenceClass: "extracted",
+        confidence: 0.7,
+        sourcePageIds: ["page:notes"],
+        why: "The source describes durable outputs."
+      }
+    ],
+    communities: [
+      {
+        id: "community:durable-output",
+        label: "Durable output",
+        nodeIds: ["source:notes", "concept:durable-outputs"]
+      }
+    ],
+    sources: [],
+    pages: [
+      {
+        id: "page:notes",
+        path: "sources/notes.md",
+        title: "notes",
+        kind: "source",
+        sourceIds: [],
+        projectIds: [],
+        nodeIds: ["source:notes"],
+        freshness: "fresh",
+        status: "active",
+        confidence: 1,
+        backlinks: [],
+        schemaHash: "schema",
+        sourceHashes: {},
+        sourceSemanticHashes: {},
+        relatedPageIds: ["page:durable-outputs"],
+        relatedNodeIds: ["concept:durable-outputs"],
+        relatedSourceIds: [],
+        createdAt: now,
+        updatedAt: now,
+        compiledFrom: [],
+        managedBy: "system"
+      },
+      {
+        id: "page:durable-outputs",
+        path: "concepts/durable-outputs.md",
+        title: "Durable Outputs",
+        kind: "concept",
+        sourceIds: [],
+        projectIds: [],
+        nodeIds: ["concept:durable-outputs"],
+        freshness: "fresh",
+        status: "active",
+        confidence: 0.9,
+        backlinks: [],
+        schemaHash: "schema",
+        sourceHashes: {},
+        sourceSemanticHashes: {},
+        relatedPageIds: ["page:notes"],
+        relatedNodeIds: ["source:notes"],
+        relatedSourceIds: [],
+        createdAt: now,
+        updatedAt: now,
+        compiledFrom: [],
+        managedBy: "system"
+      }
+    ]
+  };
+}
+
 describe("shortestGraphPath", () => {
   it("prefers high-degree concept hubs over leaf sources when resolving ambiguous labels", () => {
     const graph = buildAmbiguousGraph();
@@ -145,6 +252,56 @@ describe("shortestGraphPath", () => {
 
     expect(result.found).toBe(false);
     expect(result.nodeIds).toEqual([]);
+  });
+});
+
+describe("graphStats and validateGraphArtifact", () => {
+  it("summarizes graph counts and relation evidence", () => {
+    const stats = graphStats(buildValidatedGraph());
+
+    expect(stats.counts).toMatchObject({
+      nodes: 2,
+      edges: 1,
+      hyperedges: 1,
+      pages: 2,
+      communities: 1
+    });
+    expect(stats.nodeTypes.concept).toBe(1);
+    expect(stats.edgeRelations.mentions).toBe(1);
+    expect(stats.hyperedgeRelations.participate_in).toBe(1);
+    expect(stats.evidenceClasses.extracted).toBe(2);
+  });
+
+  it("validates intact graph artifacts without warnings", () => {
+    const result = validateGraphArtifact(buildValidatedGraph());
+
+    expect(result.ok).toBe(true);
+    expect(result.errorCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+    expect(result.summary).toContain("Graph valid");
+  });
+
+  it("reports dangling references, duplicate ids, and invalid confidence", () => {
+    const graph = buildValidatedGraph();
+    graph.nodes.push({ ...graph.nodes[0], label: "duplicate notes" });
+    graph.edges[0] = {
+      ...graph.edges[0],
+      target: "concept:missing",
+      confidence: 1.2
+    };
+    graph.pages[0] = {
+      ...graph.pages[0],
+      relatedNodeIds: ["node:missing-related"]
+    };
+
+    const result = validateGraphArtifact(graph, { strict: true });
+
+    expect(result.ok).toBe(false);
+    expect(result.errorCount).toBeGreaterThanOrEqual(2);
+    expect(result.warningCount).toBe(1);
+    expect(result.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining(["duplicate_id", "dangling_edge_node", "invalid_confidence", "dangling_related_node"])
+    );
   });
 });
 

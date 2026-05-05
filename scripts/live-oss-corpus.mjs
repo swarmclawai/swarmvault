@@ -187,6 +187,26 @@ try {
           )
         ).stdout
       );
+      console.log(`[oss-corpus][${repo.id}] graph stats`);
+      const graphStats = JSON.parse(
+        (
+          await runInstalledCliCommand(`${repo.id}-graph-stats`, ["--json", "graph", "stats"], {
+            cwd: vaultDir,
+            logsDir: repoLogsDir,
+            timeoutMs: 30_000
+          })
+        ).stdout
+      );
+      console.log(`[oss-corpus][${repo.id}] graph validate`);
+      const graphValidation = JSON.parse(
+        (
+          await runInstalledCliCommand(`${repo.id}-graph-validate`, ["--json", "graph", "validate", "--strict"], {
+            cwd: vaultDir,
+            logsDir: repoLogsDir,
+            timeoutMs: 30_000
+          })
+        ).stdout
+      );
       console.log(`[oss-corpus][${repo.id}] query`);
       const query = JSON.parse(
         (
@@ -226,6 +246,8 @@ try {
         counts,
         graphQuery,
         graphQueryPages,
+        graphStats,
+        graphValidation,
         query,
         exportResult
       });
@@ -247,6 +269,11 @@ try {
           edgeCount: graphQuery.visitedEdgeIds.length,
           pagePaths: graphQueryPages.map((page) => page.path),
           summary: graphQuery.summary
+        },
+        graphValidation: {
+          ok: graphValidation.ok,
+          errorCount: graphValidation.errorCount,
+          warningCount: graphValidation.warningCount
         },
         query: {
           citations: query.citations.length,
@@ -513,6 +540,10 @@ function applyAssertions(repo, input) {
   assert.ok(Array.isArray(input.benchmark.sampleQuestions) && input.benchmark.sampleQuestions.length > 0, `${repo.id}: benchmark produced no questions`);
   assert.ok(input.benchmarkArtifact.summary?.uniqueVisitedNodes >= 1, `${repo.id}: benchmark visited no nodes`);
   assert.ok(Array.isArray(input.graphQuery.pageIds) && input.graphQuery.pageIds.length > 0, `${repo.id}: graph query returned no pages`);
+  assert.equal(input.graphStats.counts.nodes, input.counts.nodeCount, `${repo.id}: graph stats node count differed from graph artifact`);
+  assert.equal(input.graphStats.counts.edges, input.counts.edgeCount, `${repo.id}: graph stats edge count differed from graph artifact`);
+  assert.equal(input.graphValidation.ok, true, `${repo.id}: graph validation failed`);
+  assert.equal(input.graphValidation.errorCount, 0, `${repo.id}: graph validation reported errors`);
   if (Array.isArray(assertions.expectedGraphQueryKinds) && assertions.expectedGraphQueryKinds.length > 0) {
     const matchedKinds = new Set(input.graphQueryPages.map((page) => page.kind));
     assert.ok(

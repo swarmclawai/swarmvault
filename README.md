@@ -173,6 +173,8 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault graph stats
+swarmvault graph validate --strict
 swarmvault graph cluster
 swarmvault graph tree --output ./exports/tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
@@ -425,7 +427,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Visual + post-ready share kit** - every compile writes `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/`; `swarmvault graph share --post` prints concise text, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, and `swarmvault graph share --bundle [dir]` writes markdown, post text, SVG, HTML preview, and JSON metadata for easy posting, linking, or screenshotting.
 
-**Graph blast radius, status, refresh, query filters, tree, merge, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph status [path]` performs a read-only stale check over graph/report artifacts and tracked repo changes, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts with a 25% shrink guard unless `--force` is explicit, `graph query` can filter traversal by relation, context group, evidence class, node type, or language, `graph tree` writes an interactive source/module/symbol HTML tree with expand/collapse controls and a node inspector, `graph merge` combines SwarmVault or node-link JSON graphs into one namespaced artifact, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
+**Graph blast radius, status, stats, validation, refresh, query filters, tree, merge, clustering, and report export** - `graph blast <target>` traces reverse import impact through module dependencies, `graph status [path]` performs a read-only stale check over graph/report artifacts and tracked repo changes, `graph stats` prints lightweight counts and relation mix, `graph validate [graph] --strict` checks duplicate ids, dangling references, confidence bounds, and conflicted-edge evidence before export/merge/push workflows, `graph update [path]` / `graph refresh [path]` runs the code-only repo refresh cycle for graph artifacts with a 25% shrink guard unless `--force` is explicit, `graph query` can filter traversal by relation, context group, evidence class, node type, or language, `graph tree` writes an interactive source/module/symbol HTML tree with expand/collapse controls and a node inspector, `graph merge` combines SwarmVault or node-link JSON graphs into one namespaced artifact, `graph cluster [--resolution <n>]` recomputes communities, degrees, god-node flags, and graph report pages from an existing graph without re-ingesting sources, and `graph export --report` writes a self-contained HTML report with graph stats, key nodes, communities, and warnings.
 
 **Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
 

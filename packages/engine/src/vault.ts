@@ -33,10 +33,12 @@ import {
   blastRadius,
   computeNormLabel,
   explainGraphTarget,
+  graphStats,
   listHyperedges,
   queryGraph,
   shortestGraphPath,
-  topGodNodes
+  topGodNodes,
+  validateGraphArtifact
 } from "./graph-tools.js";
 import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
 import { resolveLargeRepoDefaults } from "./large-repo-defaults.js";
@@ -6249,58 +6251,22 @@ export async function listGraphHyperedges(rootDir: string, target?: string, limi
   return listHyperedges(graph, target, limit);
 }
 
-function incrementCount(record: Record<string, number>, key: string | undefined): void {
-  if (!key) {
-    return;
-  }
-  record[key] = (record[key] ?? 0) + 1;
-}
-
 export async function graphStatsVault(rootDir: string): Promise<GraphStatsResult> {
   const graph = await ensureCompiledGraph(rootDir);
-  const sourceClasses = Object.fromEntries(
-    ALL_SOURCE_CLASSES.map((sourceClass) => [sourceClass, { sources: 0, pages: 0, nodes: 0 }])
-  ) as GraphStatsResult["sourceClasses"];
-  const nodeTypes: GraphStatsResult["nodeTypes"] = {};
-  const evidenceClasses: GraphStatsResult["evidenceClasses"] = {};
-  const edgeRelations: Record<string, number> = {};
-  const hyperedgeRelations: Record<string, number> = {};
+  return graphStats(graph);
+}
 
-  for (const source of graph.sources) {
-    sourceClasses[source.sourceClass ?? "first_party"].sources += 1;
+export async function validateGraphVault(
+  rootDir: string,
+  options: { graphPath?: string; strict?: boolean } = {}
+): Promise<ReturnType<typeof validateGraphArtifact>> {
+  const graph = options.graphPath
+    ? await readJsonFile<GraphArtifact>(path.resolve(rootDir, options.graphPath))
+    : await ensureCompiledGraph(rootDir);
+  if (!graph) {
+    throw new Error(`Graph artifact not found${options.graphPath ? `: ${options.graphPath}` : ""}.`);
   }
-  for (const page of graph.pages) {
-    sourceClasses[page.sourceClass ?? "first_party"].pages += 1;
-  }
-  for (const node of graph.nodes) {
-    nodeTypes[node.type] = (nodeTypes[node.type] ?? 0) + 1;
-    sourceClasses[node.sourceClass ?? "first_party"].nodes += 1;
-  }
-  for (const edge of graph.edges) {
-    incrementCount(edgeRelations, edge.relation);
-    evidenceClasses[edge.evidenceClass] = (evidenceClasses[edge.evidenceClass] ?? 0) + 1;
-  }
-  for (const hyperedge of graph.hyperedges) {
-    incrementCount(hyperedgeRelations, hyperedge.relation);
-    evidenceClasses[hyperedge.evidenceClass] = (evidenceClasses[hyperedge.evidenceClass] ?? 0) + 1;
-  }
-
-  return {
-    generatedAt: graph.generatedAt,
-    counts: {
-      sources: graph.sources.length,
-      pages: graph.pages.length,
-      nodes: graph.nodes.length,
-      edges: graph.edges.length,
-      hyperedges: graph.hyperedges.length,
-      communities: graph.communities?.length ?? 0
-    },
-    nodeTypes,
-    evidenceClasses,
-    sourceClasses,
-    edgeRelations,
-    hyperedgeRelations
-  };
+  return validateGraphArtifact(graph, { strict: options.strict });
 }
 
 export async function refreshGraphClusters(rootDir: string, options: { resolution?: number } = {}): Promise<GraphClusterRefreshResult> {

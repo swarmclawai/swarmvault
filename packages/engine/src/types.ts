@@ -1077,6 +1077,28 @@ export interface GraphStatsResult {
   hyperedgeRelations: Record<string, number>;
 }
 
+export type GraphValidationSeverity = "error" | "warning";
+
+export interface GraphValidationIssue {
+  severity: GraphValidationSeverity;
+  code: string;
+  message: string;
+  path?: string;
+  id?: string;
+  refs?: string[];
+}
+
+export interface GraphValidationResult {
+  ok: boolean;
+  strict: boolean;
+  generatedAt: string;
+  counts: GraphStatsResult["counts"];
+  errorCount: number;
+  warningCount: number;
+  issues: GraphValidationIssue[];
+  summary: string;
+}
+
 export interface GraphClusterRefreshResult {
   graphPath: string;
   nodeCount: number;

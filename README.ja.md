@@ -173,6 +173,8 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault graph stats
+swarmvault graph validate --strict
 swarmvault graph cluster
 swarmvault graph tree --output ./exports/tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
@@ -425,7 +427,7 @@ clawhub install swarmvault
 
 **ビジュアル + 投稿しやすい share kit** - すべての compile が `wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` を生成します。`swarmvault graph share --post` は短いテキストを出力し、`swarmvault graph share --svg [path]` は 1200x630 のビジュアルカードを書き出し、`swarmvault graph share --bundle [dir]` は markdown、投稿テキスト、SVG、HTML preview、JSON metadata を書き出して、投稿、リンク共有、スクリーンショットに使いやすくします。
 
-**graph blast radius、status、refresh、query filters、tree、merge、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph status [path]` は graph/report artifacts と tracked repo changes の stale 状態を read-only で確認し、`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、node/edge が 25% を超えて減る場合は明示的な `--force` がない限り停止します。`graph query` は relation、context group、evidence class、node type、language で traversal を絞り込めます。`graph tree` は expand/collapse controls と node inspector 付きの interactive source/module/symbol HTML tree を書き出し、`graph merge` は SwarmVault または node-link JSON graph を namespace 付きの 1 つの artifact に統合します。`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
+**graph blast radius、status、stats、validation、refresh、query filters、tree、merge、clustering、report export** - `graph blast <target>` は module dependency の reverse import をたどって変更影響範囲を示し、`graph status [path]` は graph/report artifacts と tracked repo changes の stale 状態を read-only で確認し、`graph stats` は軽量な counts と relation mix を出力し、`graph validate [graph] --strict` は export/merge/push workflow の前に duplicate id、dangling reference、confidence range、conflicted-edge evidence を検査します。`graph update [path]` / `graph refresh [path]` は graph artifacts 向けに code-only repo refresh cycle を実行し、node/edge が 25% を超えて減る場合は明示的な `--force` がない限り停止します。`graph query` は relation、context group、evidence class、node type、language で traversal を絞り込めます。`graph tree` は expand/collapse controls と node inspector 付きの interactive source/module/symbol HTML tree を書き出し、`graph merge` は SwarmVault または node-link JSON graph を namespace 付きの 1 つの artifact に統合します。`graph cluster [--resolution <n>]` は再 ingest なしで既存 graph から communities、degree、god-node flags、graph report pages を再計算し、`graph export --report` は統計、主要ノード、コミュニティ、warning を含む self-contained HTML report を出力します。
 
 **グラフ diff** - `swarmvault diff` は現在のナレッジグラフを最後にコミットされたバージョンと比較し、追加/削除されたノード、エッジ、ページを表示して、compile で何が変わったかを正確に確認できます。
 

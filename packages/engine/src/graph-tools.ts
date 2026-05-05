@@ -20,6 +20,9 @@ import type {
   GraphQueryFilters,
   GraphQueryMatch,
   GraphQueryResult,
+  GraphStatsResult,
+  GraphValidationIssue,
+  GraphValidationResult,
   SearchResult
 } from "./types.js";
 import { normalizeWhitespace, uniqueBy } from "./utils.js";
@@ -382,6 +385,333 @@ export function topGodNodes(graph: GraphArtifact, limit = 10): GraphNode[] {
     .filter((node) => node.isGodNode)
     .sort((left, right) => (right.degree ?? 0) - (left.degree ?? 0))
     .slice(0, limit);
+}
+
+function incrementCount(record: Record<string, number>, key: string | undefined): void {
+  if (!key) {
+    return;
+  }
+  record[key] = (record[key] ?? 0) + 1;
+}
+
+export function graphStats(graph: GraphArtifact): GraphStatsResult {
+  const sourceClasses = {
+    first_party: { sources: 0, pages: 0, nodes: 0 },
+    third_party: { sources: 0, pages: 0, nodes: 0 },
+    resource: { sources: 0, pages: 0, nodes: 0 },
+    generated: { sources: 0, pages: 0, nodes: 0 }
+  } satisfies GraphStatsResult["sourceClasses"];
+  const nodeTypes: GraphStatsResult["nodeTypes"] = {};
+  const evidenceClasses: GraphStatsResult["evidenceClasses"] = {};
+  const edgeRelations: Record<string, number> = {};
+  const hyperedgeRelations: Record<string, number> = {};
+
+  for (const source of graph.sources) {
+    sourceClasses[source.sourceClass ?? "first_party"].sources += 1;
+  }
+  for (const page of graph.pages) {
+    sourceClasses[page.sourceClass ?? "first_party"].pages += 1;
+  }
+  for (const node of graph.nodes) {
+    nodeTypes[node.type] = (nodeTypes[node.type] ?? 0) + 1;
+    sourceClasses[node.sourceClass ?? "first_party"].nodes += 1;
+  }
+  for (const edge of graph.edges) {
+    incrementCount(edgeRelations, edge.relation);
+    evidenceClasses[edge.evidenceClass] = (evidenceClasses[edge.evidenceClass] ?? 0) + 1;
+  }
+  for (const hyperedge of graph.hyperedges ?? []) {
+    incrementCount(hyperedgeRelations, hyperedge.relation);
+    evidenceClasses[hyperedge.evidenceClass] = (evidenceClasses[hyperedge.evidenceClass] ?? 0) + 1;
+  }
+
+  return {
+    generatedAt: graph.generatedAt,
+    counts: {
+      sources: graph.sources.length,
+      pages: graph.pages.length,
+      nodes: graph.nodes.length,
+      edges: graph.edges.length,
+      hyperedges: (graph.hyperedges ?? []).length,
+      communities: graph.communities?.length ?? 0
+    },
+    nodeTypes,
+    evidenceClasses,
+    sourceClasses,
+    edgeRelations,
+    hyperedgeRelations
+  };
+}
+
+function duplicateValues(values: string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      duplicates.add(value);
+    }
+    seen.add(value);
+  }
+  return [...duplicates].sort();
+}
+
+function pushIssue(issues: GraphValidationIssue[], issue: GraphValidationIssue): void {
+  issues.push(issue);
+}
+
+function validateDuplicateIds(issues: GraphValidationIssue[], label: string, ids: string[], pathPrefix: string): void {
+  for (const id of duplicateValues(ids)) {
+    pushIssue(issues, {
+      severity: "error",
+      code: "duplicate_id",
+      message: `Duplicate ${label} id: ${id}`,
+      path: pathPrefix,
+      id
+    });
+  }
+}
+
+function validateConfidence(issues: GraphValidationIssue[], confidence: number | undefined, path: string, id: string, label: string): void {
+  if (confidence === undefined) {
+    return;
+  }
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+    pushIssue(issues, {
+      severity: "error",
+      code: "invalid_confidence",
+      message: `${label} confidence must be between 0 and 1.`,
+      path,
+      id
+    });
+  }
+}
+
+function summarizeValidation(ok: boolean, errorCount: number, warningCount: number, counts: GraphStatsResult["counts"]): string {
+  const issueText = `${errorCount} error${errorCount === 1 ? "" : "s"}, ${warningCount} warning${warningCount === 1 ? "" : "s"}`;
+  const graphText = `${counts.nodes} nodes, ${counts.edges} edges, ${counts.pages} pages`;
+  return ok ? `Graph valid (${graphText}; ${issueText}).` : `Graph invalid (${graphText}; ${issueText}).`;
+}
+
+export function validateGraphArtifact(graph: GraphArtifact, options: { strict?: boolean } = {}): GraphValidationResult {
+  const strict = options.strict === true;
+  const issues: GraphValidationIssue[] = [];
+  const stats = graphStats(graph);
+  const nodeIds = new Set(graph.nodes.map((node) => node.id));
+  const pageIds = new Set(graph.pages.map((page) => page.id));
+  const sourceIds = new Set(graph.sources.map((source) => source.sourceId));
+
+  validateDuplicateIds(
+    issues,
+    "source",
+    graph.sources.map((source) => source.sourceId),
+    "sources"
+  );
+  validateDuplicateIds(
+    issues,
+    "page",
+    graph.pages.map((page) => page.id),
+    "pages"
+  );
+  validateDuplicateIds(
+    issues,
+    "node",
+    graph.nodes.map((node) => node.id),
+    "nodes"
+  );
+  validateDuplicateIds(
+    issues,
+    "edge",
+    graph.edges.map((edge) => edge.id),
+    "edges"
+  );
+  validateDuplicateIds(
+    issues,
+    "hyperedge",
+    (graph.hyperedges ?? []).map((hyperedge) => hyperedge.id),
+    "hyperedges"
+  );
+  validateDuplicateIds(
+    issues,
+    "community",
+    (graph.communities ?? []).map((community) => community.id),
+    "communities"
+  );
+
+  for (const node of graph.nodes) {
+    const nodePath = `nodes.${node.id}`;
+    validateConfidence(issues, node.confidence, nodePath, node.id, "Node");
+    if (!node.label.trim()) {
+      pushIssue(issues, {
+        severity: "warning",
+        code: "empty_node_label",
+        message: "Node label is empty.",
+        path: nodePath,
+        id: node.id
+      });
+    }
+    if (node.pageId && !pageIds.has(node.pageId)) {
+      pushIssue(issues, {
+        severity: "error",
+        code: "dangling_node_page",
+        message: `Node references missing page ${node.pageId}.`,
+        path: nodePath,
+        id: node.id,
+        refs: [node.pageId]
+      });
+    }
+    for (const sourceId of node.sourceIds) {
+      if (!sourceIds.has(sourceId)) {
+        pushIssue(issues, {
+          severity: "warning",
+          code: "dangling_node_source",
+          message: `Node references source ${sourceId}, but the source is not present in graph.sources.`,
+          path: nodePath,
+          id: node.id,
+          refs: [sourceId]
+        });
+      }
+    }
+  }
+
+  for (const page of graph.pages) {
+    const pagePath = `pages.${page.id}`;
+    validateConfidence(issues, page.confidence, pagePath, page.id, "Page");
+    if (!page.path.trim()) {
+      pushIssue(issues, {
+        severity: "error",
+        code: "empty_page_path",
+        message: "Page path is empty.",
+        path: pagePath,
+        id: page.id
+      });
+    }
+    for (const nodeId of page.nodeIds) {
+      if (!nodeIds.has(nodeId)) {
+        pushIssue(issues, {
+          severity: "error",
+          code: "dangling_page_node",
+          message: `Page references missing node ${nodeId}.`,
+          path: pagePath,
+          id: page.id,
+          refs: [nodeId]
+        });
+      }
+    }
+    for (const relatedNodeId of page.relatedNodeIds) {
+      if (!nodeIds.has(relatedNodeId)) {
+        pushIssue(issues, {
+          severity: "warning",
+          code: "dangling_related_node",
+          message: `Page relatedNodeIds includes missing node ${relatedNodeId}.`,
+          path: pagePath,
+          id: page.id,
+          refs: [relatedNodeId]
+        });
+      }
+    }
+    for (const relatedPageId of page.relatedPageIds) {
+      if (!pageIds.has(relatedPageId)) {
+        pushIssue(issues, {
+          severity: "warning",
+          code: "dangling_related_page",
+          message: `Page relatedPageIds includes missing page ${relatedPageId}.`,
+          path: pagePath,
+          id: page.id,
+          refs: [relatedPageId]
+        });
+      }
+    }
+  }
+
+  for (const edge of graph.edges) {
+    const edgePath = `edges.${edge.id}`;
+    validateConfidence(issues, edge.confidence, edgePath, edge.id, "Edge");
+    if (!edge.relation.trim()) {
+      pushIssue(issues, {
+        severity: "error",
+        code: "empty_edge_relation",
+        message: "Edge relation is empty.",
+        path: edgePath,
+        id: edge.id
+      });
+    }
+    const missingRefs = [edge.source, edge.target].filter((nodeId) => !nodeIds.has(nodeId));
+    if (missingRefs.length) {
+      pushIssue(issues, {
+        severity: "error",
+        code: "dangling_edge_node",
+        message: `Edge references missing node${missingRefs.length === 1 ? "" : "s"} ${missingRefs.join(", ")}.`,
+        path: edgePath,
+        id: edge.id,
+        refs: missingRefs
+      });
+    }
+    if (edge.status === "conflicted" && edge.evidenceClass !== "ambiguous") {
+      pushIssue(issues, {
+        severity: "warning",
+        code: "conflicted_edge_evidence",
+        message: "Conflicted edges should use ambiguous evidence class.",
+        path: edgePath,
+        id: edge.id
+      });
+    }
+  }
+
+  for (const hyperedge of graph.hyperedges ?? []) {
+    const hyperedgePath = `hyperedges.${hyperedge.id}`;
+    validateConfidence(issues, hyperedge.confidence, hyperedgePath, hyperedge.id, "Hyperedge");
+    const missingNodeIds = hyperedge.nodeIds.filter((nodeId) => !nodeIds.has(nodeId));
+    if (missingNodeIds.length) {
+      pushIssue(issues, {
+        severity: "error",
+        code: "dangling_hyperedge_node",
+        message: `Hyperedge references missing node${missingNodeIds.length === 1 ? "" : "s"} ${missingNodeIds.join(", ")}.`,
+        path: hyperedgePath,
+        id: hyperedge.id,
+        refs: missingNodeIds
+      });
+    }
+    const missingPageIds = hyperedge.sourcePageIds.filter((pageId) => !pageIds.has(pageId));
+    if (missingPageIds.length) {
+      pushIssue(issues, {
+        severity: "error",
+        code: "dangling_hyperedge_page",
+        message: `Hyperedge references missing source page${missingPageIds.length === 1 ? "" : "s"} ${missingPageIds.join(", ")}.`,
+        path: hyperedgePath,
+        id: hyperedge.id,
+        refs: missingPageIds
+      });
+    }
+  }
+
+  for (const community of graph.communities ?? []) {
+    const missingNodeIds = community.nodeIds.filter((nodeId) => !nodeIds.has(nodeId));
+    if (missingNodeIds.length) {
+      pushIssue(issues, {
+        severity: "error",
+        code: "dangling_community_node",
+        message: `Community references missing node${missingNodeIds.length === 1 ? "" : "s"} ${missingNodeIds.join(", ")}.`,
+        path: `communities.${community.id}`,
+        id: community.id,
+        refs: missingNodeIds
+      });
+    }
+  }
+
+  const errorCount = issues.filter((issue) => issue.severity === "error").length;
+  const warningCount = issues.length - errorCount;
+  const ok = strict ? errorCount === 0 && warningCount === 0 : errorCount === 0;
+
+  return {
+    ok,
+    strict,
+    generatedAt: graph.generatedAt,
+    counts: stats.counts,
+    errorCount,
+    warningCount,
+    issues,
+    summary: summarizeValidation(ok, errorCount, warningCount, stats.counts)
+  };
 }
 
 export function listHyperedges(graph: GraphArtifact, target?: string, limit = 25): GraphHyperedge[] {

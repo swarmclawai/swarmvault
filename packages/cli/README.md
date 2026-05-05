@@ -17,6 +17,16 @@ Installed commands:
 - `swarmvault`
 - `vault` as a compatibility alias
 
+## Maintainer Validation
+
+Release preflight includes a direct CLI surface smoke before tarball smoke:
+
+```bash
+pnpm live:cli-surface
+```
+
+The smoke parses `packages/cli/src/index.ts` with the TypeScript compiler API, checks that every stable Commander command path and alias is classified in the surface manifest, runs `--help` across the full command tree, and exercises direct JSON behavior checks for the core local workflows.
+
 ## First Run
 
 ```bash
@@ -55,6 +65,8 @@ swarmvault explore "What should I research next?" --steps 3
 swarmvault lint --deep
 swarmvault graph blast ./src/index.ts
 swarmvault graph status ./src
+swarmvault graph stats
+swarmvault graph validate --strict
 swarmvault graph update .
 swarmvault graph cluster
 swarmvault graph tree --output ./exports/tree.html
@@ -427,6 +439,25 @@ Read-only graph freshness check for tracked repo roots or one explicit repo path
 - separates code-only changes from semantic refresh changes
 - recommends `swarmvault graph update` for code-only graph drift
 - recommends `swarmvault compile` when graph/report artifacts are missing, non-code files changed, or a semantic refresh is pending
+- supports global `--json` for automation
+
+### `swarmvault graph stats`
+
+Summarize the current compiled graph without opening the viewer.
+
+- reports source, page, node, edge, hyperedge, and community counts
+- breaks down node types, evidence classes, source classes, edge relations, and hyperedge relations
+- keeps the same lightweight shape as the MCP `graph_stats` tool
+- supports global `--json` for automation
+
+### `swarmvault graph validate [graph] [--strict]`
+
+Validate graph artifact integrity before exporting, merging, pushing, or publishing generated graph evidence.
+
+- defaults to the current vault's compiled `state/graph.json`
+- accepts an explicit graph JSON path for exported or merged graph artifacts
+- checks duplicate ids, dangling node/page/community/hyperedge references, confidence bounds, empty critical fields, and conflicted-edge evidence consistency
+- exits non-zero when errors are present; with `--strict`, warnings also fail the command
 - supports global `--json` for automation
 
 ### `swarmvault graph cluster [--resolution <n>]`

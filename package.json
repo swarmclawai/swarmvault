@@ -1,7 +1,7 @@
 {
   "name": "swarmvault-opensource",
   "private": true,
-  "version": "3.8.0",
+  "version": "3.9.0",
   "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {
@@ -25,6 +25,7 @@
     "live:smoke:openai": "node ./scripts/live-smoke.mjs --lane openai",
     "live:smoke:anthropic": "node ./scripts/live-smoke.mjs --lane anthropic",
     "live:oss:corpus": "node ./scripts/live-oss-corpus.mjs",
+    "live:cli-surface": "node ./scripts/cli-surface-smoke.mjs",
     "release:preflight": "node ./scripts/release-preflight.mjs",
     "release:publish": "node ./scripts/release-publish.mjs",
     "skill:publish": "node ./scripts/publish-clawhub-skill.mjs",

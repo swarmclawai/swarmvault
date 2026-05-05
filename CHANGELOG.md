@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.9.0
+
+- Added `swarmvault graph stats` for lightweight local graph counts, node type totals, evidence class totals, and top relation mix without starting the viewer.
+- Added `swarmvault graph validate [graph] [--strict]` plus engine-level graph artifact validation for duplicate ids, dangling references, confidence bounds, and inconsistent conflicted-edge evidence.
+- Added `pnpm live:cli-surface`, a parser-backed direct CLI surface smoke that discovers the Commander command tree, requires every stable command path and alias to stay classified, runs `--help` across the full CLI surface, and exercises 50+ direct JSON behavior checks across init, ingest, compile, graph, retrieval, context, task, memory, source, watch, schedule, provider, install, and scan workflows.
+- Wired the direct CLI surface smoke into `pnpm release:preflight` so release summaries now include a dedicated command-surface gate before the tarball installed-package smoke, browser smoke, and OSS corpus gates.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.9.0`.
+
 ## 3.8.0
 
 - Added parser-backed Julia and Verilog/SystemVerilog analysis via packaged WASM grammars, including symbols, imports, calls, module/interface/package extraction, and SystemVerilog instantiation relations. R sources remain detected with an explicit parser-asset diagnostic until a safe packaged grammar is available.

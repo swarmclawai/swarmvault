@@ -155,6 +155,11 @@ try {
     await assertExists(path.join(workspaceDir, "state", "retrieval", "fts-000.sqlite"));
     await assertExists(path.join(workspaceDir, "state", "retrieval", "manifest.json"));
     await assertExists(path.join(workspaceDir, "wiki", "index.md"));
+    const graphStats = await runCliJson(["graph", "stats"]);
+    assert.ok(graphStats.counts.nodes > 0, "graph stats did not report graph nodes");
+    const graphValidation = await runCliJson(["graph", "validate", "--strict"]);
+    assert.equal(graphValidation.ok, true, "graph validate --strict did not accept the compiled graph");
+    assert.equal(graphValidation.errorCount, 0, "graph validate --strict reported errors");
     const defaultShareSvgPath = path.join(workspaceDir, "wiki", "graph", "share-card.svg");
     await assertExists(defaultShareSvgPath);
     const regeneratedShare = await runCliJson(["graph", "share", "--svg"]);

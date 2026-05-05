@@ -46,6 +46,7 @@ import {
   getRetrievalStatus,
   getWatchStatus,
   graphDiff,
+  graphStatsVault,
   guideManagedSource,
   guideSourceScope,
   importInbox,
@@ -102,6 +103,7 @@ import {
   summarizeLocalWhisperSetup,
   uninstallGitHooks,
   updateMemoryTask,
+  validateGraphVault,
   watchVault
 } from "@swarmvaultai/engine";
 import { Command, Option } from "commander";
@@ -121,9 +123,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.8.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.9.0";
   } catch {
-    return "3.8.0";
+    return "3.9.0";
   }
 }
 
@@ -196,6 +198,13 @@ function summarizeRedactions(
   const secretsLabel = totalMatches === 1 ? "secret" : "secrets";
   const sourceLabel = redactions.length === 1 ? "source" : "sources";
   return `Redacted ${totalMatches} ${secretsLabel} across ${redactions.length} ${sourceLabel} (run --no-redact to disable).`;
+}
+
+function topCountEntries(record: Record<string, number>, limit = 8): Array<[string, number]> {
+  return Object.entries(record)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit);
 }
 
 function emitJson(data: unknown): void {
@@ -1519,6 +1528,56 @@ graph
     log(`State: ${status.stale ? "stale" : "fresh"}`);
     if (status.recommendedCommand) {
       log(`Recommended: ${status.recommendedCommand}`);
+    }
+  });
+
+graph
+  .command("stats")
+  .description("Summarize compiled graph counts, node types, evidence classes, and relation mix.")
+  .action(async () => {
+    const stats = await graphStatsVault(process.cwd());
+    if (isJson()) {
+      emitJson(stats);
+      return;
+    }
+    log(
+      `Graph stats: ${stats.counts.nodes} nodes, ${stats.counts.edges} edges, ${stats.counts.pages} pages, ${stats.counts.hyperedges} hyperedges, ${stats.counts.communities} communities.`
+    );
+    const nodeTypes = topCountEntries(stats.nodeTypes as Record<string, number>);
+    if (nodeTypes.length) {
+      log(`Node types: ${nodeTypes.map(([name, count]) => `${name}=${count}`).join(", ")}`);
+    }
+    const evidence = topCountEntries(stats.evidenceClasses as Record<string, number>);
+    if (evidence.length) {
+      log(`Evidence: ${evidence.map(([name, count]) => `${name}=${count}`).join(", ")}`);
+    }
+    const relations = topCountEntries(stats.edgeRelations);
+    if (relations.length) {
+      log(`Top relations: ${relations.map(([name, count]) => `${name}=${count}`).join(", ")}`);
+    }
+  });
+
+graph
+  .command("validate")
+  .description("Validate a compiled graph artifact for dangling references, duplicate ids, and confidence bounds.")
+  .argument("[graph]", "Optional graph JSON path; defaults to the current vault graph")
+  .option("--strict", "Treat warnings as failures", false)
+  .action(async (graphPath: string | undefined, options: { strict?: boolean }) => {
+    const result = await validateGraphVault(process.cwd(), {
+      graphPath,
+      strict: options.strict ?? false
+    });
+    if (isJson()) {
+      emitJson(result);
+    } else {
+      log(result.summary);
+      for (const issue of result.issues) {
+        const location = issue.path ? ` ${issue.path}` : "";
+        log(`[${issue.severity}] ${issue.code}${location}: ${issue.message}`);
+      }
+    }
+    if (!result.ok) {
+      process.exitCode = 1;
     }
   });
 

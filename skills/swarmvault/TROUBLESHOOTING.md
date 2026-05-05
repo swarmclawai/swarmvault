@@ -100,6 +100,8 @@ If it recommends `swarmvault graph update`, the detected changes are code-only a
 
 `swarmvault graph update` aborts when the refreshed graph drops more than 25% of nodes or edges. Re-run with `swarmvault graph update . --force` or `SWARMVAULT_FORCE_UPDATE=1` only when the shrink is expected, such as after deliberately deleting a large source tree.
 
+Before exporting, merging, pushing, or publishing graph artifacts, run `swarmvault graph validate --strict` to catch dangling references, duplicate ids, or invalid confidence values.
+
 ## Vault doctor reports warnings
 
 `swarmvault doctor` is the broad health summary. It checks graph artifacts, retrieval, review queues, watch state, migrations, managed sources, and task ledgers, then prints concrete follow-up commands. The `swarmvault graph serve` workbench shows the same full check list with details and copyable suggested commands.
