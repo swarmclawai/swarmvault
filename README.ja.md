@@ -183,6 +183,8 @@ swarmvault graph tree --output ./exports/tree.html
 swarmvault tree --output ./exports/tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
+swarmvault chat "How should the next agent use this vault?"
+swarmvault export ai --out ./exports/ai
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
 swarmvault retrieval status
@@ -200,6 +202,10 @@ swarmvault clone https://github.com/owner/repo --no-viz
 ローカル repo、公開 GitHub repo、docs ツリーを最短で一度見たい場合は、`swarmvault scan ./path --no-serve`、`swarmvault scan ./path --no-viz`、または `swarmvault clone https://github.com/owner/repo --branch main --no-viz` を使います。現在のディレクトリを vault として初期化し、その入力を取り込み、compile まで実行し、artifacts だけ必要な場合はグラフビューアを起動しません。compile 後に MCP stdio server に入る場合は `scan --mcp` または `clone --mcp` を使います。`wiki/graph/share-card.md`、`wiki/graph/share-card.svg`、`wiki/graph/share-kit/` も残るため、`swarmvault graph share --post` で短い共有用サマリーを出力し、`swarmvault graph share --svg ./share-card.svg` でビジュアルカードを生成し、`swarmvault graph share --bundle ./share-kit` で markdown、投稿テキスト、SVG、自包含 HTML preview、JSON metadata を含む portable folder を作成できます。
 
 `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>` は、次の agent 作業に必要なページ、ノード、エッジ、根拠を token 予算内にまとめます。出力形式は `--format markdown|json|llms` で選べ、保存済み bundle は `swarmvault context list` と `swarmvault context show <id>` で再利用できます。長めの作業では `swarmvault task start "<goal>" --target <path-or-node>` で永続 task ledger を作成し、`task update` で notes、decisions、changed paths、linked packs を記録し、`task resume <id>` で次の agent 向け handoff を出力します。既存の `memory` commands と `--memory <id>` flags は同じ task ledger の互換 alias として残ります。
+
+引き継げる会話が必要な場合は、`swarmvault chat "What should I do next?"` を使います。compile 済み wiki に対して回答し、transcript を `wiki/outputs/chat-sessions/` に、構造化 state を `state/chat-sessions/` に保存します。続きは `swarmvault chat --resume <id> "follow-up"` で再開できます。保存済み session は `swarmvault chat --list` と `swarmvault chat --delete <id>` で管理します。
+
+別 agent や crawler に静的 handoff を渡す場合は、`swarmvault export ai --out ./exports/ai` を使います。`llms.txt`、`llms-full.txt`、`graph.jsonld`、`manifest.json`、`ai-readme.md`、各ページの `.txt`/`.json` sibling を生成するので、server を起動せずに compile 済み wiki を読めます。
 
 agent に渡す前や viewer を開く前に素早く状態を見るには、`swarmvault doctor` を使います。graph、retrieval、review queue、watch status、migration state、managed sources、task ledger を確認し、`--repair` では安全に再生成できる retrieval artifacts を rebuild します。`swarmvault graph serve` のワークベンチは優先度付き next action、全 doctor check、詳細、コピー可能な推奨コマンドを表示し、安全な直接 repair、明示的な capture mode、title/tag capture fields、context-pack 作成、token budget 付き task-start actions を実行できます。
 
@@ -409,6 +415,8 @@ clawhub install swarmvault
 **save-first query** - 回答は既定で `wiki/outputs/` に書き込まれるため、有用な作業が消えずに蓄積されます。`markdown`、`report`、`slides`、`chart`、`image` に対応します。
 
 **Agent context packs** - `swarmvault context build` は、目的、任意の対象、token 予算に合わせて関連ページ、グラフ evidence、明示的な omitted list をまとめ、`wiki/context/` と `state/context-packs/` に保存します。Markdown、JSON、`llms.txt` 風の出力で、そのまま agent kickoff や PR レビュー、handoff に使えます。
+
+**Chat sessions と AI export packs** - `swarmvault chat` は multi-turn transcript を `wiki/outputs/chat-sessions/` に保存し、構造化 state を `state/chat-sessions/` に残します。`swarmvault export ai` は `llms.txt`、full-text、JSON-LD、manifest、ページごとの sibling を生成し、静的な agent handoff に使えます。
 
 **Agent task ledger** - `swarmvault task start|update|finish|resume` は、task goal、linked context packs、decisions、graph evidence、touched paths、outcomes、follow-ups を git-friendly な JSON と Markdown として `state/memory/tasks/` と `wiki/memory/tasks/` に保存します。Compile は task と decision をグラフに含めます。既存の `memory` commands は互換 alias として残ります。
 

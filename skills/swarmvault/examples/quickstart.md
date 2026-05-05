@@ -37,6 +37,9 @@ swarmvault graph serve
 swarmvault graph export --report ./graph-report.html
 swarmvault graph export --neo4j ./graph.cypher
 swarmvault merge-graphs ./graph.json ./other-graph.json --out ./merged-graph.json
+swarmvault chat "What should the next agent know?"
+swarmvault chat --resume <session-id> "What changed?"
+swarmvault export ai --out ./exports/ai
 ```
 
 ## What To Check
@@ -58,7 +61,9 @@ swarmvault merge-graphs ./graph.json ./other-graph.json --out ./merged-graph.jso
 - `graph export --report` writes a shareable HTML report when the user wants a lighter artifact than the full workspace; `graph export --neo4j` writes a Cypher import file for Neo4j workflows
 - `wiki/outputs/source-briefs/` contains a source brief
 - `wiki/outputs/` contains the saved query answer
+- `wiki/outputs/chat-sessions/` and `state/chat-sessions/` contain the chat transcript and structured session state when `chat` is used
 - `wiki/context/` and `state/context-packs/` contain the saved context pack when `context build` is used
+- `wiki/exports/ai/` or the configured export directory contains `llms.txt`, `llms-full.txt`, `graph.jsonld`, `manifest.json`, `ai-readme.md`, and optional page siblings when `export ai` is used
 - `wiki/memory/` and `state/memory/tasks/` contain task ledger artifacts when `task start` is used
 - `state/graph.json` and `state/retrieval/` exist
 - `swarmvault doctor` reports `ok` or gives concrete next commands such as `swarmvault compile` or `swarmvault retrieval rebuild`; `graph serve` shows those checks and commands in the workbench

@@ -237,6 +237,16 @@ try {
           })
         ).stdout
       );
+      console.log(`[oss-corpus][${repo.id}] chat`);
+      const chat = JSON.parse(
+        (
+          await runInstalledCliCommand(`${repo.id}-chat`, ["--json", "chat", repo.prompts.query], {
+            cwd: vaultDir,
+            logsDir: repoLogsDir,
+            timeoutMs: 60_000
+          })
+        ).stdout
+      );
       console.log(`[oss-corpus][${repo.id}] graph export`);
       const exportResult = JSON.parse(
         (
@@ -281,6 +291,15 @@ try {
           )
         ).stdout
       );
+      const aiExportResult = JSON.parse(
+        (
+          await runInstalledCliCommand(
+            `${repo.id}-ai-export`,
+            ["--json", "export", "ai", "--out", path.join(repoArtifactDir, "ai")],
+            { cwd: vaultDir, logsDir: repoLogsDir, timeoutMs: 60_000 }
+          )
+        ).stdout
+      );
 
       const graph = await readJson(path.join(vaultDir, "state", "graph.json"));
       const report = await readJson(path.join(vaultDir, "wiki", "graph", "report.json"));
@@ -305,10 +324,12 @@ try {
         graphValidation,
         clusterOnly,
         query,
+        chat,
         exportResult,
         neo4jExportResult,
         treeAliasResult,
-        mergeGraphsResult
+        mergeGraphsResult,
+        aiExportResult
       });
 
       Object.assign(result, {
@@ -338,6 +359,16 @@ try {
           citations: query.citations.length,
           savedPath: query.savedPath,
           answerPreview: truncate(normalizeWhitespace(query.answer), 220)
+        },
+        chat: {
+          sessionId: chat.session?.id,
+          turnCount: chat.session?.turns?.length ?? 0,
+          markdownPath: chat.markdownPath
+        },
+        aiExport: {
+          outputDir: aiExportResult.outputDir,
+          fileCount: aiExportResult.files?.length ?? 0,
+          truncatedFullText: aiExportResult.truncatedFullText
         }
       });
       console.log(`[oss-corpus][${repo.id}] passed`);
@@ -616,6 +647,9 @@ function applyAssertions(repo, input) {
   assert.ok(typeof input.query.answer === "string" && input.query.answer.trim().length > 0, `${repo.id}: query answer was empty`);
   assert.ok(input.query.citations.length >= (assertions.expectedQueryCitationMin ?? 1), `${repo.id}: query produced too few citations`);
   assert.ok(typeof input.query.savedPath === "string" && input.query.savedPath.length > 0, `${repo.id}: query did not save an output page`);
+  assert.ok(input.chat.session?.id, `${repo.id}: chat did not return a session id`);
+  assert.equal(input.chat.session.turns.length, 1, `${repo.id}: chat did not persist one turn`);
+  assert.ok(typeof input.chat.markdownPath === "string" && input.chat.markdownPath.length > 0, `${repo.id}: chat did not return a markdown path`);
   assert.ok(Array.isArray(input.report.surprisingConnections), `${repo.id}: report.json is missing surprisingConnections`);
   assert.ok(Array.isArray(input.report.groupPatterns), `${repo.id}: report.json is missing groupPatterns`);
   assert.ok(typeof input.exportResult.outputPath === "string" && input.exportResult.outputPath.length > 0, `${repo.id}: export did not return outputPath`);
@@ -630,6 +664,14 @@ function applyAssertions(repo, input) {
   assert.ok(
     typeof input.mergeGraphsResult.outputPath === "string" && input.mergeGraphsResult.outputPath.endsWith("merged.json"),
     `${repo.id}: merge-graphs alias did not return a merged output path`
+  );
+  assert.ok(
+    Array.isArray(input.aiExportResult.files) && input.aiExportResult.files.some((file) => file.path === "llms.txt"),
+    `${repo.id}: AI export did not include llms.txt`
+  );
+  assert.ok(
+    input.aiExportResult.files.some((file) => file.path === "graph.jsonld"),
+    `${repo.id}: AI export did not include graph.jsonld`
   );
 }
 

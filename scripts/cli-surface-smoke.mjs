@@ -26,6 +26,7 @@ const SURFACE_MANIFEST = {
   "candidate preview-scores": "behavior",
   "candidate promote": "help",
   "check-update": "behavior",
+  chat: "behavior",
   clone: "behavior",
   "cluster-only": "behavior",
   compile: "behavior",
@@ -38,6 +39,8 @@ const SURFACE_MANIFEST = {
   demo: "help",
   diff: "help",
   doctor: "behavior",
+  export: "help",
+  "export ai": "behavior",
   explore: "help",
   graph: "help",
   "graph blast": "behavior",
@@ -318,6 +321,19 @@ async function runBehaviorSmoke() {
   await runJsonCheck(["query", "What does the vault say about durable outputs?", "--no-save"], workspaceDir, "query", (result) => {
     assert.ok(typeof result.answer === "string" && result.answer.length > 0, "query returned no answer");
   });
+  const chat = await runJson(["chat", "What should an agent remember about durable outputs?"], workspaceDir);
+  assert.ok(chat.session?.id, "chat did not create a session id");
+  assert.equal(chat.session.turns.length, 1, "chat did not persist the first turn");
+  await runJsonCheck(["chat", "How does that help a follow-up agent?", "--resume", chat.session.id], workspaceDir, "chat resume", (result) => {
+    assert.equal(result.session.id, chat.session.id, "chat resume returned the wrong session");
+    assert.equal(result.session.turns.length, 2, "chat resume did not append a turn");
+  });
+  await runJsonCheck(["chat", "--list"], workspaceDir, "chat list", (result) => {
+    assert.ok(result.some((entry) => entry.id === chat.session.id), "chat list did not include the created session");
+  });
+  await runJsonCheck(["chat", "--delete", chat.session.id], workspaceDir, "chat delete", (result) => {
+    assert.equal(result.id, chat.session.id, "chat delete removed the wrong session");
+  });
   await runJsonCheck(["lint"], workspaceDir, "lint", (result) => assert.ok(Array.isArray(result), "lint did not return an array"));
   await runJsonCheck(["benchmark", "--question", "durable outputs"], workspaceDir, "benchmark", (result) => {
     assert.ok(Number.isFinite(result.avgQueryTokens), "benchmark did not return token stats");
@@ -399,6 +415,11 @@ async function runBehaviorSmoke() {
   });
   await runJsonCheck(["graph", "export", "--neo4j", path.join(workspaceDir, "exports", "graph.cypher")], workspaceDir, "graph export --neo4j", (result) => {
     assert.equal(result.format, "cypher", "graph export --neo4j did not report cypher output");
+  });
+  await runJsonCheck(["export", "ai", "--out", path.join(workspaceDir, "exports", "ai")], workspaceDir, "export ai", (result) => {
+    assert.ok(result.outputDir.endsWith(path.join("exports", "ai")), "export ai returned the wrong output path");
+    assert.ok(result.files.some((file) => file.path === "llms.txt"), "export ai did not write llms.txt");
+    assert.ok(result.files.some((file) => file.path === "graph.jsonld"), "export ai did not write graph.jsonld");
   });
   await runJsonCheck(["graph", "query", "durable outputs", "--relation", "mentions"], workspaceDir, "graph query", (result) => {
     assert.ok(typeof result.summary === "string", "graph query did not return a summary");

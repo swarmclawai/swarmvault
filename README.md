@@ -52,6 +52,7 @@ That single command initializes a vault, ingests sources, compiles a knowledge g
 - **Graph report** — surprise scoring, god nodes, community detection, plain-English explanations
 - **Share kit** — `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, `wiki/graph/share-kit/`, `swarmvault graph share --post`, `swarmvault graph share --svg`, and `swarmvault graph share --bundle` for copyable, visual, and HTML-preview first-run summaries
 - **Context packs** — `swarmvault context build "<goal>"` writes a cited, token-bounded agent handoff under `wiki/context/` plus `state/context-packs/`
+- **Chat sessions and AI export packs** — `swarmvault chat` persists multi-turn transcripts under `wiki/outputs/chat-sessions/` plus `state/chat-sessions/`, while `swarmvault export ai` writes `llms.txt`, full-text, JSON-LD, manifest, and per-page siblings for static agent handoff
 - **Agent task ledger** — `swarmvault task start|update|finish|resume` records durable local task history under `wiki/memory/` plus `state/memory/`; `memory` remains a compatibility alias
 - **Vault doctor and workbench** — `swarmvault doctor [--repair]`, MCP `doctor_vault`, and the graph viewer workbench inspect graph, retrieval, reviews, watch state, migrations, managed sources, and task state, with prioritized next actions, detailed checks, copyable commands, safe repair, explicit capture modes, and budgeted agent handoffs
 
@@ -183,6 +184,8 @@ swarmvault graph tree --output ./exports/tree.html
 swarmvault tree --output ./exports/tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
+swarmvault chat "How should the next agent use this vault?"
+swarmvault export ai --out ./exports/ai
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
 swarmvault retrieval status
@@ -200,6 +203,10 @@ swarmvault clone https://github.com/owner/repo --no-viz
 Need the fastest first pass over a local repo, public GitHub repo, or docs tree? `swarmvault scan ./path --no-serve`, `swarmvault scan ./path --no-viz`, or `swarmvault clone https://github.com/owner/repo --branch main --no-viz` initializes the current directory as a vault, ingests that input, compiles it, and skips opening the graph viewer when you only want the artifacts. Use `scan --mcp` or `clone --mcp` when the next step should be an MCP stdio server instead of the viewer. It also leaves `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` behind so you can run `swarmvault graph share --post` for compact text, `swarmvault graph share --svg ./share-card.svg` for a visual card, or `swarmvault graph share --bundle ./share-kit` for a portable folder with markdown, post text, SVG, a self-contained HTML preview, and JSON metadata.
 
 Need to hand bounded context to an agent? `swarmvault context build "Ship this feature safely" --target ./src --budget 8000` combines graph traversal, local search hits, freshness, evidence classes, and citations into a saved context pack. Use `--format llms` for an `llms.txt`-style handoff, `context list` to find prior packs, and `context show <id>` to replay one. For longer-running work, `swarmvault task start "<goal>" --target <path-or-node>` creates a durable task ledger, `task update` records notes, decisions, changed paths, and linked packs, and `task resume <id>` prints the next-agent handoff. Existing `memory` commands and `--memory <id>` flags remain supported as compatibility aliases for the same task ledger.
+
+Need a conversation that survives handoff? `swarmvault chat "What should I do next?"` asks the compiled wiki in a persisted session, writes the transcript to `wiki/outputs/chat-sessions/`, stores structured state in `state/chat-sessions/`, and resumes with `swarmvault chat --resume <id> "follow-up"`. Use `swarmvault chat --list` and `swarmvault chat --delete <id>` to manage saved sessions.
+
+Need a static handoff for another agent or crawler? `swarmvault export ai --out ./exports/ai` writes `llms.txt`, `llms-full.txt`, `graph.jsonld`, `manifest.json`, `ai-readme.md`, and per-page `.txt`/`.json` siblings so the compiled wiki can be consumed without starting a server.
 
 Need a quick health pass before handing the vault to an agent or opening the viewer? `swarmvault doctor` checks graph, retrieval, review queues, watch status, migration state, managed sources, and task ledgers. Add `--repair` to rebuild safe derived retrieval artifacts. `swarmvault graph serve` surfaces prioritized next actions plus every doctor check in the workbench, with details, copyable suggested commands, safe direct repair, explicit capture modes, title/tag capture fields, context-pack creation, and task-start actions with editable token budgets.
 

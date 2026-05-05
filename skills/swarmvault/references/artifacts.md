@@ -21,8 +21,10 @@ SwarmVault is save-first. The files on disk are the product.
 - `wiki/outputs/source-reviews/` - source-scoped review pages staged through approvals
 - `wiki/outputs/source-guides/` - guided source-integration pages that stage broader wiki updates for review
 - `wiki/outputs/source-sessions/` - resumable guided-session anchors plus question and answer state
+- `wiki/outputs/chat-sessions/` - persisted chat transcripts from `swarmvault chat`
 - `wiki/dashboards/` - recent sources, timeline, contradiction, and open-question dashboards
 - `wiki/context/` - markdown companions for saved agent context packs
+- `wiki/exports/ai/` - static AI handoff export with `llms.txt`, `llms-full.txt`, `graph.jsonld`, `manifest.json`, `ai-readme.md`, and optional per-page siblings
 - `wiki/memory/` - task ledger index and markdown task pages
 - `wiki/candidates/` - staged concept/entity pages
 - `wiki/graph/report.md` - trust and orientation report
@@ -34,6 +36,7 @@ SwarmVault is save-first. The files on disk are the product.
 
 - `state/graph.json` - compiled graph artifact
 - `state/context-packs/` - JSON context-pack artifacts with citations, token-budget accounting, included items, and omitted items
+- `state/chat-sessions/` - structured session state for resumable `swarmvault chat` conversations
 - `state/memory/tasks/` - JSON task ledger records with decisions, changed paths, outcomes, and follow-ups
 - `state/retrieval/` - local retrieval index, SQLite FTS shard, and manifest
 - `state/code-index.json` - repo-aware symbol/import index
@@ -49,5 +52,7 @@ SwarmVault is save-first. The files on disk are the product.
 - Read generated pages before re-asking the same question.
 - Use report and approval artifacts to explain what changed.
 - Use context packs when another agent, reviewer, or future session needs bounded evidence instead of a broad vault search.
+- Use chat sessions when continuity across questions matters and the transcript should remain inspectable.
+- Use AI export packs when the compiled wiki needs to travel to another static tool without running a server.
 - Use tasks when a multi-step agent workflow should survive handoffs, branch switches, or future follow-up.
 - Prefer schema edits or new sources over editing generated provenance directly.

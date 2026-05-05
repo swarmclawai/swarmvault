@@ -56,6 +56,9 @@ swarmvault graph share --svg ./share-card.svg
 swarmvault graph share --bundle ./share-kit
 swarmvault benchmark
 swarmvault query "What keeps recurring?" --commit
+swarmvault chat "What should the next agent know?"
+swarmvault chat --resume <session-id> "What changed?"
+swarmvault export ai --out ./exports/ai
 swarmvault context build "Ship this feature safely" --target ./src --budget 8000
 swarmvault task start "Ship this feature safely" --target ./src --agent codex
 swarmvault retrieval status
@@ -154,6 +157,28 @@ Compare the current `state/graph.json` against the last committed graph in git.
 - when a prior committed graph exists, prints added and removed nodes, pages, and edges
 - when no git baseline exists, falls back to a summary of the current graph state
 - supports `--json` for structured automation output
+
+### `swarmvault chat [question...] [--resume [id]] [--list] [--delete <id>]`
+
+Ask the compiled wiki in a persisted multi-turn session.
+
+- without a question, opens an interactive TTY chat loop with `/help`, `/sessions`, `/status`, `/clear`, and `/exit`
+- with a question, runs one turn and persists the transcript under `wiki/outputs/chat-sessions/`
+- stores structured session state under `state/chat-sessions/`
+- `--resume <id>` resumes by id or unique prefix; `--resume` alone resumes the most recent session
+- `--list` prints saved sessions and `--delete <id>` removes one
+- `--save-output` also writes each turn as a regular `wiki/outputs/` query page
+- supports `--format markdown|report|slides|chart|image`, `--gap-fill`, and global `--json`
+
+### `swarmvault export ai [--out <dir>] [--max-full-chars <n>] [--no-page-siblings]`
+
+Write a static AI handoff pack for agents, crawlers, and documentation systems.
+
+- defaults to `wiki/exports/ai/`
+- writes `llms.txt`, `llms-full.txt`, `graph.jsonld`, `manifest.json`, and `ai-readme.md`
+- writes per-page `.txt` and `.json` siblings under `pages/` unless `--no-page-siblings` is passed
+- caps `llms-full.txt` with `--max-full-chars` so huge vaults stay bounded
+- includes SHA-256 hashes and file metadata in `manifest.json`
 
 ### `swarmvault doctor [--repair]`
 

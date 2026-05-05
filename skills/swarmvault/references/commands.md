@@ -45,6 +45,10 @@ swarmvault compile --approve
 swarmvault diff
 swarmvault query "<question>"
 swarmvault query "<question>" --commit
+swarmvault chat "What should the next agent know?"
+swarmvault chat --resume <session-id> "What changed?"
+swarmvault chat --list
+swarmvault chat --delete <session-id>
 swarmvault context build "<goal>" --target ./src --budget 8000
 swarmvault context build "<goal>" --target concept:auth --format llms
 swarmvault context list
@@ -98,6 +102,8 @@ swarmvault graph export --html-standalone ./graph-standalone.html
 swarmvault graph export --json ./graph.json --canvas ./graph.canvas
 swarmvault graph export --obsidian ./graph-vault
 swarmvault graph export --neo4j ./graph.cypher
+swarmvault export ai --out ./exports/ai
+swarmvault export ai --out ./exports/ai --no-page-siblings
 swarmvault graph push neo4j --dry-run
 swarmvault mcp
 ```

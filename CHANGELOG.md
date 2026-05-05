@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 3.12.0
+
+- Added `swarmvault chat` for persisted multi-turn conversations over the compiled wiki, including resume, list, delete, interactive TTY controls, and optional saved query outputs.
+- Added `swarmvault export ai` for static handoff packs with `llms.txt`, full text, JSON-LD graph data, manifest metadata, human-readable export notes, and optional per-page siblings.
+- Hardened local retrieval query token handling so chat resume prompts and question text stay valid in the SQLite FTS path.
+- Extended parser-backed CLI surface smoke, installed-package live smoke, and live OSS corpus validation to exercise chat sessions and AI handoff exports.
+- Updated OSS docs, localized READMEs, site docs, spec notes, and the published ClawHub skill bundle for the new handoff surfaces.
+- Bumped OSS packages, viewer, Obsidian plugin metadata, MCP-facing version, ClawHub skill metadata, and desktop package metadata to `3.12.0`.
+
 ## 3.11.0
 
 - Added top-level command-shape compatibility aliases: `swarmvault tree`, `swarmvault merge-graphs <graph...> --out <path>`, and `swarmvault clone <input>`, each backed by the existing graph tree, graph merge, and scan implementations.

@@ -183,6 +183,8 @@ swarmvault graph tree --output ./exports/tree.html
 swarmvault tree --output ./exports/tree.html
 swarmvault graph query "auth calls" --context calls --evidence extracted --language typescript
 swarmvault query "What is the auth flow?"
+swarmvault chat "How should the next agent use this vault?"
+swarmvault export ai --out ./exports/ai
 swarmvault context build "Implement the auth refactor" --target ./src --budget 8000
 swarmvault task start "Implement the auth refactor" --target ./src --agent codex
 swarmvault retrieval status
@@ -200,6 +202,10 @@ swarmvault clone https://github.com/owner/repo --no-viz
 想要对本地仓库、公开 GitHub 仓库或文档树做最快的一次性扫描？`swarmvault scan ./path --no-serve`、`swarmvault scan ./path --no-viz` 或 `swarmvault clone https://github.com/owner/repo --branch main --no-viz` 会将当前目录初始化为 vault，导入该输入并完成编译；只需要 artifacts 时不会启动图谱查看器。需要编译后直接进入 MCP stdio server 时，用 `scan --mcp` 或 `clone --mcp`。它还会留下 `wiki/graph/share-card.md`、`wiki/graph/share-card.svg` 和 `wiki/graph/share-kit/`，之后运行 `swarmvault graph share --post` 可复制紧凑摘要，运行 `swarmvault graph share --svg ./share-card.svg` 可生成可视化卡片，或运行 `swarmvault graph share --bundle ./share-kit` 写出包含 markdown、发布文本、SVG、自包含 HTML 预览和 JSON 元数据的便携目录。
 
 需要把有边界的上下文交给 agent？`swarmvault context build "Ship this feature safely" --target ./src --budget 8000` 会把图谱遍历、本地搜索命中、freshness、evidence class 和引用合成为保存下来的 context pack。`--format llms` 会输出类似 `llms.txt` 的 handoff，`context list` 可查看历史 pack，`context show <id>` 可重新打印。对于持续更久的工作，`swarmvault task start "<goal>" --target <path-or-node>` 会创建持久任务账本，`task update` 记录 note、decision、changed path 和关联 pack，`task resume <id>` 输出下一个 agent 可接手的 handoff。既有的 `memory` 命令和 `--memory <id>` 仍作为兼容别名可用。
+
+需要可恢复的多轮问答？`swarmvault chat "What should I do next?"` 会基于已编译 wiki 回答，并把 transcript 写入 `wiki/outputs/chat-sessions/`、结构化状态写入 `state/chat-sessions/`；之后可用 `swarmvault chat --resume <id> "follow-up"` 继续。`swarmvault chat --list` 和 `swarmvault chat --delete <id>` 用于管理已保存 session。
+
+需要给其他 agent 或 crawler 的静态 handoff？`swarmvault export ai --out ./exports/ai` 会写出 `llms.txt`、`llms-full.txt`、`graph.jsonld`、`manifest.json`、`ai-readme.md` 以及每个页面的 `.txt`/`.json` sibling，让已编译 wiki 不启动 server 也能被读取。
 
 需要在交给 agent 或打开 viewer 前做一次快速健康检查？`swarmvault doctor` 会检查 graph、retrieval、review queue、watch status、migration state、managed sources 和 task ledger。加上 `--repair` 可重建安全的派生 retrieval artifact。`swarmvault graph serve` 会在工作台里显示优先级 next action、每一项 doctor check、详情和可复制的建议命令，并提供安全直接修复、明确的 capture mode、title/tag 捕获字段、context-pack 创建和带 token budget 的 task-start 操作。
 
@@ -407,6 +413,8 @@ clawhub install swarmvault
 **save-first 查询** - 默认把答案写入 `wiki/outputs/`，让有价值的工作不断积累而不是消失。支持 `markdown`、`report`、`slides`、`chart` 和 `image` 输出格式。
 
 **Agent context packs** - `swarmvault context build "<goal>" --target <path|node|page>` 会为编码或研究 agent 写出带引用、受 token 预算约束的 handoff。Context pack 包含图谱定位、纳入的证据、预算不足时明确省略的内容，并在 `wiki/context/` 与 `state/context-packs/` 留下持久 artifact。
+
+**Chat sessions 与 AI export packs** - `swarmvault chat` 会把多轮 transcript 保存到 `wiki/outputs/chat-sessions/`，并在 `state/chat-sessions/` 保存结构化状态；`swarmvault export ai` 会写出 `llms.txt`、full-text、JSON-LD、manifest 和每页 sibling，便于静态 agent handoff。
 
 **Agent task ledger** - `swarmvault task start|update|finish|resume` 会把任务目标、关联 context pack、decision、图谱证据、触达路径、结果和 follow-up 记录为 git-friendly JSON 与 Markdown，写入 `state/memory/tasks/` 和 `wiki/memory/tasks/`。Compile 会把 task 与 decision 纳入图谱；既有 `memory` 命令仍是兼容别名。
 

@@ -33,6 +33,8 @@ const requiredReadmeSubstrings = [
   "swarmvault add",
   "swarmvault compile",
   "swarmvault query",
+  "swarmvault chat",
+  "swarmvault export ai",
   "swarmvault graph serve",
   "swarmvault mcp",
   "https://www.swarmvault.ai/docs",

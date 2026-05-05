@@ -66,7 +66,9 @@ function getDatabaseSync(): DatabaseSyncCtor {
 }
 
 function toFtsQuery(query: string): string {
-  return tokenize(query).join(" OR ");
+  return tokenize(query)
+    .map((token) => `"${token.replaceAll('"', '""')}"`)
+    .join(" OR ");
 }
 
 function normalizeKind(value: unknown): PageKind | undefined {

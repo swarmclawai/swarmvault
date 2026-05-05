@@ -1,6 +1,6 @@
 # SwarmVault Skill
 
-Use the SwarmVault skill when you want a local-first knowledge vault that compiles books, articles, notes, transcripts, chat exports, emails, calendars, datasets, spreadsheets, slide decks, screenshots, URLs, code, and research captures into durable markdown pages, a searchable graph, dashboards, context packs, a task memory ledger, and reviewable outputs on disk.
+Use the SwarmVault skill when you want a local-first knowledge vault that compiles books, articles, notes, transcripts, chat exports, emails, calendars, datasets, spreadsheets, slide decks, screenshots, URLs, code, and research captures into durable markdown pages, a searchable graph, dashboards, resumable chat sessions, static AI export packs, context packs, a task memory ledger, and reviewable outputs on disk.
 
 SwarmVault is built on the [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern: keep a durable wiki between you and raw sources using a three-layer architecture (raw sources, wiki, schema). The LLM does the bookkeeping — cross-referencing, consistency, updating — while you curate sources and think about what they mean. SwarmVault turns that pattern into a local toolchain with graph navigation, search, review flows, automation, and optional provider-backed synthesis.
 
@@ -24,6 +24,8 @@ swarmvault ingest ./customer-call.mp3
 swarmvault ingest https://www.youtube.com/watch?v=dQw4w9WgXcQ
 swarmvault ingest --video https://example.com/product-demo.mp4
 swarmvault source session transcript-or-session-id
+swarmvault chat "What should the next agent know?"
+swarmvault export ai --out ./exports/ai
 ```
 
 Requirements:
@@ -43,6 +45,7 @@ npm install -g @swarmvaultai/cli@latest
 - You want knowledge work to stay on disk instead of disappearing into chat history.
 - The repo already contains `swarmvault.config.json` or `swarmvault.schema.md`.
 - You want markdown wiki pages, graph artifacts, local search, approvals, candidates, and MCP exposure from the same workspace.
+- You want resumable conversations over the compiled wiki and static handoff bundles for other tools.
 - You want a save-first compile/query/review loop for source collections, codebases, or research material.
 - You want one workflow for mixed non-code material such as EPUBs, CSV/TSV files, XLSX workbooks, PPTX decks, transcripts, Slack exports, mailbox files, and calendar exports.
 
@@ -84,6 +87,9 @@ swarmvault graph export --report ./exports/report.html
 swarmvault graph export --obsidian ./exports/graph-vault
 swarmvault graph export --neo4j ./exports/graph.cypher
 swarmvault merge-graphs ./exports/graph.json ./other-graph.json --out ./exports/merged-graph.json
+swarmvault chat "What should the next agent know?"
+swarmvault chat --resume <session-id> "What changed?"
+swarmvault export ai --out ./exports/ai
 swarmvault clone https://github.com/owner/repo --no-viz
 swarmvault mcp
 ```
@@ -95,6 +101,10 @@ If you want the same zero-config walkthrough without supplying your own inputs f
 For very large graphs, `swarmvault graph serve` and `swarmvault graph export --html` automatically start in overview mode. Add `--full` when you explicitly want the full canvas rendered. `swarmvault graph share --post` prints a compact copyable summary, `swarmvault graph share --svg [path]` writes a 1200x630 visual card, `swarmvault graph share --bundle [dir]` writes a portable share kit for posting, linking, or screenshotting, `swarmvault graph status [path]` and `swarmvault check-update [path]` check graph/report freshness without writing watch artifacts, `swarmvault graph stats` prints lightweight graph counts and relation mix, `swarmvault graph validate [graph] --strict` checks duplicate ids, dangling references, confidence bounds, and conflicted-edge evidence before export/merge/push workflows, `swarmvault graph update [path]` and `swarmvault update [path]` block unexpected node/edge drops unless `--force` is explicit, `swarmvault watch [path] --once` targets one repo root without persisting watch config, `swarmvault graph query` accepts relation/context/evidence/node/language filters for focused traversal, `swarmvault graph tree [--output <html>]` / `swarmvault tree [--output <html>]` writes an interactive source/module/symbol tree with a node inspector, `swarmvault graph merge <graph...> --out <path>` / `swarmvault merge-graphs <graph...> --out <path>` combines SwarmVault or node-link graph JSON, `swarmvault graph cluster [--resolution <n>]` and `swarmvault cluster-only [vault]` recompute communities and graph report artifacts from the existing graph without re-ingest, and `graph export` also supports `--html-standalone`, `--json`, `--obsidian`, `--canvas`, and `--neo4j` when you need richer sharing, Obsidian-native artifacts, or a Neo4j-ready Cypher import. `swarmvault diff` compares the current graph against the last committed graph so you can inspect graph-level changes after a compile.
 
 `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>` creates an agent-ready evidence pack from the compiled vault. It saves JSON under `state/context-packs/`, writes a markdown companion under `wiki/context/`, reports omitted items when the token budget is too small, and can print `markdown`, `json`, or `llms` output for kickoff prompts and handoffs.
+
+`swarmvault chat "question"` creates a persisted conversation over the compiled vault. Each turn writes structured state under `state/chat-sessions/` and a markdown transcript under `wiki/outputs/chat-sessions/`; use `swarmvault chat --resume <id> "follow-up"`, `chat --list`, and `chat --delete <id>` to manage saved sessions.
+
+`swarmvault export ai --out <dir>` writes a static handoff pack for other agents and crawlers. The pack includes `llms.txt`, `llms-full.txt`, `graph.jsonld`, `manifest.json`, `ai-readme.md`, and per-page `.txt`/`.json` siblings so the compiled wiki can be consumed without starting the viewer or MCP server.
 
 `swarmvault task start "<goal>" --target <path-or-node>` creates a durable task ledger and automatically links an initial context pack. Use `swarmvault task update <id> --note|--decision|--changed-path|--context-pack`, `swarmvault task finish <id> --outcome <text>`, and `swarmvault task resume <id> --format markdown|json|llms` to preserve decisions, evidence, touched files, outcomes, and follow-ups for the next agent. The older `memory` commands remain compatibility aliases.
 
@@ -151,7 +161,7 @@ The published ClawHub package is intentionally text-only in this release.
 5. Use `swarmvault ingest --guide`, `swarmvault source add --guide`, `swarmvault source reload --guide`, `swarmvault source guide <id>`, or `swarmvault source session <id>` when you want the stronger guided-session workflow. Set `profile.guidedIngestDefault: true` when guided mode should be the default for ingest/source commands, and use `--no-guide` to force the lighter path for a specific run. Profiles using `guidedSessionMode: "canonical_review"` stage approval-queued canonical page edits; `insights_only` profiles keep exploratory synthesis under `wiki/insights/`.
 6. Compile with `swarmvault compile`, use `compile --max-tokens <n>` when the generated wiki must fit a bounded context window, or use `compile --approve` when the change should land in the approval queue first.
 7. Inspect `wiki/`, `wiki/dashboards/`, and `state/` artifacts before broad re-search. When the vault lives inside git, `ingest|compile|query --commit` can commit those artifacts immediately after the run.
-8. Use `swarmvault query`, `swarmvault context build`, `swarmvault task`, `swarmvault memory`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
+8. Use `swarmvault query`, `swarmvault chat`, `swarmvault context build`, `swarmvault export ai`, `swarmvault task`, `swarmvault memory`, `swarmvault explore`, `swarmvault review`, `swarmvault candidate`, and `swarmvault lint` to keep the vault current, portable, and reviewable. Set `profile.deepLintDefault: true` when `lint` should run the advisory deep pass by default, and use `--no-deep` to force a structural-only run.
 9. Use `swarmvault doctor [--repair]` when the vault needs one health summary before deeper troubleshooting or handoff.
 10. Use `swarmvault graph share --post` for a quick copyable summary, `swarmvault graph share --svg [path]` for a visual share card, `swarmvault graph share --bundle [dir]` for a portable share kit, `swarmvault graph blast` for reverse-import impact checks, `swarmvault graph status [path]` or `swarmvault check-update [path]` for read-only graph freshness checks, `swarmvault graph stats` for lightweight counts and relation mix, `swarmvault graph validate [graph] --strict` before export/merge/push workflows, `swarmvault graph update [path] --force` or `swarmvault update [path] --force` only when a large graph shrink is expected, `swarmvault graph query "<seed>" --context calls --evidence extracted` for focused relation-aware traversal, `swarmvault graph tree` for an interactive source/module/symbol tree, `swarmvault graph merge <graph...> --out <path>` for combining SwarmVault or node-link JSON, `swarmvault graph cluster` or `swarmvault cluster-only` for graph community/report refresh without re-ingest, `swarmvault graph serve` for the live workspace, detailed health workbench, prioritized next actions, explicit capture modes, title/tag capture fields, budgeted agent handoffs, and bookmarklet clipper, `swarmvault graph export --report` for a self-contained HTML report, `swarmvault graph export --neo4j <path>` for a Neo4j-ready Cypher import, other `swarmvault graph export` formats, `swarmvault graph push neo4j`, or `swarmvault mcp` when the vault needs to be explored or shared elsewhere.
 
@@ -164,6 +174,8 @@ The published ClawHub package is intentionally text-only in this release.
 - `wiki/outputs/source-sessions/` for resumable guided session anchors
 - `wiki/outputs/source-reviews/` for staged source-scoped review artifacts
 - `wiki/outputs/source-guides/` for guided source integration artifacts
+- `wiki/outputs/chat-sessions/` for persisted multi-turn chat transcripts
+- `wiki/exports/ai/` for static AI handoff packs with `llms.txt`, full text, JSON-LD graph data, manifests, and per-page siblings
 - `wiki/dashboards/` for recent sources, reading log, timeline, source sessions, source guides, research map, contradictions, and open questions
 - `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, and `wiki/graph/share-kit/` for post-ready text, visual graph summaries, HTML preview, and JSON metadata generated on compile
 - `wiki/context/` for markdown context-pack companions
@@ -171,6 +183,7 @@ The published ClawHub package is intentionally text-only in this release.
 - `wiki/candidates/` for staged concept/entity pages
 - `state/graph.json` for the compiled graph
 - `state/context-packs/` for saved JSON context packs with citations, token-budget accounting, included items, and omitted items
+- `state/chat-sessions/` for structured resumable chat session state
 - `state/memory/tasks/` for saved JSON task ledger records
 - `state/retrieval/` for the local retrieval index and manifest
 - `state/sources.json` plus `state/sources/<id>/` for managed-source registry state and working sync data

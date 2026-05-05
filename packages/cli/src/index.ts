@@ -19,6 +19,7 @@ import {
   addManagedSource,
   addWatchedRoot,
   archiveCandidate,
+  askChatSession,
   autoCommitWikiChanges,
   benchmarkVault,
   blastRadiusVault,
@@ -27,6 +28,7 @@ import {
   compileVault,
   consolidateVault,
   createSupersessionEdge,
+  deleteChatSession,
   deleteContextPack,
   deleteManagedSource,
   doctorRetrieval,
@@ -34,6 +36,7 @@ import {
   downloadWhisperModel,
   explainGraphVault,
   exploreVault,
+  exportAiPack,
   exportGraphFormat,
   exportGraphHtml,
   exportGraphReportHtml,
@@ -58,6 +61,7 @@ import {
   lintVault,
   listApprovals,
   listCandidates,
+  listChatSessions,
   listContextPacks,
   listGodNodes,
   listManagedSourceRecords,
@@ -123,9 +127,9 @@ program
 function readCliVersion(): string {
   try {
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.11.0";
+    return typeof packageJson.version === "string" && packageJson.version.trim() ? packageJson.version : "3.12.0";
   } catch {
-    return "3.11.0";
+    return "3.12.0";
   }
 }
 
@@ -515,6 +519,127 @@ async function runScanCommand(
     });
   } else if (isJson()) {
     emitJson({ ...result, compiled, shareCardPath, shareCardSvgPath, shareKitPath });
+  }
+}
+
+async function resolveChatResumeId(resume: boolean | string | undefined): Promise<string | undefined> {
+  if (!resume) {
+    return undefined;
+  }
+  if (typeof resume === "string") {
+    return resume;
+  }
+  const sessions = await listChatSessions(process.cwd());
+  return sessions[0]?.id;
+}
+
+function logChatSessions(sessions: Awaited<ReturnType<typeof listChatSessions>>): void {
+  if (!sessions.length) {
+    log("No chat sessions yet.");
+    return;
+  }
+  for (const session of sessions) {
+    log(`${session.id}  ${session.turnCount} turn${session.turnCount === 1 ? "" : "s"}  ${session.title}`);
+    log(`  updated: ${session.updatedAt}`);
+    log(`  markdown: ${session.markdownPath}`);
+  }
+}
+
+async function runChatQuestion(
+  question: string,
+  options: {
+    resume?: boolean | string;
+    saveOutput?: boolean;
+    gapFill?: boolean;
+    format?: "markdown" | "report" | "slides" | "chart" | "image";
+    maxHistoryTurns?: string;
+  }
+): Promise<Awaited<ReturnType<typeof askChatSession>>> {
+  const sessionId = await resolveChatResumeId(options.resume);
+  return askChatSession(process.cwd(), {
+    question,
+    sessionId,
+    saveOutput: options.saveOutput ?? false,
+    gapFill: options.gapFill ?? false,
+    format: options.format,
+    maxHistoryTurns: parsePositiveInt(options.maxHistoryTurns, 6)
+  });
+}
+
+async function runInteractiveChat(options: {
+  resume?: boolean | string;
+  saveOutput?: boolean;
+  gapFill?: boolean;
+  format?: "markdown" | "report" | "slides" | "chart" | "image";
+  maxHistoryTurns?: string;
+}): Promise<void> {
+  if (isJson()) {
+    throw new Error("Interactive chat is not available with --json. Pass a question for one-shot JSON output.");
+  }
+  if (!process.stdin.isTTY) {
+    throw new Error("Pass a chat question, or run `swarmvault chat` in an interactive terminal.");
+  }
+
+  let sessionId = await resolveChatResumeId(options.resume);
+  log(sessionId ? `Resuming chat session ${sessionId}.` : "Starting a new chat session.");
+  log("Type /help for commands or /exit to quit.");
+
+  const reader = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    while (true) {
+      const input = (await reader.question("swarmvault> ")).trim();
+      if (!input) {
+        continue;
+      }
+      if (input === "/exit" || input === "/quit") {
+        break;
+      }
+      if (input === "/help") {
+        log(
+          [
+            "/help              Show commands",
+            "/sessions          List chat sessions",
+            "/status            Show vault health summary",
+            "/clear             Start a fresh session",
+            "/exit              Quit"
+          ].join("\n")
+        );
+        continue;
+      }
+      if (input === "/sessions") {
+        logChatSessions(await listChatSessions(process.cwd()));
+        continue;
+      }
+      if (input === "/status") {
+        const report = await doctorVault(process.cwd(), {});
+        log(`Vault health: ${report.ok ? "ok" : "needs attention"} (${report.recommendations.length} recommendation(s))`);
+        for (const recommendation of report.recommendations.slice(0, 5)) {
+          log(`- ${recommendation.label}: ${recommendation.command ?? recommendation.summary}`);
+        }
+        continue;
+      }
+      if (input === "/clear") {
+        sessionId = undefined;
+        log("Started a fresh chat session.");
+        continue;
+      }
+
+      const result = await askChatSession(process.cwd(), {
+        question: input,
+        sessionId,
+        saveOutput: options.saveOutput ?? false,
+        gapFill: options.gapFill ?? false,
+        format: options.format,
+        maxHistoryTurns: parsePositiveInt(options.maxHistoryTurns, 6)
+      });
+      sessionId = result.session.id;
+      log(result.answer);
+      log(`Session: ${result.session.id}`);
+      log(`Saved transcript: ${result.markdownPath}`);
+      await maybeEmitHeuristicNotice(["chat"]);
+    }
+  } finally {
+    reader.close();
   }
 }
 
@@ -1127,6 +1252,71 @@ program
     }
   );
 
+program
+  .command("chat")
+  .description("Ask the compiled wiki in a persisted multi-turn chat session.")
+  .argument("[question...]", "Question to ask in a chat session")
+  .option("--resume [id]", "Resume a chat session by id/prefix, or the most recent session when no id is supplied")
+  .option("--list", "List saved chat sessions", false)
+  .option("--delete <id>", "Delete a saved chat session by id/prefix")
+  .option("--save-output", "Also persist each answer as a regular wiki/outputs query page", false)
+  .option("--gap-fill", "Pull external web-search evidence when the local wiki has gaps (requires webSearch.tasks.queryProvider).")
+  .option("--max-history-turns <n>", "Number of prior turns to include as conversational context", "6")
+  .addOption(
+    new Option("--format <format>", "Answer format for generated turns")
+      .choices(["markdown", "report", "slides", "chart", "image"])
+      .default("markdown")
+  )
+  .action(
+    async (
+      questionParts: string[] | undefined,
+      options: {
+        resume?: boolean | string;
+        list?: boolean;
+        delete?: string;
+        saveOutput?: boolean;
+        gapFill?: boolean;
+        maxHistoryTurns?: string;
+        format?: "markdown" | "report" | "slides" | "chart" | "image";
+      }
+    ) => {
+      if (options.list) {
+        const sessions = await listChatSessions(process.cwd());
+        if (isJson()) {
+          emitJson(sessions);
+        } else {
+          logChatSessions(sessions);
+        }
+        return;
+      }
+      if (options.delete) {
+        const deleted = await deleteChatSession(process.cwd(), options.delete);
+        if (isJson()) {
+          emitJson(deleted);
+        } else {
+          log(`Deleted chat session ${deleted.id}`);
+        }
+        return;
+      }
+
+      const question = (questionParts ?? []).join(" ").trim();
+      if (!question) {
+        await runInteractiveChat(options);
+        return;
+      }
+
+      const result = await runChatQuestion(question, options);
+      if (isJson()) {
+        emitJson(result);
+      } else {
+        log(result.answer);
+        log(`Session: ${result.session.id}`);
+        log(`Saved transcript: ${result.markdownPath}`);
+      }
+      await maybeEmitHeuristicNotice(["chat"]);
+    }
+  );
+
 const context = program.command("context").description("Build and manage token-bounded agent context packs.");
 
 context
@@ -1565,6 +1755,31 @@ program
           "Note: graph-guided context is larger than the full corpus on this vault. The benchmark is only meaningful once the corpus exceeds the graph traversal budget."
         );
       }
+    }
+  });
+
+const exportCommand = program.command("export").description("Export portable SwarmVault artifacts.");
+
+exportCommand
+  .command("ai")
+  .description("Export static AI handoff files for agents, crawlers, and documentation systems.")
+  .option("--out <dir>", "Output directory", path.join("wiki", "exports", "ai"))
+  .option("--max-full-chars <n>", "Maximum characters to include in llms-full.txt", "5000000")
+  .option("--no-page-siblings", "Skip per-page .txt and .json sibling files")
+  .action(async (options: { out?: string; maxFullChars?: string; pageSiblings?: boolean }) => {
+    const result = await exportAiPack(process.cwd(), {
+      outDir: options.out,
+      maxFullChars: parsePositiveInt(options.maxFullChars, 5_000_000),
+      pageSiblings: options.pageSiblings ?? true
+    });
+    if (isJson()) {
+      emitJson(result);
+      return;
+    }
+    log(`Exported AI handoff pack to ${result.outputDir}`);
+    log(`Files: ${result.files.length}; pages: ${result.pageCount}; nodes: ${result.nodeCount}; edges: ${result.edgeCount}`);
+    if (result.truncatedFullText) {
+      log("llms-full.txt was truncated; rerun with --max-full-chars for a larger export.");
     }
   });
 

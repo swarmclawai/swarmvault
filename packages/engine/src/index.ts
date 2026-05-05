@@ -1,8 +1,10 @@
 /// <reference path="./shims.d.ts" />
 
 export { installAgent, installConfiguredAgents } from "./agents.js";
+export { exportAiPack } from "./ai-export.js";
 export { autoCommitWikiChanges } from "./auto-commit.js";
 export { DEFAULT_PROMOTION_CONFIG, evaluateCandidateForPromotion } from "./candidate-promotion.js";
+export { askChatSession, deleteChatSession, listChatSessions, readChatSession } from "./chat.js";
 export {
   defaultVaultConfig,
   defaultVaultSchema,

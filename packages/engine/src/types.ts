@@ -1679,6 +1679,81 @@ export interface QueryResult {
   outputAssets: OutputAsset[];
 }
 
+export interface AiExportOptions {
+  outDir?: string;
+  maxFullChars?: number;
+  pageSiblings?: boolean;
+}
+
+export interface AiExportFile {
+  kind: "index" | "full-text" | "graph-jsonld" | "manifest" | "readme" | "page-text" | "page-json";
+  path: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface AiExportResult {
+  outputDir: string;
+  generatedAt: string;
+  pageCount: number;
+  sourceCount: number;
+  nodeCount: number;
+  edgeCount: number;
+  truncatedFullText: boolean;
+  files: AiExportFile[];
+}
+
+export interface VaultChatTurn {
+  id: string;
+  createdAt: string;
+  question: string;
+  answer: string;
+  citations: string[];
+  relatedPageIds: string[];
+  relatedNodeIds: string[];
+  relatedSourceIds: string[];
+  outputFormat: OutputFormat;
+  savedPath?: string;
+}
+
+export interface VaultChatSession {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  rootDir: string;
+  markdownPath: string;
+  turns: VaultChatTurn[];
+}
+
+export interface VaultChatSessionSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turnCount: number;
+  markdownPath: string;
+}
+
+export interface AskChatOptions {
+  question: string;
+  sessionId?: string;
+  title?: string;
+  saveOutput?: boolean;
+  format?: OutputFormat;
+  gapFill?: boolean;
+  maxHistoryTurns?: number;
+}
+
+export interface AskChatResult {
+  session: VaultChatSession;
+  turn: VaultChatTurn;
+  answer: string;
+  markdownPath: string;
+  statePath: string;
+  resumed: boolean;
+}
+
 export interface LintFinding {
   severity: "error" | "warning" | "info";
   code: string;

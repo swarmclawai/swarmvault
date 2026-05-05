@@ -46,6 +46,8 @@ const requiredSubstrings = [
   "swarmvault add https://arxiv.org/abs/2401.12345",
   "swarmvault compile",
   "swarmvault query \"What is the auth flow?\"",
+  "swarmvault chat \"How should the next agent use this vault?\"",
+  "swarmvault export ai --out ./exports/ai",
   "swarmvault graph serve",
   "swarmvault check-update ./src",
   "swarmvault update ./src",

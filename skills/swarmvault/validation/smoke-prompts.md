@@ -13,7 +13,7 @@ Expected shape:
 - runs `pnpm live:cli-surface` from the OSS repo before release preflight when CLI command coverage is in scope
 - expects the smoke to parse `packages/cli/src/index.ts` with the TypeScript compiler API
 - expects every stable command path and alias to be classified in the surface manifest
-- expects `--help` coverage across the full command tree plus direct JSON behavior checks for the main local workflows
+- expects `--help` coverage across the full command tree plus direct JSON behavior checks for the main local workflows, including `swarmvault chat` and `swarmvault export ai`
 
 ## First-run prompt
 
@@ -31,6 +31,8 @@ Expected shape:
 - prefers `wiki/graph/report.md` once compile exists
 - mentions `wiki/graph/share-card.md`, `wiki/graph/share-card.svg`, `wiki/graph/share-kit/`, `swarmvault graph share --post`, `swarmvault graph share --svg`, or `swarmvault graph share --bundle` when the user wants a copyable, visual, or portable summary
 - mentions `swarmvault context build`, `wiki/context/`, or `state/context-packs/` when the user asks for agent handoff or bounded review context
+- mentions `swarmvault chat`, `wiki/outputs/chat-sessions/`, or `state/chat-sessions/` when the user asks for a reusable conversation over the vault
+- mentions `swarmvault export ai`, `llms.txt`, or `wiki/exports/ai/` when the user asks for a static handoff to another tool
 - mentions `swarmvault memory`, `wiki/memory/`, or `state/memory/tasks/` when the user asks for durable task memory or handoff history
 - uses or suggests `swarmvault doctor` when the user asks whether the vault is ready for handoff, query, or viewer inspection
 
@@ -73,6 +75,33 @@ Expected shape:
 - uses `swarmvault context build "<goal>" --target <path-or-node> --budget <tokens>`
 - points at both `wiki/context/` and `state/context-packs/`
 - mentions omitted items when the token budget is too small
+
+## Chat session prompt
+
+Prompt:
+
+> Ask the vault a question, resume with a follow-up, and show where the transcript is saved.
+
+Expected shape:
+
+- uses `swarmvault chat "<question>"`
+- captures the returned session id
+- uses `swarmvault chat --resume <id> "<follow-up>"`
+- points at both `wiki/outputs/chat-sessions/` and `state/chat-sessions/`
+- uses `swarmvault chat --list` or `swarmvault chat --delete <id>` when the user asks to manage saved sessions
+
+## Static AI export prompt
+
+Prompt:
+
+> Export this compiled vault as a static handoff pack for another tool.
+
+Expected shape:
+
+- compiles first when graph/search artifacts are missing or stale
+- uses `swarmvault export ai --out <dir>`
+- checks that `llms.txt`, `llms-full.txt`, `graph.jsonld`, `manifest.json`, and `ai-readme.md` exist
+- mentions page sibling files when they are enabled
 
 ## Task ledger prompt
 

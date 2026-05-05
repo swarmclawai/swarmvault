@@ -916,6 +916,18 @@ try {
     assert.ok(outputsIndex.includes(path.basename(result.savedPath, ".md")), "outputs index did not include saved output");
   });
 
+  await runStep("chat-session", async () => {
+    const first = await runCliJson(["chat", "What should a future agent remember about durable outputs?"]);
+    assert.ok(first.session?.id, "chat did not return a session id");
+    assert.equal(first.session.turns.length, 1, "chat did not persist the first turn");
+    await assertExists(first.markdownPath);
+    const resumed = await runCliJson(["chat", "How should that guide the next task?", "--resume", first.session.id]);
+    assert.equal(resumed.session.id, first.session.id, "chat resume returned a different session");
+    assert.equal(resumed.session.turns.length, 2, "chat resume did not append a second turn");
+    const sessions = await runCliJson(["chat", "--list"]);
+    assert.ok(sessions.some((session) => session.id === first.session.id), "chat list did not include the saved session");
+  });
+
   await runStep("benchmark", async () => {
     const autoBenchmarkPath = path.join(workspaceDir, "state", "benchmark.json");
     await assertExists(autoBenchmarkPath);
@@ -1441,6 +1453,11 @@ try {
       assert.ok((await fs.readFile(graphMlPath, "utf8")).includes("<graphml"), "graphml export did not contain graphml markup");
       assert.ok((await fs.readFile(cypherPath, "utf8")).includes("MERGE (n:SwarmNode"), "cypher export did not contain Cypher nodes");
       assert.ok((await fs.readFile(neo4jPath, "utf8")).includes("MERGE (n:SwarmNode"), "neo4j export alias did not contain Cypher nodes");
+
+      const aiExport = await runCliJson(["export", "ai", "--out", path.join(exportDir, "ai")]);
+      assert.ok(aiExport.files.some((file) => file.path === "llms.txt"), "AI export did not include llms.txt");
+      assert.ok(aiExport.files.some((file) => file.path === "graph.jsonld"), "AI export did not include graph.jsonld");
+      await assertExists(path.join(exportDir, "ai", "manifest.json"));
     });
 
     await runStep("graph-export-overview", async () => {
@@ -1656,8 +1673,41 @@ try {
     });
 
     await runStep("graph-update", async () => {
+      const updateWorkspaceDir = path.join(artifactDir, "graph-update-workspace");
+      await fs.mkdir(path.join(updateWorkspaceDir, ".git"), { recursive: true });
+      await fs.mkdir(path.join(updateWorkspaceDir, "src"), { recursive: true });
+      await runCliJson(["init"], { cwd: updateWorkspaceDir });
       await fs.writeFile(
-        path.join(workspaceDir, "apps", "alpha", "src", "widget.ts"),
+        path.join(updateWorkspaceDir, "src", "util.ts"),
+        [
+          "export function formatLabel(name: string): string {",
+          "  return `Widget:${name}`;",
+          "}",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(updateWorkspaceDir, "src", "widget.ts"),
+        [
+          "import { formatLabel } from './util';",
+          "",
+          "export function renderWidget(name: string): string {",
+          "  return formatLabel(name);",
+          "}",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+      await runCliJson(["ingest", "src", "--repo-root", "."], { cwd: updateWorkspaceDir });
+      await runCliJson(["compile"], { cwd: updateWorkspaceDir });
+      await fs.writeFile(
+        path.join(updateWorkspaceDir, "guide.md"),
+        ["# Update Guide", "", "Repo update should report this non-code path for semantic refresh."].join("\n"),
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(updateWorkspaceDir, "src", "widget.ts"),
         [
           "import { formatLabel } from './util';",
           "",
@@ -1668,8 +1718,8 @@ try {
         ].join("\n"),
         "utf8"
       );
-      const result = await runCliJson(["graph", "update", "."]);
-      assert.ok(result.watchedRepoRoots.some((entry) => path.resolve(entry) === path.resolve(workspaceDir)), "graph update did not use the explicit repo root");
+      const result = await runCliJson(["graph", "update", ".", "--force"], { cwd: updateWorkspaceDir });
+      assert.ok(result.watchedRepoRoots.some((entry) => path.resolve(entry) === path.resolve(updateWorkspaceDir)), "graph update did not use the explicit repo root");
       assert.ok(result.repoUpdatedCount > 0, "graph update did not report updated code sources");
       assert.equal(
         result.pendingSemanticRefreshCount,
@@ -1677,15 +1727,15 @@ try {
         "graph update pending semantic refresh count should match returned paths"
       );
       assert.ok(
-        (result.pendingSemanticRefreshPaths ?? []).some((entry) => entry.endsWith("managed/repo/guide.md")),
+        (result.pendingSemanticRefreshPaths ?? []).some((entry) => entry.endsWith("guide.md")),
         "graph update should preserve the pending non-code semantic refresh entry"
       );
-      const codeIndex = JSON.parse(await fs.readFile(path.join(workspaceDir, "state", "code-index.json"), "utf8"));
-      const updatedWidget = codeIndex.entries?.find((entry) => entry.repoRelativePath === "apps/alpha/src/widget.ts");
+      const codeIndex = JSON.parse(await fs.readFile(path.join(updateWorkspaceDir, "state", "code-index.json"), "utf8"));
+      const updatedWidget = codeIndex.entries?.find((entry) => entry.repoRelativePath === "src/widget.ts");
       assert.ok(updatedWidget?.sourceId, "graph update did not refresh the widget code-index entry");
-      widgetModulePath = `code/${updatedWidget.sourceId}.md`;
-      await assertExists(path.join(workspaceDir, "wiki", widgetModulePath));
-      const updateAlias = await runCliJson(["update", "."]);
+      const updateWidgetModulePath = `code/${updatedWidget.sourceId}.md`;
+      await assertExists(path.join(updateWorkspaceDir, "wiki", updateWidgetModulePath));
+      const updateAlias = await runCliJson(["update", ".", "--force"], { cwd: updateWorkspaceDir });
       assert.ok(Array.isArray(updateAlias.watchedRepoRoots), "update alias did not return watched roots");
     });
 
@@ -2072,7 +2122,7 @@ async function runStep(name, fn) {
 
 async function runCliJson(args, options = {}) {
   const result = await runInstalledCliCommand(args.join("-").replaceAll(path.sep, "_"), ["--json", ...args], {
-    cwd: workspaceDir,
+    cwd: options.cwd ?? workspaceDir,
     env: { ...inheritedEnv(), ...(options.env ?? {}) }
   });
   const lines = result.stdout
