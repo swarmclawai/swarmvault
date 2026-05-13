@@ -321,6 +321,16 @@ swarmvault source reload --all
 
 `source add` registers the source, syncs it into the vault, compiles once, and writes a source-scoped brief under `wiki/outputs/source-briefs/`. Add `--guide` when you want a resumable guided session under `wiki/outputs/source-sessions/`, a staged source review and source guide, plus approval-bundled canonical page edits when `profile.guidedSessionMode` is `canonical_review`. Profiles using `insights_only` keep the guided synthesis in `wiki/insights/` instead. Set `profile.guidedIngestDefault: true` in `swarmvault.config.json` to make guided mode the default for `ingest`, `source add`, and `source reload`; use `--no-guide` when you need the lighter path for a specific run. It now works for recurring local files as well as directories, public repos, and docs hubs. Use `ingest` for deliberate one-off files or URLs, and use `add` for research/article normalization.
 
+For public X/Twitter research, run the [TweetClaw OpenClaw plugin](https://github.com/Xquik-dev/tweetclaw) before SwarmVault when you need structured tweet search, reply search, user lookup, follower export, media records, monitor events, webhooks, or giveaway draw data. Save the TweetClaw JSON or markdown results under a folder such as `./exports/x-twitter/`, then ingest that folder:
+
+```bash
+openclaw plugins install @xquik/tweetclaw
+swarmvault ingest ./exports/x-twitter --guide
+swarmvault compile
+```
+
+Keep TweetClaw responsible for X/Twitter collection and approval-gated visible actions. Keep SwarmVault responsible for durable source storage, wiki synthesis, graph links, search, and agent handoff packs.
+
 <!-- readme-section:agent-setup -->
 ## Agent and MCP Setup
 

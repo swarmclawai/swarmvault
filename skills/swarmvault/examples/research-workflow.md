@@ -25,6 +25,26 @@ swarmvault export ai --out ./exports/ai
 swarmvault explore "What should I read next?" --steps 3
 ```
 
+## X/Twitter Source Capture
+
+When the research source is public X/Twitter activity, collect the source data
+with the TweetClaw OpenClaw plugin first, then ingest the saved results into the
+vault:
+
+```bash
+openclaw plugins install @xquik/tweetclaw
+# Use TweetClaw for search tweets, search tweet replies, user lookup,
+# follower export, media records, monitor events, webhooks, or giveaway draws.
+swarmvault ingest ./exports/x-twitter --guide
+swarmvault compile
+swarmvault query "What claims, people, and source clusters appear in this X/Twitter corpus?"
+```
+
+Keep TweetClaw responsible for X/Twitter collection and approval-gated visible
+actions such as post tweets, post tweet replies, and direct messages. Keep
+SwarmVault responsible for durable source storage, wiki synthesis, graph links,
+search, and handoff packs.
+
 ## What To Check
 
 - `raw/sources/` contains normalized markdown captures for `add`
