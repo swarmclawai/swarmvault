@@ -1,0 +1,67 @@
+name: LLM Wiki base gate
+
+on:
+  push:
+    branches:
+      - main
+      - "sprint-*/**"
+      - "sprint-*"
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: llmwiki-base-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: full (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Activate pnpm 10.32.1 via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build (produces packages/cli/dist)
+        run: pnpm build
+      - name: Full pnpm test (strict gate)
+        run: pnpm test
+      - name: Smoke harness
+        run: pnpm --filter @swarmvaultai/cli exec vitest run ../../smoke/llmwiki-base.test.ts
+
+  smoke-windows:
+    name: smoke (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Activate pnpm 10.32.1 via Corepack
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+      - name: Install dependencies (ignore-scripts per brief)
+        run: pnpm install --ignore-scripts
+      # --shell-emulator routes scripts through @yarnpkg/shell so engine's
+      # build script (test -f, rm -rf, mkdir -p, cp -R) works on Windows
+      # without needing git-bash on PATH. Linux/macOS jobs don't need this.
+      - name: Build (produces packages/*/dist via shell emulator)
+        run: pnpm --shell-emulator build
+      # Windows gate: smoke harness only. Full pnpm test on Windows has 6 known
+      # failures tracked in WINDOWS_KNOWN_ISSUES.md and is intentionally NOT run
+      # here.
+      - name: Smoke harness only
+        run: pnpm --filter @swarmvaultai/cli exec vitest run ../../smoke/llmwiki-base.test.ts
