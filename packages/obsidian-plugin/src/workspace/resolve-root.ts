@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, parse, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve } from "node:path/posix";
 import { WORKSPACE_MARKER, WORKSPACE_WALKUP_LIMIT } from "../constants";
 
 export interface ResolveRootOptions {
