@@ -53,6 +53,7 @@
     "@retorquere/bibtex-parser": "^9.0.29",
     "@vscode/tree-sitter-wasm": "^0.3.1",
     "chokidar": "^4.0.3",
+    "cli-progress": "^3.12.0",
     "compromise": "^14.14.4",
     "csv-parse": "^6.2.1",
     "fast-xml-parser": "^5.5.11",
@@ -87,6 +88,7 @@
     "zod": "^4.1.8"
   },
   "devDependencies": {
+    "@types/cli-progress": "^3.11.6",
     "@types/ini": "^4.1.1",
     "@types/jsdom": "^27.0.0",
     "@types/mailparser": "^3.4.6",
@@ -94,9 +96,9 @@
     "@types/node": "^24.6.0",
     "@types/turndown": "^5.0.5",
     "graphology-types": "^0.24.8",
-    "tsup": "^8.5.0",
     "tree-sitter-julia": "0.23.1",
     "tree-sitter-systemverilog": "0.3.1",
+    "tsup": "^8.5.0",
     "vitest": "^3.2.4"
   }
 }
