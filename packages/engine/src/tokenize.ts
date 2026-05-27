@@ -24,14 +24,27 @@ function splitTermToTokens(term: string, tokens: string[]): void {
  * returns nothing (e.g. very short strings, non-English text, or edge
  * cases that confuse the grammar).
  *
+ * For CJK text (Chinese/Japanese/Korean), extracts individual characters
+ * so that SQLite FTS5 with `tokenize='trigram'` can match them against
+ * the trigram-indexed content.
+ *
  * This is the shared replacement for ad-hoc `[a-z][a-z0-9-]{3,}` style
  * regex tokenization that used to live in analysis.ts and search.ts.
  */
 export function tokenize(text: string): string[] {
   const lower = text.toLowerCase();
+
+  // Extract contiguous CJK blocks as whole phrases for trigram FTS matching.
+  // SQLite trigram tokenizer requires >= 3 characters to match, so individual
+  // CJK characters won't work — we must keep CJK sequences together.
+  const cjkBlocks = lower.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]+/g) ?? [];
+
+  // Remove CJK chars so compromise handles only the ASCII portion.
+  const asciiText = lower.replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]+/g, " ");
+
   try {
-    const terms = nlp(lower).terms().out("array") as string[];
-    const tokens: string[] = [];
+    const terms = nlp(asciiText).terms().out("array") as string[];
+    const tokens: string[] = [...cjkBlocks];
     for (const term of terms) {
       splitTermToTokens(term, tokens);
     }
@@ -41,7 +54,8 @@ export function tokenize(text: string): string[] {
   } catch {
     // Fall through to the regex fallback below.
   }
-  return lower.match(/[a-z0-9][a-z0-9-]{1,}/g) ?? [];
+  const asciiTokens = asciiText.match(/[a-z0-9][a-z0-9-]{1,}/g) ?? [];
+  return [...cjkBlocks, ...asciiTokens];
 }
 
 /**
@@ -52,11 +66,18 @@ export function tokenize(text: string): string[] {
  */
 export function contentTokens(text: string, minLength = 4): string[] {
   const lower = text.toLowerCase();
-  const tokens: string[] = [];
+
+  // Extract contiguous CJK blocks as whole tokens (trigram-compatible).
+  const cjkBlocks = lower.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]+/g) ?? [];
+
+  // Remove CJK chars so compromise handles only the ASCII portion.
+  const asciiText = lower.replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]+/g, " ");
+
+  const tokens: string[] = [...cjkBlocks];
   try {
     // Use compromise to strip closed-class POS tags; the remaining document
     // is the content words (nouns, verbs, adjectives, adverbs, etc.).
-    const contentDoc = nlp(lower).not(CLOSED_CLASS_POS_SELECTOR);
+    const contentDoc = nlp(asciiText).not(CLOSED_CLASS_POS_SELECTOR);
     const terms = contentDoc.terms().out("array") as string[];
     for (const term of terms) {
       splitTermToTokens(term, tokens);
@@ -64,11 +85,11 @@ export function contentTokens(text: string, minLength = 4): string[] {
   } catch {
     // fall through to the regex fallback below
   }
-  if (tokens.length === 0) {
-    // Fallback: narrow regex split, no POS awareness.
-    for (const piece of lower.match(/[a-z0-9][a-z0-9-]{1,}/g) ?? []) {
+  if (tokens.length === cjkBlocks.length) {
+    // No ASCII tokens extracted yet — use fallback.
+    for (const piece of asciiText.match(/[a-z0-9][a-z0-9-]{1,}/g) ?? []) {
       tokens.push(piece);
     }
   }
-  return tokens.filter((token) => token.length >= minLength);
+  return tokens.filter((token) => token.length >= minLength || /[\u4e00-\u9fff]/.test(token));
 }

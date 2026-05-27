@@ -143,7 +143,8 @@ export async function rebuildSearchIndex(
       title,
       body,
       content='pages',
-      content_rowid='rowid'
+      content_rowid='rowid',
+      tokenize='trigram'
     );
     DELETE FROM page_search;
     DELETE FROM pages;
