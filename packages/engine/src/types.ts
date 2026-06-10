@@ -351,6 +351,22 @@ export interface VaultProfileConfig {
   deepLintDefault: boolean;
 }
 
+/**
+ * Post-extraction validation and filtering for concept/entity names.
+ * The deny-list is intentionally minimal at the engine level —
+ * corpus-specific stop words belong in vault configuration.
+ */
+export interface AnalysisConfig {
+  /**
+   * Lowercased term names to reject during concept/entity extraction.
+   * Applied after POS tagging and structural validation. Use this for
+   * domain-specific stop words that the NLP layer cannot detect on its own
+   * (e.g. "video", "transcript", "episode" for media-transcript vaults).
+   * Defaults to an empty list.
+   */
+  termDenyList?: string[];
+}
+
 export interface VaultConfig {
   workspace: {
     rawDir: string;
@@ -451,6 +467,7 @@ export interface VaultConfig {
   freshness?: FreshnessConfig;
   consolidation?: ConsolidationConfig;
   watch?: WatchConfig;
+  analysis?: AnalysisConfig;
 }
 
 /**

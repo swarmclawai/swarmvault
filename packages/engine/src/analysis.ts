@@ -11,7 +11,7 @@ import {
   parseMarkdownNodes
 } from "./markdown-ast.js";
 import type { VaultSchema } from "./schema.js";
-import { contentTokens } from "./tokenize.js";
+import { contentTokens, isValidTermName } from "./tokenize.js";
 import type {
   Polarity,
   ProviderAdapter,
@@ -24,7 +24,7 @@ import type {
 } from "./types.js";
 import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
 
-const ANALYSIS_FORMAT_VERSION = 8;
+const ANALYSIS_FORMAT_VERSION = 9;
 const PROVIDER_ANALYSIS_TARGET_CHARS = 14000;
 const PROVIDER_ANALYSIS_MAX_CHARS = 18000;
 
@@ -146,7 +146,7 @@ function extractEntities(text: string, count: number): string[] {
     ];
     for (const segment of segments) {
       for (const term of segment) {
-        const normalized = normalizeWhitespace(term);
+        const normalized = sanitizeEntityName(normalizeWhitespace(term));
         if (normalized) {
           candidates.push(normalized);
         }
@@ -161,6 +161,34 @@ function extractEntities(text: string, count: number): string[] {
   }
 
   return uniqueBy(candidates, (value) => value.toLowerCase()).slice(0, count);
+}
+
+/**
+ * Strip trailing punctuation artifacts that compromise's entity extraction
+ * occasionally leaves on names (e.g. "Playbook:", "YouTube?", "Instagram,",
+ * "Leila's", "Close\": How").  This is a sanitization step — it fixes known
+ * dirty output patterns at the source rather than rejecting them later.
+ */
+function sanitizeEntityName(name: string): string {
+  let sanitized = name.trim();
+  // Strip trailing punctuation: ? : , ; and trailing smart quotes/apostrophes
+  sanitized = sanitized.replace(/[,;:?]|[\u2019\u201D"]\s*$/u, "").trimEnd();
+  // Strip trailing period (compromise appends these to entity names e.g. "Alex.", "Amazon.")
+  sanitized = sanitized.replace(/\.\s*$/u, "").trimEnd();
+  // Strip leading/trailing ASCII double quotes (from smart-quote parsing artifacts)
+  if (sanitized.startsWith('"') && sanitized.endsWith('"')) {
+    sanitized = sanitized.slice(1, -1);
+  }
+  return sanitized;
+}
+
+/**
+ * Filter a list of concept or entity terms, rejecting names that fail
+ * isValidTermName validation. Centralizes the name-quality gate so all
+ * extraction paths (heuristic, provider, vision, merge) apply the same rules.
+ */
+function validatedTerms<T extends { name: string }>(terms: T[], denyList?: ReadonlySet<string>): T[] {
+  return terms.filter((term) => isValidTermName(term.name, denyList));
 }
 
 function detectPolarity(text: string): Polarity {
@@ -256,19 +284,25 @@ function normalizeSourceAnalysis(manifest: SourceManifest, analysis: SourceAnaly
   return title === analysis.title ? analysis : { ...analysis, title };
 }
 
-function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: string): SourceAnalysis {
+function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: string, termDenyList?: ReadonlySet<string>): SourceAnalysis {
   const analysisText = textForHeuristicAnalysis(manifest, text);
   const normalized = normalizeWhitespace(analysisText);
-  const concepts = extractTopTerms(normalized, 6).map((term) => ({
-    id: `concept:${slugify(term)}`,
-    name: term,
-    description: `Frequently referenced concept in ${manifest.title}.`
-  }));
-  const entities = extractEntities(analysisText, 6).map((term) => ({
-    id: `entity:${slugify(term)}`,
-    name: term,
-    description: `Named entity mentioned in ${manifest.title}.`
-  }));
+  const concepts = validatedTerms(
+    extractTopTerms(normalized, 6).map((term) => ({
+      id: `concept:${slugify(term)}`,
+      name: term,
+      description: `Frequently referenced concept in ${manifest.title}.`
+    })),
+    termDenyList
+  );
+  const entities = validatedTerms(
+    extractEntities(analysisText, 6).map((term) => ({
+      id: `entity:${slugify(term)}`,
+      name: term,
+      description: `Named entity mentioned in ${manifest.title}.`
+    })),
+    termDenyList
+  );
   const claimSentences = normalized
     .split(/(?<=[.!?])\s+/)
     .filter(Boolean)
@@ -368,14 +402,25 @@ function uniqueTerms<T extends { name: string }>(terms: T[], limit: number): T[]
   return uniqueBy(terms, (term) => term.name.toLowerCase()).slice(0, limit);
 }
 
-function mergeProviderChunkAnalyses(manifest: SourceManifest, schemaHash: string, chunks: SourceAnalysis[]): SourceAnalysis {
-  const concepts = uniqueTerms(
-    chunks.flatMap((chunk) => chunk.concepts),
-    12
+function mergeProviderChunkAnalyses(
+  manifest: SourceManifest,
+  schemaHash: string,
+  chunks: SourceAnalysis[],
+  termDenyList?: ReadonlySet<string>
+): SourceAnalysis {
+  const concepts = validatedTerms(
+    uniqueTerms(
+      chunks.flatMap((chunk) => chunk.concepts),
+      12
+    ),
+    termDenyList
   );
-  const entities = uniqueTerms(
-    chunks.flatMap((chunk) => chunk.entities),
-    12
+  const entities = validatedTerms(
+    uniqueTerms(
+      chunks.flatMap((chunk) => chunk.entities),
+      12
+    ),
+    termDenyList
   );
   const claims = chunks
     .flatMap((chunk) => chunk.claims)
@@ -424,7 +469,8 @@ async function providerAnalysisChunk(
   text: string,
   provider: ProviderAdapter,
   schema: VaultSchema,
-  chunk?: ProviderAnalysisChunk
+  chunk?: ProviderAnalysisChunk,
+  termDenyList?: ReadonlySet<string>
 ): Promise<SourceAnalysis> {
   const parsed = await provider.generateStructured(
     {
@@ -466,16 +512,22 @@ async function providerAnalysisChunk(
     schemaHash: schema.hash,
     title: parsed.title,
     summary: parsed.summary,
-    concepts: parsed.concepts.map((term) => ({
-      id: `concept:${slugify(term.name)}`,
-      name: term.name,
-      description: term.description
-    })),
-    entities: parsed.entities.map((term) => ({
-      id: `entity:${slugify(term.name)}`,
-      name: term.name,
-      description: term.description
-    })),
+    concepts: validatedTerms(
+      parsed.concepts.map((term) => ({
+        id: `concept:${slugify(term.name)}`,
+        name: term.name,
+        description: term.description
+      })),
+      termDenyList
+    ),
+    entities: validatedTerms(
+      parsed.entities.map((term) => ({
+        id: `entity:${slugify(term.name)}`,
+        name: term.name,
+        description: term.description
+      })),
+      termDenyList
+    ),
     claims: parsed.claims.map((claim, index) => ({
       id: `claim:${manifest.sourceId}:${index + 1}`,
       text: claim.text,
@@ -495,28 +547,30 @@ async function providerAnalysis(
   manifest: SourceManifest,
   text: string,
   provider: ProviderAdapter,
-  schema: VaultSchema
+  schema: VaultSchema,
+  termDenyList?: ReadonlySet<string>
 ): Promise<SourceAnalysis> {
   const chunks = providerAnalysisChunks(manifest, text);
   if (chunks.length === 1) {
-    return providerAnalysisChunk(manifest, text, provider, schema);
+    return providerAnalysisChunk(manifest, text, provider, schema, undefined, termDenyList);
   }
 
   const analyses: SourceAnalysis[] = [];
   for (const chunk of chunks) {
     try {
-      analyses.push(await providerAnalysisChunk(manifest, chunk.text, provider, schema, chunk));
+      analyses.push(await providerAnalysisChunk(manifest, chunk.text, provider, schema, chunk, termDenyList));
     } catch {
-      analyses.push(heuristicAnalysis(manifest, chunk.text, schema.hash));
+      analyses.push(heuristicAnalysis(manifest, chunk.text, schema.hash, termDenyList));
     }
   }
-  return mergeProviderChunkAnalyses(manifest, schema.hash, analyses);
+  return mergeProviderChunkAnalyses(manifest, schema.hash, analyses, termDenyList);
 }
 
 function analysisFromVisionExtraction(
   manifest: SourceManifest,
   extraction: SourceExtractionArtifact,
-  schemaHash: string
+  schemaHash: string,
+  termDenyList?: ReadonlySet<string>
 ): SourceAnalysis | null {
   if (!extraction.vision) {
     return null;
@@ -531,16 +585,22 @@ function analysisFromVisionExtraction(
     schemaHash,
     title: extraction.vision.title?.trim() || manifest.title,
     summary: extraction.vision.summary,
-    concepts: extraction.vision.concepts.map((term) => ({
-      id: `concept:${slugify(term.name)}`,
-      name: term.name,
-      description: term.description
-    })),
-    entities: extraction.vision.entities.map((term) => ({
-      id: `entity:${slugify(term.name)}`,
-      name: term.name,
-      description: term.description
-    })),
+    concepts: validatedTerms(
+      extraction.vision.concepts.map((term) => ({
+        id: `concept:${slugify(term.name)}`,
+        name: term.name,
+        description: term.description
+      })),
+      termDenyList
+    ),
+    entities: validatedTerms(
+      extraction.vision.entities.map((term) => ({
+        id: `entity:${slugify(term.name)}`,
+        name: term.name,
+        description: term.description
+      })),
+      termDenyList
+    ),
     claims: extraction.vision.claims.map((claim, index) => ({
       id: `claim:${manifest.sourceId}:${index + 1}`,
       text: claim.text,
@@ -569,7 +629,8 @@ export async function analyzeSource(
   extractedText: string | undefined,
   provider: ProviderAdapter,
   paths: ResolvedPaths,
-  schema: VaultSchema
+  schema: VaultSchema,
+  termDenyList?: ReadonlySet<string>
 ): Promise<SourceAnalysis> {
   const cachePath = path.join(paths.analysesDir, `${manifest.sourceId}.json`);
   const cached = await readJsonFile<SourceAnalysis>(cachePath);
@@ -594,7 +655,7 @@ export async function analyzeSource(
   if (manifest.sourceKind === "code" && content) {
     analysis = await analyzeCodeSource(manifest, extractedText ?? "", schema.hash);
   } else if (manifest.sourceKind === "image") {
-    const visionAnalysis = extraction ? analysisFromVisionExtraction(manifest, extraction, schema.hash) : null;
+    const visionAnalysis = extraction ? analysisFromVisionExtraction(manifest, extraction, schema.hash, termDenyList) : null;
     if (visionAnalysis) {
       analysis = visionAnalysis;
     } else if (!content) {
@@ -616,12 +677,12 @@ export async function analyzeSource(
         producedAt: new Date().toISOString()
       };
     } else if (provider.type === "heuristic") {
-      analysis = heuristicAnalysis(manifest, content, schema.hash);
+      analysis = heuristicAnalysis(manifest, content, schema.hash, termDenyList);
     } else {
       try {
-        analysis = await providerAnalysis(manifest, content, provider, schema);
+        analysis = await providerAnalysis(manifest, content, provider, schema, termDenyList);
       } catch {
-        analysis = heuristicAnalysis(manifest, content, schema.hash);
+        analysis = heuristicAnalysis(manifest, content, schema.hash, termDenyList);
       }
     }
   } else if (!content) {
@@ -643,12 +704,12 @@ export async function analyzeSource(
       producedAt: new Date().toISOString()
     };
   } else if (provider.type === "heuristic") {
-    analysis = heuristicAnalysis(manifest, content, schema.hash);
+    analysis = heuristicAnalysis(manifest, content, schema.hash, termDenyList);
   } else {
     try {
-      analysis = await providerAnalysis(manifest, content, provider, schema);
+      analysis = await providerAnalysis(manifest, content, provider, schema, termDenyList);
     } catch {
-      analysis = heuristicAnalysis(manifest, content, schema.hash);
+      analysis = heuristicAnalysis(manifest, content, schema.hash, termDenyList);
     }
   }
 

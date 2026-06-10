@@ -5460,13 +5460,17 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
   }
 
   const analysisProgress = createCompileProgressReporter("analyze", manifests.length);
+  const termDenyList = config.analysis?.termDenyList?.length
+    ? new Set(config.analysis.termDenyList.map((word) => word.toLowerCase()))
+    : undefined;
   const dirtyAnalyses = await mapWithConcurrency(dirty, COMPILE_ANALYSIS_CONCURRENCY, async (manifest) => {
     const analysis = await analyzeSource(
       manifest,
       await readExtractedText(rootDir, manifest),
       provider,
       paths,
-      getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
+      getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null),
+      termDenyList
     );
     analysisProgress.tick(manifest.title);
     return analysis;
@@ -5482,7 +5486,8 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
       await readExtractedText(rootDir, manifest),
       provider,
       paths,
-      getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
+      getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null),
+      termDenyList
     );
     analysisProgress.tick(manifest.title);
     return analysis;
