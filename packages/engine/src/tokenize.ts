@@ -4,6 +4,90 @@ import nlp from "compromise";
 // gives us language-aware stopword removal without hand-maintaining a list.
 const CLOSED_CLASS_POS_SELECTOR = "#Determiner, #Preposition, #Conjunction, #Pronoun, #Auxiliary, #Copula";
 
+/**
+ * Closed-class POS tags that carry no domain semantics. A name consisting
+ * entirely of these tags is a stop word in any corpus.
+ */
+export const CLOSED_CLASS_POS_TAGS = new Set(["Determiner", "Preposition", "Conjunction", "Pronoun", "Auxiliary", "Copula", "Modal"]);
+
+/**
+ * High-frequency English words that compromise tags as content POS (verbs,
+ * adjectives, adverbs) but carry no domain semantics in any corpus. These are
+ * always rejected by {@link isValidTermName} regardless of the configurable
+ * deny-list — they are junk concepts in every domain.
+ *
+ * This list is deliberately small and conservative: only words that appear as
+ * top-degree graph nodes across different corpora, indicating they are
+ * universally generic rather than domain-specific.
+ */
+export const ENGLISH_STOPWORDS = new Set([
+  // High-frequency verbs that don't encode domain semantics
+  "have",
+  "like",
+  "know",
+  "want",
+  "think",
+  "need",
+  "look",
+  "try",
+  "give",
+  "use",
+  "get",
+  "getting",
+  "got",
+  "make",
+  "making",
+  "come",
+  "take",
+  "put",
+  "let",
+  "say",
+  "said",
+  "goes",
+  "went",
+  "done",
+  "doing",
+  "being",
+  "been",
+  "needs",
+  // Generic pronouns / quantifiers compromise doesn't flag as closed-class
+  "what",
+  "there",
+  "every",
+  "anything",
+  "something",
+  "everything",
+  "nothing",
+  // Generic adverbs / discourse fillers
+  "just",
+  "right",
+  "then",
+  "going",
+  "more",
+  "yeah",
+  "really",
+  "actually",
+  "very",
+  "much",
+  "well",
+  "still",
+  "also",
+  "even",
+  "already",
+  "always",
+  "never",
+  // Generic nouns that never encode domain meaning
+  "thing",
+  "things",
+  "way",
+  "lot",
+  "back",
+  "day",
+  "long",
+  // Common adjectives that don't discriminate topics
+  "good"
+]);
+
 function splitTermToTokens(term: string, tokens: string[]): void {
   // compromise occasionally returns multi-word terms (e.g. "rate limit");
   // split them back into individual lowercase alphanumeric tokens so the
@@ -71,4 +155,41 @@ export function contentTokens(text: string, minLength = 4): string[] {
     }
   }
   return tokens.filter((token) => token.length >= minLength);
+}
+
+export function isValidTermName(name: string, denyList?: ReadonlySet<string>): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return false;
+
+  const lower = trimmed.toLowerCase();
+  if (ENGLISH_STOPWORDS.has(lower)) return false;
+  if (denyList?.has(lower)) return false;
+
+  // Reject compound names starting with a deny-list word — these are NLP
+  // artifacts where compromise prepends a structural label (e.g. "Transcript
+  // If", "Transcript What's") rather than extracting a real entity.
+  if (denyList && /[\s\-_]/.test(trimmed)) {
+    const firstWord = lower.split(/[\s\-_]+/)[0];
+    if (firstWord && denyList.has(firstWord)) return false;
+  }
+
+  // Reject structural fragments — these are parsing artifacts, not terms
+  if (trimmed.startsWith("[")) return false;
+  if (trimmed.startsWith("\u201C") || trimmed.startsWith("\u201D") || trimmed.startsWith('"')) return false;
+  if (/\([A-Z]{2,}[^)]*$/.test(trimmed)) return false;
+  if (/[\u2026\u2014\u2013].*\S/.test(trimmed)) return false;
+  if (/^[A-Z][a-z]+\s[A-Z][a-z]+\.$/.test(trimmed)) return false;
+  if (/^I\u2019[mve]|^I'm|^I've/i.test(trimmed)) return false;
+
+  // Reject names consisting entirely of closed-class POS tags
+  try {
+    const doc = nlp(trimmed);
+    const terms = doc.terms().termList();
+    if (terms.length === 0) return false;
+    if (terms.every((term) => term.tags && [...term.tags].some((tag) => CLOSED_CLASS_POS_TAGS.has(tag)))) return false;
+  } catch {
+    return trimmed.length >= 3;
+  }
+
+  return true;
 }

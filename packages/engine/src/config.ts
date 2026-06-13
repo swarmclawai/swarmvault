@@ -141,6 +141,10 @@ const WORKSPACE_DIR_DEFAULTS = {
 
 export const SWARMVAULT_OUT_ENV = "SWARMVAULT_OUT";
 
+const analysisConfigSchema = z.object({
+  termDenyList: z.array(z.string().min(1)).optional()
+});
+
 const vaultConfigSchema = z.object({
   workspace: z
     .object({
@@ -330,7 +334,8 @@ const vaultConfigSchema = z.object({
       repoRoots: z.array(z.string().min(1)).optional(),
       excludeRepoRoots: z.array(z.string().min(1)).optional()
     })
-    .optional()
+    .optional(),
+  analysis: analysisConfigSchema.optional()
 });
 
 function normalizeProfilePresets(presets: VaultProfilePreset[]): VaultProfilePreset[] {
