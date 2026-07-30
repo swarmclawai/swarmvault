@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed non-ASCII concept and entity names collapsing to `concept:item` / `entity:item`: semantic IDs now preserve legacy ASCII slugs while using normalized Unicode hashes for other scripts, every graph/wiki link consumes the canonical analyzed ID, duplicate source references are removed, and compatible v8 analysis caches migrate to v9 without another provider call. Obsolete generated pages with guided-session markers are content-addressed into an archive instead of deleting human notes during the split.
+
 ## 3.21.0
 
 - Made the model output-token limit configurable per provider via `providers.<id>.maxOutputTokens` in `swarmvault.config.json`, and raised the built-in default from 1200 to 4096. The previous low cap caused structured-analysis calls to truncate their JSON and silently fall back to heuristic extraction on long sources.

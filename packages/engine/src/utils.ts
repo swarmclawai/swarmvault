@@ -12,6 +12,18 @@ export function slugify(value: string): string {
   );
 }
 
+export function normalizeSemanticName(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+export function semanticSlug(value: string): string {
+  const normalized = normalizeSemanticName(value);
+  if ([...normalized].every((character) => (character.codePointAt(0) ?? 0) <= 0x7f)) {
+    return slugify(normalized);
+  }
+  return `u-${sha256(normalized)}`;
+}
+
 export function sha256(value: string | Uint8Array): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }

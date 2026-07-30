@@ -4,6 +4,7 @@ import path from "node:path";
 import type { TableColumnAst } from "node-sql-parser";
 import ts from "typescript";
 import YAML from "yaml";
+import { ANALYSIS_FORMAT_VERSION } from "./analysis-format.js";
 import { analyzeTreeSitterCode } from "./code-tree-sitter.js";
 import type {
   CodeAnalysis,
@@ -3552,7 +3553,7 @@ export async function analyzeCodeSource(manifest: SourceManifest, extractedText:
             : await analyzeTreeSitterCode(manifest, extractedText, language);
 
   return {
-    analysisVersion: 8,
+    analysisVersion: ANALYSIS_FORMAT_VERSION,
     sourceId: manifest.sourceId,
     sourceHash: manifest.contentHash,
     semanticHash: manifest.semanticHash,

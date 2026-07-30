@@ -5,7 +5,13 @@ import louvain from "graphology-communities-louvain";
 import matter from "gray-matter";
 import { z } from "zod";
 import { installConfiguredAgents } from "./agents.js";
-import { analysisSignature, analyzeSource } from "./analysis.js";
+import {
+  analysisCacheStatus,
+  analysisSignature,
+  analyzeSource,
+  normalizeCachedSourceAnalysis,
+  normalizeSourceAnalysis
+} from "./analysis.js";
 import {
   benchmarkQueryTokens,
   buildBenchmarkArtifact,
@@ -58,6 +64,7 @@ import {
   buildSectionIndex,
   buildSourcePage,
   candidatePagePathFor,
+  hasGuidedSourceMarkers,
   type ManagedGraphPageMetadata,
   type ManagedPageMetadata
 } from "./markdown.js";
@@ -2228,7 +2235,7 @@ function buildGraph(
         id: concept.id,
         type: "concept",
         label: concept.name,
-        pageId: `concept:${slugify(concept.name)}`,
+        pageId: concept.id,
         freshness: "fresh",
         confidence: nodeConfidence(sourceIds.length),
         sourceIds,
@@ -2254,7 +2261,7 @@ function buildGraph(
         id: entity.id,
         type: "entity",
         label: entity.name,
-        pageId: `entity:${slugify(entity.name)}`,
+        pageId: entity.id,
         freshness: "fresh",
         confidence: nodeConfidence(sourceIds.length),
         sourceIds,
@@ -2804,6 +2811,31 @@ async function writePage(wikiDir: string, relativePath: string, content: string,
   }
 }
 
+function archiveGuidedPage(relativePath: string, content: string): { previousPath: string; relativePath: string; content: string } {
+  const normalizedPath = toPosix(relativePath);
+  const parsedPath = path.posix.parse(normalizedPath);
+  const archivePath = path.posix.join(
+    "archive",
+    "guided-pages",
+    parsedPath.dir ? slugify(parsedPath.dir) : "root",
+    `${slugify(parsedPath.name)}-${sha256(content).slice(0, 12)}.md`
+  );
+  return {
+    previousPath: relativePath,
+    relativePath: archivePath,
+    content
+  };
+}
+
+function safeWikiPath(wikiDir: string, relativePath: string): string {
+  const normalizedPath = toPosix(relativePath);
+  const absolutePath = path.resolve(wikiDir, relativePath);
+  if (path.isAbsolute(relativePath) || normalizedPath.split("/").includes("..") || !isPathWithin(wikiDir, absolutePath)) {
+    throw new Error(`Refusing unsafe wiki path: ${relativePath}`);
+  }
+  return absolutePath;
+}
+
 async function writeGraphShareBundle(wikiDir: string, files: GraphShareBundleFile[]): Promise<void> {
   for (const file of files) {
     await writeFileIfChanged(path.join(wikiDir, "graph", "share-kit", file.relativePath), file.content);
@@ -2814,6 +2846,7 @@ function aggregateItems(
   analyses: SourceAnalysis[],
   kind: "concepts" | "entities"
 ): Array<{
+  id: string;
   name: string;
   descriptions: string[];
   sourceAnalyses: SourceAnalysis[];
@@ -2823,6 +2856,7 @@ function aggregateItems(
   const grouped = new Map<
     string,
     {
+      id: string;
       name: string;
       descriptions: string[];
       sourceAnalyses: SourceAnalysis[];
@@ -2833,19 +2867,23 @@ function aggregateItems(
 
   for (const analysis of analyses) {
     for (const item of analysis[kind]) {
-      const key = slugify(item.name);
-      const existing = grouped.get(key) ?? {
+      const existing = grouped.get(item.id) ?? {
+        id: item.id,
         name: item.name,
         descriptions: [],
         sourceAnalyses: [],
         sourceHashes: {},
         sourceSemanticHashes: {}
       };
-      existing.descriptions.push(item.description);
-      existing.sourceAnalyses.push(analysis);
+      if (item.description && !existing.descriptions.includes(item.description)) {
+        existing.descriptions.push(item.description);
+      }
+      if (!existing.sourceAnalyses.some((candidate) => candidate.sourceId === analysis.sourceId)) {
+        existing.sourceAnalyses.push(analysis);
+      }
       existing.sourceHashes[analysis.sourceId] = analysis.sourceHash;
       existing.sourceSemanticHashes[analysis.sourceId] = analysis.semanticHash;
-      grouped.set(key, existing);
+      grouped.set(item.id, existing);
     }
   }
 
@@ -2927,12 +2965,26 @@ async function requiredCompileArtifactsExist(paths: Awaited<ReturnType<typeof lo
 
 async function loadAvailableCachedAnalyses(
   paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"],
-  manifests: SourceManifest[]
-): Promise<SourceAnalysis[]> {
+  manifests: SourceManifest[],
+  schemas: LoadedVaultSchemas,
+  sourceProjects: Record<string, string | null>
+): Promise<SourceAnalysis[] | null> {
   const analyses = await Promise.all(
-    manifests.map(async (manifest) => readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`)))
+    manifests.map(async (manifest) => {
+      const cachePath = path.join(paths.analysesDir, `${manifest.sourceId}.json`);
+      const cached = await readJsonFile<SourceAnalysis>(cachePath);
+      const normalized = normalizeCachedSourceAnalysis(
+        cached,
+        manifest,
+        effectiveHashForProject(schemas, sourceProjects[manifest.sourceId] ?? null)
+      );
+      if (normalized && cached && normalized !== cached) {
+        await writeJsonFile(cachePath, normalized);
+      }
+      return normalized;
+    })
   );
-  return analyses.filter((analysis): analysis is SourceAnalysis => Boolean(analysis));
+  return analyses.every((analysis): analysis is SourceAnalysis => Boolean(analysis)) ? analyses : null;
 }
 
 function approvalManifestPath(paths: Awaited<ReturnType<typeof loadVaultConfig>>["paths"], approvalId: string): string {
@@ -2979,15 +3031,20 @@ async function buildApprovalEntries(
   deletedPaths: string[],
   previousGraph: GraphArtifact | null,
   graph: GraphArtifact,
-  labelsByPath: Map<string, ApprovalEntryLabel> = new Map()
+  labelsByPath: Map<string, ApprovalEntryLabel> = new Map(),
+  archiveMoves: Map<string, string> = new Map()
 ): Promise<ApprovalEntry[]> {
   const previousPagesById = new Map((previousGraph?.pages ?? []).map((page) => [page.id, page]));
   const previousPagesByPath = new Map((previousGraph?.pages ?? []).map((page) => [page.path, page]));
   const nextPagesByPath = new Map(graph.pages.map((page) => [page.path, page]));
   const handledDeletedPaths = new Set<string>();
+  const archivePaths = new Set(archiveMoves.values());
   const entries: ApprovalEntry[] = [];
 
   for (const file of changedFiles.sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
+    if (archivePaths.has(file.relativePath)) {
+      continue;
+    }
     const nextPage = nextPagesByPath.get(file.relativePath);
     if (!nextPage) {
       continue;
@@ -3028,6 +3085,21 @@ async function buildApprovalEntries(
       continue;
     }
     const previousPage = previousPagesByPath.get(deletedPath);
+    const archivePath = archiveMoves.get(deletedPath);
+    if (archivePath) {
+      entries.push({
+        pageId: previousPage?.id ?? `page:${slugify(deletedPath)}`,
+        title: previousPage?.title ?? path.basename(deletedPath, ".md"),
+        kind: previousPage?.kind ?? "index",
+        changeType: "archive",
+        status: "pending",
+        sourceIds: previousPage?.sourceIds ?? [],
+        nextPath: archivePath,
+        previousPath: deletedPath,
+        label: labelsByPath.get(deletedPath)
+      });
+      continue;
+    }
     entries.push({
       pageId: previousPage?.id ?? `page:${slugify(deletedPath)}`,
       title: previousPage?.title ?? path.basename(deletedPath, ".md"),
@@ -3048,7 +3120,8 @@ async function stageApprovalBundle(
   changedFiles: Array<{ relativePath: string; content: string }>,
   deletedPaths: string[],
   previousGraph: GraphArtifact | null,
-  graph: GraphArtifact
+  graph: GraphArtifact,
+  archiveMoves: Map<string, string> = new Map()
 ): Promise<{ approvalId: string; approvalDir: string }> {
   const approvalId = `compile-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const approvalDir = path.join(paths.approvalsDir, approvalId);
@@ -3068,7 +3141,7 @@ async function stageApprovalBundle(
     createdAt: new Date().toISOString(),
     bundleType: "compile",
     title: "Compile Approval",
-    entries: await buildApprovalEntries(paths, changedFiles, deletedPaths, previousGraph, graph)
+    entries: await buildApprovalEntries(paths, changedFiles, deletedPaths, previousGraph, graph, new Map(), archiveMoves)
   });
 
   return { approvalId, approvalDir };
@@ -3111,6 +3184,31 @@ async function syncVaultArtifacts(
   const candidateHistory: CompileState["candidateHistory"] = {};
   const records: ManagedPageRecord[] = [];
   const promoteCandidates = input.promoteCandidates ?? true;
+  const aggregatePlans = (["concepts", "entities"] as const).flatMap((kind) =>
+    aggregateItems(input.analyses, kind).map((aggregate) => {
+      const itemKind: "concept" | "entity" = kind === "concepts" ? "concept" : "entity";
+      const pageId = aggregate.id;
+      const slug = pageSlug({ id: pageId });
+      const sourceIds = uniqueStrings(aggregate.sourceAnalyses.map((item) => item.sourceId));
+      const projectIds = scopedProjectIdsFromSources(sourceIds, input.sourceProjects);
+      const schemaHash = effectiveHashForProject(input.schemas, projectIds[0] ?? null);
+      const previousEntry = input.previousState?.candidateHistory?.[pageId];
+      const promoted = previousEntry?.status === "active" || (promoteCandidates && shouldPromoteCandidate(previousEntry, sourceIds));
+      return {
+        aggregate,
+        itemKind,
+        pageId,
+        slug,
+        sourceIds,
+        projectIds,
+        schemaHash,
+        previousEntry,
+        promoted,
+        relativePath: promoted ? activeAggregatePath(itemKind, slug) : candidatePagePathFor(itemKind, slug)
+      };
+    })
+  );
+  const aggregatePagePaths = new Map(aggregatePlans.map((plan) => [plan.pageId, plan.relativePath]));
 
   for (const manifest of input.manifests) {
     const analysis = input.analyses.find((item) => item.sourceId === manifest.sourceId);
@@ -3181,7 +3279,8 @@ async function syncVaultArtifacts(
             extraTags: [...sourceCategoryTags, ...(analysis.tags ?? [])],
             sourceClass: manifest.sourceClass
           },
-          existingContent
+          existingContent,
+          aggregatePagePaths
         )
     );
     records.push(sourceRecord);
@@ -3238,79 +3337,80 @@ async function syncVaultArtifacts(
     }
   }
 
-  for (const kind of ["concepts", "entities"] as const) {
-    for (const aggregate of aggregateItems(input.analyses, kind)) {
-      const itemKind = kind === "concepts" ? "concept" : "entity";
-      const slug = slugify(aggregate.name);
-      const pageId = `${itemKind}:${slug}`;
-      const sourceIds = uniqueStrings(aggregate.sourceAnalyses.map((item) => item.sourceId));
-      const projectIds = scopedProjectIdsFromSources(sourceIds, input.sourceProjects);
-      const schemaHash = effectiveHashForProject(input.schemas, projectIds[0] ?? null);
-      const previousEntry = input.previousState?.candidateHistory?.[pageId];
-      const promoted = previousEntry?.status === "active" || (promoteCandidates && shouldPromoteCandidate(previousEntry, sourceIds));
-      const relativePath = promoted ? activeAggregatePath(itemKind, slug) : candidatePagePathFor(itemKind, slug);
-      const aggregateSourceClass = aggregateManifestSourceClass(input.manifests, sourceIds);
-      const fallbackPaths = [
-        path.join(paths.wikiDir, activeAggregatePath(itemKind, slug)),
-        path.join(paths.wikiDir, candidatePagePathFor(itemKind, slug))
-      ];
-      const confidence = nodeConfidence(aggregate.sourceAnalyses.length);
-      const preview = emptyGraphPage({
-        id: pageId,
-        path: relativePath,
-        title: aggregate.name,
-        kind: itemKind,
-        sourceIds,
-        sourceClass: aggregateSourceClass,
-        projectIds,
-        nodeIds: [pageId],
-        schemaHash,
-        sourceHashes: aggregate.sourceHashes,
+  for (const {
+    aggregate,
+    itemKind,
+    pageId,
+    slug,
+    sourceIds,
+    projectIds,
+    schemaHash,
+    previousEntry,
+    promoted,
+    relativePath
+  } of aggregatePlans) {
+    const aggregateSourceClass = aggregateManifestSourceClass(input.manifests, sourceIds);
+    const fallbackPaths = [
+      path.join(paths.wikiDir, activeAggregatePath(itemKind, slug)),
+      path.join(paths.wikiDir, candidatePagePathFor(itemKind, slug))
+    ];
+    const confidence = nodeConfidence(sourceIds.length);
+    const preview = emptyGraphPage({
+      id: pageId,
+      path: relativePath,
+      title: aggregate.name,
+      kind: itemKind,
+      sourceIds,
+      sourceClass: aggregateSourceClass,
+      projectIds,
+      nodeIds: [pageId],
+      schemaHash,
+      sourceHashes: aggregate.sourceHashes,
+      confidence,
+      status: promoted ? "active" : "candidate"
+    });
+    const pageRecord = await buildManagedGraphPage(
+      path.join(paths.wikiDir, relativePath),
+      {
+        status: promoted ? "active" : "candidate",
+        managedBy: "system",
         confidence,
-        status: promoted ? "active" : "candidate"
-      });
-      const pageRecord = await buildManagedGraphPage(
-        path.join(paths.wikiDir, relativePath),
-        {
-          status: promoted ? "active" : "candidate",
-          managedBy: "system",
-          confidence,
-          compiledFrom: sourceIds,
-          statePathCandidates: fallbackPaths
-        },
-        (metadata, existingContent) =>
-          buildAggregatePage(
-            itemKind,
-            aggregate.name,
-            aggregate.descriptions,
-            aggregate.sourceAnalyses,
-            aggregate.sourceHashes,
-            aggregate.sourceSemanticHashes,
-            schemaHash,
-            metadata,
-            relativePath,
-            relatedOutputsForPage(preview, input.outputPages),
-            {
-              projectIds,
-              extraTags: categoryTagsForSchema(getEffectiveSchema(input.schemas, projectIds[0] ?? null), [
-                aggregate.name,
-                ...aggregate.descriptions,
-                ...aggregate.sourceAnalyses.map((item) => item.summary)
-              ]),
-              sourceClass: aggregateSourceClass
-            },
-            existingContent
-          )
-      );
-      if (promoted && previousEntry?.status === "candidate") {
-        promotedPageIds.push(pageId);
-      }
-      candidateHistory[pageId] = {
-        sourceIds,
-        status: promoted ? "active" : "candidate"
-      };
-      records.push(pageRecord);
+        compiledFrom: sourceIds,
+        statePathCandidates: fallbackPaths
+      },
+      (metadata, existingContent) =>
+        buildAggregatePage(
+          itemKind,
+          pageId,
+          aggregate.name,
+          aggregate.descriptions,
+          aggregate.sourceAnalyses,
+          aggregate.sourceHashes,
+          aggregate.sourceSemanticHashes,
+          schemaHash,
+          metadata,
+          relativePath,
+          relatedOutputsForPage(preview, input.outputPages),
+          {
+            projectIds,
+            extraTags: categoryTagsForSchema(getEffectiveSchema(input.schemas, projectIds[0] ?? null), [
+              aggregate.name,
+              ...aggregate.descriptions,
+              ...aggregate.sourceAnalyses.map((item) => item.summary)
+            ]),
+            sourceClass: aggregateSourceClass
+          },
+          existingContent
+        )
+    );
+    if (promoted && previousEntry?.status === "candidate") {
+      promotedPageIds.push(pageId);
     }
+    candidateHistory[pageId] = {
+      sourceIds,
+      status: promoted ? "active" : "candidate"
+    };
+    records.push(pageRecord);
   }
 
   const compiledPages = records.map((record) => record.page);
@@ -3527,8 +3627,27 @@ async function syncVaultArtifacts(
     .map((absolutePath) => toPosix(path.relative(paths.wikiDir, absolutePath)))
     .filter((relativePath) => !nextPagePaths.has(relativePath));
   const obsoletePaths = uniqueStrings([...obsoleteGraphPaths, ...existingProjectIndexPaths]);
+  const archivedGuidedPages: Array<{ previousPath: string; relativePath: string; content: string }> = [];
+  for (const relativePath of obsoletePaths) {
+    const absolutePath = safeWikiPath(paths.wikiDir, relativePath);
+    if (!(await fileExists(absolutePath))) {
+      continue;
+    }
+    const current = await fs.readFile(absolutePath, "utf8");
+    if (hasGuidedSourceMarkers(current)) {
+      archivedGuidedPages.push(archiveGuidedPage(relativePath, current));
+    }
+  }
 
   const changedFiles: Array<{ relativePath: string; content: string }> = [];
+  for (const archived of archivedGuidedPages) {
+    const absolutePath = safeWikiPath(paths.wikiDir, archived.relativePath);
+    const current = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : null;
+    if (current !== archived.content) {
+      changedPages.push(archived.relativePath);
+      changedFiles.push(archived);
+    }
+  }
   for (const record of records) {
     const absolutePath = path.join(paths.wikiDir, record.page.path);
     const current = (await fileExists(absolutePath)) ? await fs.readFile(absolutePath, "utf8") : null;
@@ -3540,7 +3659,14 @@ async function syncVaultArtifacts(
   changedPages.push(...obsoletePaths.filter((relativePath) => !changedPages.includes(relativePath)));
 
   if (input.approve) {
-    const approval = await stageApprovalBundle(paths, changedFiles, obsoletePaths, previousGraph ?? null, graph);
+    const approval = await stageApprovalBundle(
+      paths,
+      changedFiles,
+      obsoletePaths,
+      previousGraph ?? null,
+      graph,
+      new Map(archivedGuidedPages.map((archived) => [archived.previousPath, archived.relativePath]))
+    );
     return {
       graph,
       allPages,
@@ -3554,11 +3680,14 @@ async function syncVaultArtifacts(
   }
 
   const writeChanges: string[] = [];
+  for (const archived of archivedGuidedPages) {
+    await writePage(paths.wikiDir, archived.relativePath, archived.content, writeChanges);
+  }
   for (const record of records) {
     await writePage(paths.wikiDir, record.page.path, record.content, writeChanges);
   }
   for (const relativePath of obsoletePaths) {
-    await fs.rm(path.join(paths.wikiDir, relativePath), { force: true });
+    await fs.rm(safeWikiPath(paths.wikiDir, relativePath), { force: true });
   }
 
   await writeJsonFile(paths.graphPath, graph);
@@ -4182,7 +4311,11 @@ export async function refreshVaultAfterOutputSave(rootDir: string): Promise<void
   const schemas = await loadVaultSchemas(rootDir);
   const manifests = await listManifests(rootDir);
   const sourceProjects = resolveSourceProjects(rootDir, manifests, config);
-  const cachedAnalyses = manifests.length ? await loadAvailableCachedAnalyses(paths, manifests) : [];
+  const cachedAnalyses = manifests.length ? await loadAvailableCachedAnalyses(paths, manifests, schemas, sourceProjects) : [];
+  if (cachedAnalyses === null) {
+    await compileVault(rootDir);
+    return;
+  }
   const codeIndex = await buildCodeIndex(rootDir, manifests, cachedAnalyses);
   const analyses = cachedAnalyses.map((analysis) => {
     const manifest = manifests.find((item) => item.sourceId === analysis.sourceId);
@@ -4395,6 +4528,7 @@ function computeStructuredDiff(
 }
 
 function computeChangeSummary(current: string | undefined, staged: string | undefined, changeType: ApprovalChangeType): string {
+  if (changeType === "archive") return "Archived page with guided session notes";
   if (changeType === "create") return "New page";
   if (changeType === "delete") return "Removed page";
   if (changeType === "promote") return "Promoted from candidate";
@@ -4498,7 +4632,23 @@ export async function acceptApproval(rootDir: string, approvalId: string, target
   const compileState = (await readJsonFile<CompileState>(paths.compileStatePath)) ?? emptyCompileState();
 
   for (const entry of selectedEntries) {
-    if (entry.changeType !== "delete") {
+    if (entry.changeType === "archive") {
+      if (!entry.nextPath || !entry.previousPath) {
+        throw new Error(`Archive approval entry ${entry.pageId} requires both previous and staged paths.`);
+      }
+      const stagedAbsolutePath = safeWikiPath(path.join(paths.approvalsDir, approvalId, "wiki"), entry.nextPath);
+      const targetAbsolutePath = safeWikiPath(paths.wikiDir, entry.nextPath);
+      await ensureDir(path.dirname(targetAbsolutePath));
+      await fs.copyFile(stagedAbsolutePath, targetAbsolutePath);
+      await fs.rm(safeWikiPath(paths.wikiDir, entry.previousPath), { force: true });
+
+      const archivedPage =
+        nextPages.find((page) => page.id === entry.pageId || page.path === entry.previousPath) ??
+        bundleGraph?.pages.find((page) => page.id === entry.pageId || page.path === entry.previousPath) ??
+        null;
+      nextPages = nextPages.filter((page) => page.id !== entry.pageId && page.path !== entry.previousPath);
+      updateCandidateHistory(compileState, archivedPage, true);
+    } else if (entry.changeType !== "delete") {
       if (!entry.nextPath) {
         throw new Error(`Approval entry ${entry.pageId} is missing a staged path.`);
       }
@@ -4539,7 +4689,7 @@ export async function acceptApproval(rootDir: string, approvalId: string, target
         bundleGraph?.pages.find((page) => page.id === entry.pageId || page.path === entry.previousPath) ??
         null;
       if (entry.previousPath) {
-        await fs.rm(path.join(paths.wikiDir, entry.previousPath), { force: true });
+        await fs.rm(safeWikiPath(paths.wikiDir, entry.previousPath), { force: true });
       }
       if (deletedPage?.kind === "output") {
         await fs.rm(path.join(paths.wikiDir, "outputs", "assets", path.basename(deletedPage.path, ".md")), {
@@ -5390,6 +5540,16 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
   const memoryChanged = !recordsEqual(currentMemoryHashes, previousMemoryHashes);
   const artifactsExist = await requiredCompileArtifactsExist(paths);
   const pendingCandidatePromotion = Object.values(previousState?.candidateHistory ?? {}).some((entry) => entry.status === "candidate");
+  const cachedAnalysisEntries = await mapWithConcurrency(
+    manifests,
+    COMPILE_ANALYSIS_CONCURRENCY,
+    async (manifest): Promise<[string, SourceAnalysis | null]> => [
+      manifest.sourceId,
+      await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`))
+    ]
+  );
+  const cachedAnalysesBySourceId = new Map(cachedAnalysisEntries);
+  let analysisCacheChanged = false;
 
   const dirty: SourceManifest[] = [];
   const clean: SourceManifest[] = [];
@@ -5399,7 +5559,14 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     const projectId = sourceProjects[manifest.sourceId] ?? null;
     const projectChanged = (previousSourceProjects[manifest.sourceId] ?? null) !== projectId;
     const effectiveHashChanged = previousProjectSchemaHash(previousState, projectId) !== effectiveHashForProject(schemas, projectId);
-    if (hashChanged || noAnalysis || projectChanged || effectiveHashChanged) {
+    const cached = cachedAnalysesBySourceId.get(manifest.sourceId) ?? null;
+    const cacheStatus = analysisCacheStatus(cached, manifest, effectiveHashForProject(schemas, projectId));
+    const cacheSignatureChanged =
+      Boolean(cached && previousAnalyses[manifest.sourceId]) &&
+      analysisSignature(cached as SourceAnalysis) !== previousAnalyses[manifest.sourceId];
+    const cacheChanged = cacheStatus !== "current" || cacheSignatureChanged;
+    analysisCacheChanged ||= cacheChanged;
+    if (hashChanged || noAnalysis || projectChanged || effectiveHashChanged || cacheChanged) {
       if (options.codeOnly && manifest.sourceKind !== "code") {
         clean.push(manifest);
       } else {
@@ -5419,6 +5586,7 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     !outputsChanged &&
     !insightsChanged &&
     !memoryChanged &&
+    !analysisCacheChanged &&
     !pendingCandidatePromotion &&
     artifactsExist &&
     !options.approve
@@ -5474,18 +5642,24 @@ export async function compileVault(rootDir: string, options: CompileOptions = {}
     return analysis;
   });
   const cleanAnalyses = await mapWithConcurrency(clean, COMPILE_ANALYSIS_CONCURRENCY, async (manifest) => {
-    const cached = await readJsonFile<SourceAnalysis>(path.join(paths.analysesDir, `${manifest.sourceId}.json`));
-    if (cached) {
+    const cached = cachedAnalysesBySourceId.get(manifest.sourceId) ?? null;
+    const schema = getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null);
+    const cacheStatus = analysisCacheStatus(cached, manifest, schema.hash);
+    if (options.codeOnly && manifest.sourceKind !== "code" && cached) {
+      if (cacheStatus === "migratable") {
+        const migrated = normalizeSourceAnalysis(manifest, cached);
+        await writeJsonFile(path.join(paths.analysesDir, `${manifest.sourceId}.json`), migrated);
+        analysisProgress.tick(manifest.title);
+        return migrated;
+      }
       analysisProgress.tick(manifest.title);
       return cached;
     }
-    const analysis = await analyzeSource(
-      manifest,
-      await readExtractedText(rootDir, manifest),
-      provider,
-      paths,
-      getEffectiveSchema(schemas, sourceProjects[manifest.sourceId] ?? null)
-    );
+    if (cacheStatus === "current" && cached) {
+      analysisProgress.tick(manifest.title);
+      return cached;
+    }
+    const analysis = await analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths, schema);
     analysisProgress.tick(manifest.title);
     return analysis;
   });

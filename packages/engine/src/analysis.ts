@@ -1,6 +1,7 @@
 import path from "node:path";
 import nlp from "compromise";
 import { z } from "zod";
+import { ANALYSIS_FORMAT_VERSION, LEGACY_SEMANTIC_ID_ANALYSIS_VERSION } from "./analysis-format.js";
 import { analyzeCodeSource } from "./code-analysis.js";
 import { readExtractionArtifact } from "./ingest.js";
 import {
@@ -22,9 +23,18 @@ import type {
   SourceManifest,
   SourceRationale
 } from "./types.js";
-import { firstSentences, normalizeWhitespace, readJsonFile, sha256, slugify, truncate, uniqueBy, writeJsonFile } from "./utils.js";
+import {
+  firstSentences,
+  normalizeSemanticName,
+  normalizeWhitespace,
+  readJsonFile,
+  semanticSlug,
+  sha256,
+  truncate,
+  uniqueBy,
+  writeJsonFile
+} from "./utils.js";
 
-const ANALYSIS_FORMAT_VERSION = 8;
 const PROVIDER_ANALYSIS_TARGET_CHARS = 14000;
 const PROVIDER_ANALYSIS_MAX_CHARS = 18000;
 
@@ -251,21 +261,106 @@ function normalizeAnalysisTitle(manifest: SourceManifest, candidate: string): st
   return normalized;
 }
 
-function normalizeSourceAnalysis(manifest: SourceManifest, analysis: SourceAnalysis): SourceAnalysis {
+function hasValidAnalyzedTerms(analysis: SourceAnalysis): boolean {
+  return (
+    typeof analysis.title === "string" &&
+    [analysis.concepts, analysis.entities].every(
+      (terms) =>
+        Array.isArray(terms) &&
+        terms.every(
+          (term) =>
+            term !== null &&
+            typeof term === "object" &&
+            typeof term.name === "string" &&
+            term.name.trim().length > 0 &&
+            typeof term.description === "string"
+        )
+    )
+  );
+}
+
+function hasCanonicalSemanticTerms(analysis: SourceAnalysis): boolean {
+  const conceptIds = analysis.concepts.map((term) => `concept:${semanticSlug(term.name)}`);
+  const entityIds = analysis.entities.map((term) => `entity:${semanticSlug(term.name)}`);
+  const conceptNames = analysis.concepts.map((term) => normalizeSemanticName(term.name));
+  const entityNames = analysis.entities.map((term) => normalizeSemanticName(term.name));
+  return (
+    new Set(conceptNames).size === conceptNames.length &&
+    new Set(entityNames).size === entityNames.length &&
+    analysis.concepts.every((term, index) => term.id === conceptIds[index]) &&
+    analysis.entities.every((term, index) => term.id === entityIds[index])
+  );
+}
+
+export function normalizeSourceAnalysis(manifest: SourceManifest, analysis: SourceAnalysis): SourceAnalysis {
   const title = normalizeAnalysisTitle(manifest, analysis.title);
-  return title === analysis.title ? analysis : { ...analysis, title };
+  const concepts = uniqueBy(
+    analysis.concepts.map((term) => ({
+      ...term,
+      id: `concept:${semanticSlug(term.name)}`
+    })),
+    (term) => normalizeSemanticName(term.name)
+  );
+  const entities = uniqueBy(
+    analysis.entities.map((term) => ({
+      ...term,
+      id: `entity:${semanticSlug(term.name)}`
+    })),
+    (term) => normalizeSemanticName(term.name)
+  );
+  return {
+    ...analysis,
+    analysisVersion: ANALYSIS_FORMAT_VERSION,
+    title,
+    concepts,
+    entities
+  };
+}
+
+export type AnalysisCacheStatus = "current" | "migratable" | "invalid";
+
+export function analysisCacheStatus(cached: SourceAnalysis | null, manifest: SourceManifest, schemaHash: string): AnalysisCacheStatus {
+  if (
+    !cached ||
+    !hasValidAnalyzedTerms(cached) ||
+    (cached.semanticHash ?? cached.sourceHash) !== manifest.semanticHash ||
+    cached.extractionHash !== manifest.extractionHash ||
+    cached.schemaHash !== schemaHash
+  ) {
+    return "invalid";
+  }
+  if (cached.analysisVersion !== ANALYSIS_FORMAT_VERSION && cached.analysisVersion !== LEGACY_SEMANTIC_ID_ANALYSIS_VERSION) {
+    return "invalid";
+  }
+  return cached.analysisVersion === ANALYSIS_FORMAT_VERSION &&
+    normalizeAnalysisTitle(manifest, cached.title) === cached.title &&
+    hasCanonicalSemanticTerms(cached)
+    ? "current"
+    : "migratable";
+}
+
+export function normalizeCachedSourceAnalysis(
+  cached: SourceAnalysis | null,
+  manifest: SourceManifest,
+  schemaHash: string
+): SourceAnalysis | null {
+  const status = analysisCacheStatus(cached, manifest, schemaHash);
+  if (status === "invalid" || !cached) {
+    return null;
+  }
+  return status === "current" ? cached : normalizeSourceAnalysis(manifest, cached);
 }
 
 function heuristicAnalysis(manifest: SourceManifest, text: string, schemaHash: string): SourceAnalysis {
   const analysisText = textForHeuristicAnalysis(manifest, text);
   const normalized = normalizeWhitespace(analysisText);
   const concepts = extractTopTerms(normalized, 6).map((term) => ({
-    id: `concept:${slugify(term)}`,
+    id: `concept:${semanticSlug(term)}`,
     name: term,
     description: `Frequently referenced concept in ${manifest.title}.`
   }));
   const entities = extractEntities(analysisText, 6).map((term) => ({
-    id: `entity:${slugify(term)}`,
+    id: `entity:${semanticSlug(term)}`,
     name: term,
     description: `Named entity mentioned in ${manifest.title}.`
   }));
@@ -467,12 +562,12 @@ async function providerAnalysisChunk(
     title: parsed.title,
     summary: parsed.summary,
     concepts: parsed.concepts.map((term) => ({
-      id: `concept:${slugify(term.name)}`,
+      id: `concept:${semanticSlug(term.name)}`,
       name: term.name,
       description: term.description
     })),
     entities: parsed.entities.map((term) => ({
-      id: `entity:${slugify(term.name)}`,
+      id: `entity:${semanticSlug(term.name)}`,
       name: term.name,
       description: term.description
     })),
@@ -548,12 +643,12 @@ function analysisFromVisionExtraction(
     title: extraction.vision.title?.trim() || manifest.title,
     summary: extraction.vision.summary,
     concepts: extraction.vision.concepts.map((term) => ({
-      id: `concept:${slugify(term.name)}`,
+      id: `concept:${semanticSlug(term.name)}`,
       name: term.name,
       description: term.description
     })),
     entities: extraction.vision.entities.map((term) => ({
-      id: `entity:${slugify(term.name)}`,
+      id: `entity:${semanticSlug(term.name)}`,
       name: term.name,
       description: term.description
     })),
@@ -589,18 +684,14 @@ export async function analyzeSource(
 ): Promise<SourceAnalysis> {
   const cachePath = path.join(paths.analysesDir, `${manifest.sourceId}.json`);
   const cached = await readJsonFile<SourceAnalysis>(cachePath);
-  if (
-    cached &&
-    cached.analysisVersion === ANALYSIS_FORMAT_VERSION &&
-    (cached.semanticHash ?? cached.sourceHash) === manifest.semanticHash &&
-    cached.extractionHash === manifest.extractionHash &&
-    cached.schemaHash === schema.hash
-  ) {
-    const normalizedCached = normalizeSourceAnalysis(manifest, cached);
-    if (normalizedCached !== cached) {
-      await writeJsonFile(cachePath, normalizedCached);
-    }
-    return normalizedCached;
+  const cacheStatus = analysisCacheStatus(cached, manifest, schema.hash);
+  if (cacheStatus === "current" && cached) {
+    return cached;
+  }
+  if (cacheStatus === "migratable" && cached) {
+    const migrated = normalizeSourceAnalysis(manifest, cached);
+    await writeJsonFile(cachePath, migrated);
+    return migrated;
   }
 
   const extraction = await readExtractionArtifact(paths.rootDir, manifest);
