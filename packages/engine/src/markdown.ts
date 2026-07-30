@@ -139,6 +139,10 @@ function extractGuidedSourceBlocks(content: string | null | undefined): string[]
   return uniqueStrings(blocks);
 }
 
+export function hasGuidedSourceMarkers(content: string | null | undefined): boolean {
+  return Boolean(content?.includes(GUIDED_SOURCE_MARKER_PREFIX));
+}
+
 function appendGuidedSourceBlocks(body: string, existingContent?: string | null): string {
   const blocks = extractGuidedSourceBlocks(existingContent);
   if (!blocks.length) {
@@ -232,6 +236,10 @@ function pagePathFor(kind: Exclude<PageKind, "index">, slug: string): string {
   }
 }
 
+function pageSlugFromId(pageId: string): string {
+  return pageId.includes(":") ? pageId.slice(pageId.indexOf(":") + 1) : slugify(pageId);
+}
+
 export function candidatePagePathFor(kind: "concept" | "entity", slug: string): string {
   return kind === "entity" ? `candidates/entities/${slug}.md` : `candidates/concepts/${slug}.md`;
 }
@@ -300,24 +308,25 @@ export function buildSourcePage(
   relatedOutputs: GraphPage[] = [],
   modulePage?: GraphPage,
   decorations?: GeneratedPageDecorations,
-  existingContent?: string | null
+  existingContent?: string | null,
+  semanticPagePaths?: ReadonlyMap<string, string>
 ): { page: GraphPage; content: string } {
   const relativePath = pagePathFor("source", manifest.sourceId);
   const pageId = `source:${manifest.sourceId}`;
   const { sourceHashes, sourceSemanticHashes } = sourceHashesForManifest(manifest);
   const moduleNodeIds = analysis.code ? [analysis.code.moduleId, ...analysis.code.symbols.map((symbol) => symbol.id)] : [];
-  const nodeIds = [
+  const nodeIds = uniqueStrings([
     `source:${manifest.sourceId}`,
     ...analysis.concepts.map((item) => item.id),
     ...analysis.entities.map((item) => item.id),
     ...moduleNodeIds
-  ];
-  const backlinks = [
-    ...analysis.concepts.map((item) => `concept:${slugify(item.name)}`),
-    ...analysis.entities.map((item) => `entity:${slugify(item.name)}`),
+  ]);
+  const backlinks = uniqueStrings([
+    ...analysis.concepts.map((item) => item.id),
+    ...analysis.entities.map((item) => item.id),
     ...(modulePage ? [modulePage.id] : []),
     ...relatedOutputs.map((page) => page.id)
-  ];
+  ]);
 
   const frontmatter = {
     page_id: pageId,
@@ -387,7 +396,8 @@ export function buildSourcePage(
       "",
       ...(analysis.concepts.length
         ? analysis.concepts.map(
-            (item) => `- [[${pagePathFor("concept", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
+            (item) =>
+              `- [[${(semanticPagePaths?.get(item.id) ?? pagePathFor("concept", pageSlugFromId(item.id))).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
           )
         : ["- None detected."]),
       "",
@@ -395,7 +405,8 @@ export function buildSourcePage(
       "",
       ...(analysis.entities.length
         ? analysis.entities.map(
-            (item) => `- [[${pagePathFor("entity", slugify(item.name)).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
+            (item) =>
+              `- [[${(semanticPagePaths?.get(item.id) ?? pagePathFor("entity", pageSlugFromId(item.id))).replace(/\.md$/, "")}|${item.name}]]: ${item.description}`
           )
         : ["- None detected."]),
       "",
@@ -629,6 +640,7 @@ export function buildModulePage(input: {
 
 export function buildAggregatePage(
   kind: "concept" | "entity",
+  pageId: string,
   name: string,
   descriptions: string[],
   sourceAnalyses: SourceAnalysis[],
@@ -641,13 +653,15 @@ export function buildAggregatePage(
   decorations?: GeneratedPageDecorations,
   existingContent?: string | null
 ): { page: GraphPage; content: string } {
-  const slug = slugify(name);
-  const pageId = `${kind}:${slug}`;
-  const sourceIds = sourceAnalyses.map((item) => item.sourceId);
-  const otherPages = [...sourceAnalyses.map((item) => `source:${item.sourceId}`), ...relatedOutputs.map((page) => page.id)];
+  const uniqueSourceAnalyses = uniqueBy(sourceAnalyses, (item) => item.sourceId);
+  const sourceIds = uniqueSourceAnalyses.map((item) => item.sourceId);
+  const otherPages = uniqueStrings([
+    ...uniqueSourceAnalyses.map((item) => `source:${item.sourceId}`),
+    ...relatedOutputs.map((page) => page.id)
+  ]);
   const summary = descriptions.find(Boolean) ?? `${kind} aggregated from ${sourceIds.length} source(s).`;
   const leaderTags = metadata.status === "candidate" ? [kind, "candidate"] : [kind];
-  const inheritedTags = inheritedSourceTags(sourceAnalyses);
+  const inheritedTags = inheritedSourceTags(uniqueSourceAnalyses);
   const derivedTags = sortDerivedTags([...decoratedTags(leaderTags, decorations), ...inheritedTags], leaderTags);
   const frontmatter = {
     page_id: pageId,
@@ -681,11 +695,11 @@ export function buildAggregatePage(
       "",
       "## Seen In",
       "",
-      ...sourceAnalyses.map((item) => `- [[${pagePathFor("source", item.sourceId).replace(/\.md$/, "")}|${item.title}]]`),
+      ...uniqueSourceAnalyses.map((item) => `- [[${pagePathFor("source", item.sourceId).replace(/\.md$/, "")}|${item.title}]]`),
       "",
       "## Source Claims",
       "",
-      ...sourceAnalyses.flatMap((item) =>
+      ...uniqueSourceAnalyses.flatMap((item) =>
         item.claims
           .filter((claim) => claim.text.toLowerCase().includes(name.toLowerCase()))
           .map((claim) => `- ${claim.text} [source:${claim.citation}]`)
@@ -714,7 +728,7 @@ export function buildAggregatePage(
       schemaHash,
       sourceHashes,
       sourceSemanticHashes,
-      relatedPageIds: relatedOutputs.map((page) => page.id),
+      relatedPageIds: uniqueStrings(relatedOutputs.map((page) => page.id)),
       relatedNodeIds: [],
       relatedSourceIds: [],
       createdAt: metadata.createdAt,

@@ -56,6 +56,7 @@ describe("tag inheritance — derived concept/entity pages", () => {
     ];
     const { content } = buildAggregatePage(
       "concept",
+      "concept:knowledge-graphs",
       "Knowledge Graphs",
       ["Shared concept about graphs."],
       analyses,
@@ -76,6 +77,7 @@ describe("tag inheritance — derived concept/entity pages", () => {
     const analyses = [makeAnalysis({ sourceId: "alpha", tags: ["research"] }), makeAnalysis({ sourceId: "beta", tags: ["agents"] })];
     const { content } = buildAggregatePage(
       "entity",
+      "entity:swarmvault",
       "SwarmVault",
       ["An entity about SwarmVault."],
       analyses,
@@ -99,6 +101,7 @@ describe("tag inheritance — derived concept/entity pages", () => {
     ];
     const { content } = buildAggregatePage(
       "concept",
+      "concept:graphs-topic",
       "Graphs Topic",
       ["Concept about graphs."],
       analyses,
@@ -124,6 +127,7 @@ describe("tag inheritance — derived concept/entity pages", () => {
     ];
     const { content } = buildAggregatePage(
       "concept",
+      "concept:ordered",
       "Ordered",
       ["Stable ordering."],
       analyses,
@@ -146,6 +150,7 @@ describe("tag inheritance — derived concept/entity pages", () => {
     const analyses = [makeAnalysis({ sourceId: "alpha", tags: ["zeta"] })];
     const { content } = buildAggregatePage(
       "concept",
+      "concept:draft-concept",
       "Draft Concept",
       ["Still a candidate."],
       analyses,
@@ -165,6 +170,7 @@ describe("tag inheritance — derived concept/entity pages", () => {
     const analyses = [makeAnalysis({ sourceId: "alpha", tags: [] }), makeAnalysis({ sourceId: "beta", tags: [] })];
     const { content } = buildAggregatePage(
       "concept",
+      "concept:bare-concept",
       "Bare Concept",
       ["No source tags to inherit."],
       analyses,
@@ -176,5 +182,30 @@ describe("tag inheritance — derived concept/entity pages", () => {
     );
 
     expect(tagsOf(content)).toEqual(["concept"]);
+  });
+
+  it("uses the canonical page id and dedupes repeated source analyses", () => {
+    const alpha = makeAnalysis({ sourceId: "alpha", tags: ["research"] });
+    const result = buildAggregatePage(
+      "concept",
+      "concept:u-canonical",
+      "毫毛分身术",
+      ["A Chinese concept."],
+      [alpha, alpha],
+      { alpha: "alpha" },
+      { alpha: "alpha" },
+      "schema-hash",
+      metadata(),
+      "concepts/u-canonical.md"
+    );
+
+    const parsed = matter(result.content);
+    expect(result.page.id).toBe("concept:u-canonical");
+    expect(result.page.sourceIds).toEqual(["alpha"]);
+    expect(result.page.backlinks).toEqual(["source:alpha"]);
+    expect(parsed.data.page_id).toBe("concept:u-canonical");
+    expect(parsed.data.source_ids).toEqual(["alpha"]);
+    expect(parsed.data.backlinks).toEqual(["source:alpha"]);
+    expect(result.content.match(/\[\[sources\/alpha\|/g)).toHaveLength(1);
   });
 });
