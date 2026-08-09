@@ -160,6 +160,28 @@ export function truncate(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - 3)}...`;
 }
 
+/**
+ * Runs `tasks` with at most `maxParallel` in flight at once. Unbounded
+ * `Promise.all` over large collections (e.g. one `fs.readFile` per vault
+ * page) can exhaust the OS open-file-handle limit (EMFILE) well before any
+ * individual task is slow — this caps concurrency instead of task count.
+ */
+export async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, maxParallel: number): Promise<T[]> {
+  const limit = Math.max(1, maxParallel);
+  const results: T[] = new Array(tasks.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+      while (cursor < tasks.length) {
+        const index = cursor;
+        cursor += 1;
+        results[index] = await tasks[index]();
+      }
+    })
+  );
+  return results;
+}
+
 export async function listFilesRecursive(rootDir: string): Promise<string[]> {
   const entries = await fs.readdir(rootDir, { withFileTypes: true }).catch(() => []);
   const files: string[] = [];

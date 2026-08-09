@@ -5,6 +5,7 @@ import { loadVaultConfig } from "./config.js";
 import { normalizeFindingSeverity } from "./findings.js";
 import { createProvider } from "./providers/registry.js";
 import type { OrchestrationRole, OrchestrationRoleConfig, OrchestrationRoleResult, RoleExecutorConfig } from "./types.js";
+import { runWithConcurrency } from "./utils.js";
 
 const orchestrationRoleResultSchema = z.object({
   summary: z.string().optional(),
@@ -181,22 +182,6 @@ async function runRole(
     return runProviderRole(rootDir, role, roleConfig, input);
   }
   return runCommandRole(rootDir, role, roleConfig.executor, input);
-}
-
-async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, maxParallel: number): Promise<T[]> {
-  const limit = Math.max(1, maxParallel);
-  const results: T[] = new Array(tasks.length);
-  let cursor = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, tasks.length) }, async () => {
-      while (cursor < tasks.length) {
-        const index = cursor;
-        cursor += 1;
-        results[index] = await tasks[index]();
-      }
-    })
-  );
-  return results;
 }
 
 export async function runConfiguredRoles(
