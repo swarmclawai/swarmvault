@@ -13,7 +13,7 @@ import type {
   ProviderAdapter,
   SourceClass
 } from "./types.js";
-import { readJsonFile, sha256, uniqueBy, writeJsonFile } from "./utils.js";
+import { readJsonFile, runWithConcurrency, sha256, uniqueBy, writeJsonFile } from "./utils.js";
 
 type EmbeddableItem = {
   id: string;
@@ -25,6 +25,7 @@ type EmbeddableItem = {
 
 const MAX_EMBEDDING_BATCH = 32;
 const MAX_SIMILARITY_NODES = 240;
+const MAX_PAGE_READ_CONCURRENCY = 64;
 
 function cosineSimilarity(left: number[], right: number[]): number {
   if (!left.length || left.length !== right.length) {
@@ -58,17 +59,19 @@ async function loadPageContents(rootDir: string, graph: GraphArtifact): Promise<
   const { paths } = await loadVaultConfig(rootDir);
   const contents = new Map<string, string>();
 
-  await Promise.all(
-    graph.pages.map(async (page) => {
+  await runWithConcurrency(
+    graph.pages.map((page) => async () => {
       const absolutePath = path.join(paths.wikiDir, page.path);
-      const content = await fs.readFile(absolutePath, "utf8").catch(() => {
-        process.stderr.write(`[swarmvault] Warning: could not read page ${page.path} for embedding\n`);
+      const content = await fs.readFile(absolutePath, "utf8").catch((error: unknown) => {
+        const detail = error instanceof Error ? `${(error as NodeJS.ErrnoException).code ?? "ERROR"}: ${error.message}` : String(error);
+        process.stderr.write(`[swarmvault] Warning: could not read page ${page.path} for embedding (${detail})\n`);
         return "";
       });
       if (content) {
         contents.set(page.id, content);
       }
-    })
+    }),
+    MAX_PAGE_READ_CONCURRENCY
   );
 
   return contents;
